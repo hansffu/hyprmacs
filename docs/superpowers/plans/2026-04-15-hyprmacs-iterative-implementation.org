@@ -1,0 +1,434 @@
+#+title: hyprmacs Iterative Implementation Plan
+#+date: 2026-04-15
+#+startup: overview
+#+seq_todo: TODO(t) NEXT(n) WAIT(w@/!) BLOCKED(b@/!) DONE(d!) CANCELLED(c@)
+
+* Goal
+Build a Hyprland plugin plus Emacs package that makes one Hyprland workspace behave like an Emacs-directed workspace without replacing Hyprland's compositor, popup, or input responsibilities.
+
+* Architecture Summary
+Hyprland remains the compositor and input authority. The plugin owns workspace policy for a managed subset of tiled clients and exposes a private Unix socket IPC interface. Emacs owns buffer association, visible-set selection, and rectangle computation, then publishes snapshot-style layout updates to the plugin.
+
+* Working Agreement
+- Treat each top-level task as one reviewable increment.
+- Stop at every headline marked =WAIT= and review behavior together before moving on.
+- Prefer vertical slices over large foundation-only branches.
+- Keep v1 intentionally narrow so we can validate the design early.
+
+* Plan Maintenance
+- This org file is the primary source of truth for implementation status across sessions.
+- Update TODO keywords here as work progresses.
+- Record decisions, scope changes, deviations, and newly discovered constraints in this file during the session in which they are discovered.
+- Keep related stable reference docs under =docs/architecture/=, =docs/protocol/=, and =docs/adr/= consistent with the decisions recorded here.
+
+* Default V1 Decisions
+- One Emacs controller process and one managed workspace per active session.
+- Plugin implementation in C++.
+- Emacs package implementation in Emacs Lisp.
+- IPC transport is a plugin-owned Unix domain socket under =$XDG_RUNTIME_DIR=.
+- IPC payloads are newline-delimited JSON with an explicit protocol version field.
+- Overlapping managed rectangles are rejected in v1 instead of guessed.
+- No resize animations in v1.
+- If Emacs disconnects, the plugin unmanages the workspace and returns clients to native Hyprland behavior.
+- Floating windows, dialogs, popups, child frames, and posframes remain native Hyprland surfaces.
+
+* Proposed Repository Layout
+- =flake.nix=: dev shell, demo app, plugin build inputs, test commands.
+- =plugin/CMakeLists.txt=: plugin and test build entrypoint.
+- =plugin/include/hyprmacs/plugin_state.hpp=: core state structs shared by plugin modules.
+- =plugin/include/hyprmacs/protocol.hpp=: IPC message types and translation helpers.
+- =plugin/include/hyprmacs/workspace_manager.hpp=: managed workspace lifecycle.
+- =plugin/include/hyprmacs/client_registry.hpp=: tracked client state and lookup indexes.
+- =plugin/include/hyprmacs/client_classifier.hpp=: rules for Emacs exclusion, popup exclusion, and floating checks.
+- =plugin/include/hyprmacs/ipc_server.hpp=: socket lifecycle and message dispatch.
+- =plugin/include/hyprmacs/layout_applier.hpp=: visibility, geometry, and stacking application.
+- =plugin/include/hyprmacs/focus_controller.hpp=: Emacs-control and client-control mode handling.
+- =plugin/src/plugin_main.cpp=: Hyprland plugin entrypoints and hook registration.
+- =plugin/src/workspace_manager.cpp=: workspace adoption, unmanage, and sync orchestration.
+- =plugin/src/client_registry.cpp=: managed-client registry implementation.
+- =plugin/src/client_classifier.cpp=: client eligibility and exclusion checks.
+- =plugin/src/ipc_server.cpp=: socket accept loop and message routing.
+- =plugin/src/layout_applier.cpp=: show, hide, move, and stack operations.
+- =plugin/src/focus_controller.cpp=: focus target selection and mode transitions.
+- =plugin/tests/...=: pure C++ tests for protocol parsing, registry logic, and layout rules.
+- =emacs/hyprmacs.el=: package entrypoint and user-facing commands.
+- =emacs/hyprmacs-session.el=: session connect, disconnect, and workspace state.
+- =emacs/hyprmacs-ipc.el=: JSON encoding, socket process, and message dispatch.
+- =emacs/hyprmacs-buffers.el=: buffer and client association lifecycle.
+- =emacs/hyprmacs-layout.el=: visible buffer detection and rectangle computation.
+- =emacs/hyprmacs-mode.el=: Emacs-control and client-control commands.
+- =tests/emacs/...=: ERT coverage for protocol, state sync, and layout computation.
+- =docs/architecture/v1-scope.org=: frozen v1 boundary document.
+- =docs/protocol/ipc-v1.org=: protocol contract and example payloads.
+- =docs/adr/...=: focused architectural decisions discovered during implementation.
+- =docs/testing/manual-smoke-tests.org=: nested Hyprland manual validation checklist.
+
+* Iterative Plan
+** NEXT Task 0: Lock the prototype contract
+Purpose:
+- Freeze the first implementation target before code exists.
+
+Files:
+- Create =docs/architecture/v1-scope.org=
+- Create =docs/protocol/ipc-v1.org=
+- Create =docs/adr/0001-v1-boundaries.org=
+
+Steps:
+*** TODO Write the v1 scope document
+- Explicitly include: one managed workspace, native floating windows, native dialogs and popups, native Emacs child frames, single-controller IPC, and non-overlapping rectangles.
+- Explicitly exclude: multi-workspace management, prefix mode, animations, independent plugin layout persistence, and overlap support.
+*** TODO Define protocol version 1
+- Specify message envelope fields: =version=, =type=, =workspace_id=, =timestamp=, and payload object.
+- Fully define the first coarse message set: =manage-workspace=, =unmanage-workspace=, =request-state=, =workspace-managed=, =workspace-unmanaged=, =state-dump=.
+- Reserve but do not implement the later layout fields now: =selected_client=, =input_mode=, =visible_clients=, =hidden_clients=, =rectangles=, =stacking_order=.
+*** TODO Write the first architecture decision record
+- Record why JSON over Unix socket is acceptable for v1.
+- Record why overlap is rejected in v1.
+- Record why disconnect restores native workspace behavior.
+*** WAIT Review task 0 with user
+- Confirm the v1 boundaries before any code scaffold is created.
+
+** TODO Task 1: Bootstrap the repository and developer loop
+Purpose:
+- Make the repo buildable and testable before adding behavior.
+
+Files:
+- Modify =flake.nix=
+- Create =plugin/CMakeLists.txt=
+- Create =plugin/src/plugin_main.cpp=
+- Create =plugin/tests/CMakeLists.txt=
+- Create =emacs/hyprmacs.el=
+- Create =tests/emacs/bootstrap-tests.el=
+- Create =docs/testing/manual-smoke-tests.org=
+
+Steps:
+*** TODO Add plugin build scaffolding
+- Create a minimal shared-library target that matches Hyprland's plugin loading expectations.
+- Add a trivial plugin entrypoint that logs successful load and unload.
+*** TODO Add Emacs package scaffolding
+- Create a package entry file with a version constant, feature provide, and placeholder interactive commands for connect and manage-workspace.
+*** TODO Add test entrypoints
+- Configure =ctest= for plugin-side pure tests.
+- Configure =ERT= batch execution for Emacs tests.
+*** TODO Extend the Nix dev environment
+- Add build tooling needed for C++, CMake, and test execution.
+- Add a demo app or script that starts nested Hyprland with the plugin path wired into the config.
+*** WAIT Review task 1 with user
+- Stop when the empty plugin loads and the empty Emacs package byte-compiles.
+
+Validation:
+- =nix develop=
+- =cmake -S plugin -B build/plugin=
+- =cmake --build build/plugin=
+- =ctest --test-dir build/plugin --output-on-failure=
+- =emacs -Q --batch -L emacs -L tests/emacs -l bootstrap-tests.el -f ert-run-tests-batch-and-exit=
+
+** TODO Task 2: Implement shared protocol and state models first
+Purpose:
+- Put the hardest coordination contract under test before compositor behavior enters the picture.
+
+Files:
+- Create =plugin/include/hyprmacs/plugin_state.hpp=
+- Create =plugin/include/hyprmacs/protocol.hpp=
+- Create =plugin/src/protocol.cpp=
+- Create =plugin/tests/protocol_tests.cpp=
+- Create =emacs/hyprmacs-ipc.el=
+- Create =emacs/hyprmacs-session.el=
+- Create =tests/emacs/protocol-tests.el=
+
+Steps:
+*** TODO Define canonical identifiers
+- Standardize how workspace IDs, client IDs, buffer IDs, and mode names are represented on both sides.
+*** TODO Implement protocol encode and decode helpers
+- Build parser and serializer helpers on the plugin side.
+- Build parser and serializer helpers on the Emacs side.
+*** TODO Add golden tests for wire compatibility
+- Add C++ tests for decoding example JSON payloads.
+- Add ERT tests that encode the same objects and compare them to the documented payload shapes.
+*** TODO Add a fake transport harness
+- Make it possible to drive the Emacs session code with fixture payloads before a real plugin server exists.
+*** WAIT Review task 2 with user
+- Confirm the message contract before event hooks or layout logic are added.
+
+Validation:
+- Run plugin protocol tests and ERT protocol tests with fixture payloads from =docs/protocol/ipc-v1.org=.
+
+** TODO Task 3: Build the plugin event tap and managed-state registry
+Purpose:
+- Give the plugin read-only awareness of relevant Hyprland state before it starts changing window behavior.
+
+Files:
+- Create =plugin/include/hyprmacs/workspace_manager.hpp=
+- Create =plugin/include/hyprmacs/client_registry.hpp=
+- Create =plugin/include/hyprmacs/client_classifier.hpp=
+- Create =plugin/src/workspace_manager.cpp=
+- Create =plugin/src/client_registry.cpp=
+- Create =plugin/src/client_classifier.cpp=
+- Create =plugin/tests/client_registry_tests.cpp=
+
+Steps:
+*** TODO Subscribe to Hyprland lifecycle hooks
+- Track client open, close, workspace move, focus change, title change, and float-state change events.
+*** TODO Implement the in-memory registry
+- Store client identity, workspace identity, visibility state, selected state, rectangle, eligibility, and association placeholders.
+*** TODO Implement client classification rules
+- Exclude Emacs itself.
+- Exclude floating clients and obvious popup or transient clients.
+- Mark later edge cases with explicit TODO comments in code only if backed by an ADR or issue.
+*** TODO Add a plugin state dump path
+- Expose a coarse debug command or log path that prints current managed and eligible client state without mutating it.
+*** WAIT Review task 3 with user
+- Stop when we can inspect tracked clients in nested Hyprland without any layout control yet.
+
+Validation:
+- Launch nested Hyprland, open a few windows, and confirm the registry reflects open and close events plus float transitions.
+
+** TODO Task 4: Build the Emacs-side session and buffer skeleton
+Purpose:
+- Let Emacs observe plugin state and create the logical handles users will interact with later.
+
+Files:
+- Modify =emacs/hyprmacs.el=
+- Create =emacs/hyprmacs-buffers.el=
+- Modify =emacs/hyprmacs-session.el=
+- Create =tests/emacs/session-tests.el=
+- Create =tests/emacs/buffer-tests.el=
+
+Steps:
+*** TODO Create the session state object
+- Track current connection status, active workspace, known clients, associated buffers, selected client, and current input mode.
+*** TODO Create user-visible commands
+- Add interactive commands for connect, disconnect, manage current workspace, unmanage workspace, and dump known state into an Emacs buffer.
+*** TODO Create buffer association primitives
+- Define the buffer-local metadata that identifies a managed client buffer.
+- Add helper functions to create, rename, and clean up those buffers from plugin events.
+*** TODO Drive the Emacs code from fake plugin payloads
+- Use fixture messages to prove state transitions happen correctly before the real socket is connected.
+*** WAIT Review task 4 with user
+- Confirm the Emacs-side UX for state inspection before real IPC is enabled.
+
+Validation:
+- Run ERT tests for session transitions and buffer creation.
+- Open the state buffer in Emacs and inspect mock client data rendered there.
+
+** TODO Task 5: Wire up the real IPC handshake and coarse workspace commands
+Purpose:
+- Replace the fake transport with a real plugin-owned socket and prove that both sides stay synchronized.
+
+Files:
+- Create =plugin/include/hyprmacs/ipc_server.hpp=
+- Create =plugin/src/ipc_server.cpp=
+- Modify =plugin/src/plugin_main.cpp=
+- Modify =plugin/src/workspace_manager.cpp=
+- Modify =emacs/hyprmacs-ipc.el=
+- Modify =emacs/hyprmacs-session.el=
+- Create =plugin/tests/ipc_server_tests.cpp=
+
+Steps:
+*** TODO Start the plugin socket server
+- Create and own a Unix socket path under =$XDG_RUNTIME_DIR=.
+- Support exactly one controller connection in v1 and reject extra controllers with a clear error.
+*** TODO Implement the first live command path
+- Handle =manage-workspace=, =unmanage-workspace=, and =request-state= on the plugin side.
+- Send =workspace-managed=, =workspace-unmanaged=, and =state-dump= back to Emacs.
+*** TODO Implement reconnect-safe session handling
+- Ensure Emacs can disconnect and reconnect without leaking duplicate event handlers or stale process objects.
+*** TODO Add integration logging
+- Log every message type at debug level with enough context to diagnose sync bugs.
+*** WAIT Review task 5 with user
+- Stop when Emacs can manage and unmanage a workspace and display real plugin state.
+
+Validation:
+- Start nested Hyprland, connect Emacs, manage a workspace, request state, and verify the state buffer matches the live workspace contents.
+
+** TODO Task 6: Prove the hidden-client mechanism in isolation
+Purpose:
+- Retire the highest-risk compositor behavior before layout work depends on it.
+
+Files:
+- Create =docs/adr/0002-hidden-client-strategy.org=
+- Create =plugin/include/hyprmacs/layout_applier.hpp=
+- Create =plugin/src/layout_applier.cpp=
+- Create =plugin/tests/layout_applier_tests.cpp=
+- Modify =docs/testing/manual-smoke-tests.org=
+
+Steps:
+*** TODO Implement a minimal show and hide experiment path
+- Add temporary plugin-only commands that can hide a tracked tiled client and then restore it without destroying the application.
+*** TODO Evaluate the mechanism against real applications
+- Test at least =foot= and one GUI app inside nested Hyprland.
+- Verify the client stays alive, disappears from the visible tiled layout, and returns intact.
+*** TODO Write the strategy ADR
+- Document the exact Hyprland primitive used for hide and restore.
+- Document the failure cases discovered during the spike.
+*** WAIT Review task 6 with user
+- Do not proceed to the first vertical slice until we trust the hide mechanism.
+
+Validation:
+- Manual smoke test passes for hide, restore, workspace switch away and back, and client close while hidden.
+
+** TODO Task 7: Deliver the first vertical slice with one visible managed client
+Purpose:
+- Make the workspace feel meaningfully different as early as possible.
+
+Files:
+- Modify =plugin/src/workspace_manager.cpp=
+- Modify =plugin/src/layout_applier.cpp=
+- Create =plugin/include/hyprmacs/focus_controller.hpp=
+- Create =plugin/src/focus_controller.cpp=
+- Modify =emacs/hyprmacs-buffers.el=
+- Modify =emacs/hyprmacs-session.el=
+- Create =emacs/hyprmacs-mode.el=
+- Create =tests/emacs/mode-tests.el=
+
+Steps:
+*** TODO Adopt eligible clients into a managed set
+- When a workspace becomes managed, adopt existing eligible tiled clients.
+- Auto-adopt newly opened eligible tiled clients in that workspace.
+*** TODO Create one buffer per managed client
+- Ensure each adopted client gets a corresponding Emacs buffer with stable identity.
+*** TODO Make exactly one managed client visible
+- Tie visibility to the selected managed buffer.
+- Hide every other managed client while keeping them alive.
+*** TODO Implement the first two input modes
+- Add Emacs-control mode where Emacs keeps focus.
+- Add client-control mode where the selected managed client receives keyboard focus.
+*** TODO Add the first user-facing switching commands
+- Support selecting a managed buffer from Emacs and reflecting that in the workspace.
+*** WAIT Review task 7 with user
+- Stop when buffer switching can swap one live client in and out without recreating it.
+
+Validation:
+- Manage a workspace with multiple apps.
+- Switch managed buffers in Emacs and verify only the selected client is visible.
+- Toggle Emacs-control and client-control modes and confirm focus moves as expected.
+
+** TODO Task 8: Implement rectangle-first layout updates and multi-client visibility
+Purpose:
+- Upgrade from a one-client prototype to the core design model.
+
+Files:
+- Create =emacs/hyprmacs-layout.el=
+- Modify =emacs/hyprmacs-buffers.el=
+- Modify =emacs/hyprmacs-session.el=
+- Modify =plugin/src/layout_applier.cpp=
+- Modify =plugin/src/workspace_manager.cpp=
+- Create =tests/emacs/layout-tests.el=
+- Modify =plugin/tests/layout_applier_tests.cpp=
+
+Steps:
+*** TODO Compute managed-client rectangles in Emacs
+- Detect which managed buffers are visible in the current Emacs window tree.
+- Convert visible window geometry into plugin-facing rectangles relative to the Emacs frame.
+*** TODO Send snapshot-style =set-layout= messages
+- Include workspace ID, selected client, input mode, visible clients, hidden clients, rectangles, and stacking order.
+*** TODO Apply snapshot layouts in the plugin
+- Show clients listed as visible.
+- Hide clients listed as hidden.
+- Move visible clients into the exact rectangles specified by Emacs.
+*** TODO Reject unsupported layouts explicitly
+- Detect overlapping rectangles in Emacs before sending them.
+- Validate the same constraint in the plugin and log a protocol error if violated.
+*** WAIT Review task 8 with user
+- Stop when simple Emacs splits map to two or more live managed clients.
+
+Validation:
+- Split the Emacs frame, show two managed buffers, and verify both clients become visible in matching rectangles.
+- Delete one split and verify the corresponding client becomes hidden but remains alive.
+
+** TODO Task 9: Harden popup, floating, and Emacs auxiliary-window behavior
+Purpose:
+- Make sure the design avoids the EXWM failure modes it was created to avoid.
+
+Files:
+- Modify =plugin/src/client_classifier.cpp=
+- Modify =plugin/src/workspace_manager.cpp=
+- Modify =plugin/src/layout_applier.cpp=
+- Modify =emacs/hyprmacs-layout.el=
+- Create =docs/adr/0003-auxiliary-window-classification.org=
+- Modify =docs/testing/manual-smoke-tests.org=
+
+Steps:
+*** TODO Tighten client exclusion rules
+- Verify dialogs, transient windows, and true floating windows never enter the managed set.
+*** TODO Keep Emacs-owned auxiliary windows native
+- Confirm child frames and posframes are excluded even when they share process identity with the main Emacs frame.
+*** TODO Validate internal Emacs layout changes
+- Trigger fresh =set-layout= updates for minibuffer growth, side windows, and ordinary Emacs UI panes that change safe client geometry.
+*** TODO Handle client float-state transitions
+- If a managed client becomes floating, remove it from the managed set and notify Emacs.
+- If a native tiled client becomes eligible again, let normal adoption rules decide whether to re-manage it.
+*** WAIT Review task 9 with user
+- Stop when popups stay usable and Emacs auxiliary windows still render above managed clients.
+
+Validation:
+- Test pinentry or a dialog, a floating utility window, a posframe-like child frame, and a client that toggles floating state.
+
+** TODO Task 10: Add disconnect recovery, resync, and failure handling
+Purpose:
+- Make the system survivable when either side lags, restarts, or disappears.
+
+Files:
+- Modify =plugin/src/ipc_server.cpp=
+- Modify =plugin/src/workspace_manager.cpp=
+- Modify =plugin/src/focus_controller.cpp=
+- Modify =emacs/hyprmacs-ipc.el=
+- Modify =emacs/hyprmacs-session.el=
+- Create =tests/emacs/reconnect-tests.el=
+- Create =docs/adr/0004-disconnect-recovery.org=
+
+Steps:
+*** TODO Define the authoritative cleanup path
+- On Emacs disconnect, unmanage the workspace, restore managed clients to native behavior, and clear plugin-side session state.
+*** TODO Add explicit resync support
+- Let Emacs reconnect, request a state dump, and rebuild its session state from plugin truth.
+*** TODO Harden message processing
+- Handle malformed messages, unsupported versions, and stale socket paths with clear errors.
+*** TODO Document recovery behavior
+- Write the ADR and add manual tests for restart scenarios.
+*** WAIT Review task 10 with user
+- Stop when killing or restarting Emacs does not leave the workspace in a broken intermediate state.
+
+Validation:
+- Kill Emacs during both input modes, reconnect, and verify the workspace is usable and re-manageable.
+
+** TODO Task 11: Package the prototype, document usage, and freeze the first demo flow
+Purpose:
+- Make the prototype repeatable and easy to evaluate.
+
+Files:
+- Modify =flake.nix=
+- Create =README.org=
+- Create =docs/testing/demo-script.org=
+- Modify =docs/testing/manual-smoke-tests.org=
+
+Steps:
+*** TODO Add a reliable demo entrypoint
+- Provide one command that builds the plugin and launches nested Hyprland with the plugin loaded.
+*** TODO Document the user workflow
+- Explain how to start the demo, load the Emacs package, connect, manage a workspace, and switch modes.
+*** TODO Freeze a smoke-test checklist
+- Record the exact scenarios that must pass before any future refactor is considered safe.
+*** WAIT Review task 11 with user
+- Use this checkpoint to decide whether to continue toward polish work or pause after the first usable prototype.
+
+Validation:
+- Follow =README.org= from a clean shell and reproduce the demo without manual patching.
+
+* Execution Order
+- Start with task 0 and task 1 only.
+- Do not start task 2 until the repo builds cleanly.
+- Do not start task 7 until task 6 proves hide and restore semantics.
+- Treat task 8 as the boundary between prototype and core feature delivery.
+- Treat task 9 and task 10 as release blockers for any serious daily-use experiment.
+
+* Questions To Keep Open While We Build
+- Which Hyprland primitive gives the cleanest hide and restore behavior for live clients.
+- Whether client-attached popup surfaces need any extra handling beyond staying with their owning client.
+- Whether Emacs-owned auxiliary windows can be identified robustly by PID plus window role or class information alone.
+- Whether the plugin should retain a last-known layout snapshot for short transient Emacs stalls in a later version.
+
+* Suggested First Iteration
+- Execute task 0 to freeze the v1 contract.
+- Execute task 1 to scaffold the build, test, and demo loop.
+- Review both outputs together before touching client behavior.
