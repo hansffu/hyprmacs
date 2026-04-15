@@ -75,3 +75,25 @@ add_test(
   NAME hyprmacs_client_registry_tests
   COMMAND hyprmacs_client_registry_tests
 )
+
+add_executable(hyprmacs_ipc_server_tests
+  ipc_server_tests.cpp
+  ../src/ipc_server.cpp
+  ../src/workspace_manager.cpp
+  ../src/client_registry.cpp
+  ../src/client_classifier.cpp
+  ../src/protocol.cpp
+)
+
+target_include_directories(hyprmacs_ipc_server_tests PRIVATE
+  ${CMAKE_CURRENT_SOURCE_DIR}/../include
+)
+
+if(CMAKE_CXX_COMPILER_ID MATCHES "Clang|GNU")
+  target_compile_options(hyprmacs_ipc_server_tests PRIVATE -Wall -Wextra -Wpedantic)
+endif()
+
+add_test(
+  NAME hyprmacs_ipc_server_tests
+  COMMAND hyprmacs_ipc_server_tests
+)

@@ -154,6 +154,65 @@ std::unordered_map<std::string, size_t> WorkspaceManager::event_counts() const {
     return event_counts_;
 }
 
+bool WorkspaceManager::manage_workspace(const WorkspaceId& workspace_id) {
+    std::scoped_lock lock(mutex_);
+    const bool changed = !managed_workspace_id_.has_value() || *managed_workspace_id_ != workspace_id;
+    managed_workspace_id_ = workspace_id;
+    return changed;
+}
+
+bool WorkspaceManager::unmanage_workspace(const WorkspaceId& workspace_id) {
+    std::scoped_lock lock(mutex_);
+    if (!managed_workspace_id_.has_value() || *managed_workspace_id_ != workspace_id) {
+        return false;
+    }
+    managed_workspace_id_ = std::nullopt;
+    return true;
+}
+
+void WorkspaceManager::set_controller_connected(bool connected) {
+    std::scoped_lock lock(mutex_);
+    controller_connected_ = connected;
+}
+
+StateDumpPayload WorkspaceManager::build_state_dump(const WorkspaceId& workspace_id) const {
+    std::scoped_lock lock(mutex_);
+
+    StateDumpPayload out;
+    out.managed = managed_workspace_id_.has_value() && *managed_workspace_id_ == workspace_id;
+    out.controller_connected = controller_connected_;
+
+    const auto snapshot = client_registry_.snapshot();
+    for (const auto& client : snapshot.clients) {
+        if (client.workspace_id != workspace_id) {
+            continue;
+        }
+
+        if (client.eligible) {
+            out.eligible_clients.push_back(ClientSnapshot {
+                .client_id = client.client_id,
+                .title = client.title,
+                .app_id = client.app_id,
+                .floating = client.floating,
+            });
+        }
+
+        if (client.managed) {
+            out.managed_clients.push_back(client.client_id);
+        }
+    }
+
+    if (snapshot.selected_client.has_value()) {
+        const ClientRecord* selected = client_registry_.find(*snapshot.selected_client);
+        if (selected != nullptr && selected->workspace_id == workspace_id) {
+            out.selected_client = *snapshot.selected_client;
+        }
+    }
+
+    out.input_mode = std::nullopt;
+    return out;
+}
+
 void WorkspaceManager::event_loop() {
     const auto socket_path = hyprland_event_socket_path();
     if (!socket_path.has_value()) {

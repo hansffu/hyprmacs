@@ -16,6 +16,13 @@
 (defconst hyprmacs-ipc-version 1
   "Supported hyprmacs IPC protocol version.")
 
+(defun hyprmacs-ipc-default-socket-path ()
+  "Return the default plugin-owned Unix socket path."
+  (let ((runtime-dir (getenv "XDG_RUNTIME_DIR")))
+    (unless (and runtime-dir (not (string-empty-p runtime-dir)))
+      (error "XDG_RUNTIME_DIR is not set"))
+    (expand-file-name "hyprmacs-v1.sock" runtime-dir)))
+
 (defun hyprmacs-ipc--rfc3339-now ()
   "Return current UTC time in RFC3339 format."  
   (format-time-string "%Y-%m-%dT%H:%M:%SZ" (current-time) t))

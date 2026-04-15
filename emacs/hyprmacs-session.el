@@ -6,7 +6,7 @@
 
 ;;; Commentary:
 
-;; Session state + fake transport helpers used before the live socket server exists.
+;; Session state and transport helpers for fake and real IPC modes.
 
 ;;; Code:
 
@@ -21,6 +21,12 @@
 
 (defvar hyprmacs-session--fake-outbox nil
   "Captured frames sent through fake transport.")
+
+(defvar hyprmacs-session--process nil
+  "Active network process for real IPC transport.")
+
+(defvar hyprmacs-session--partial-frame ""
+  "Buffered partial frame data for process filter." )
 
 (defun hyprmacs-session-reset ()
   "Reset the session state to defaults."
@@ -37,17 +43,40 @@
           :input-mode nil
           :last-message-type nil)))
 
-(defun hyprmacs-session-connect ()
-  "Mark session as connected (fake transport phase)."
+(defun hyprmacs-session--set-connection-status (status)
+  "Set connection STATUS in session state."  
   (setq hyprmacs-session-state
-        (plist-put hyprmacs-session-state :connection-status 'connected))
-  hyprmacs-session-state)
+        (plist-put hyprmacs-session-state :connection-status status)))
+
+(defun hyprmacs-session-connect (&optional socket-path)
+  "Connect to plugin socket at SOCKET-PATH or default path.
+Any existing connection is closed first."  
+  (hyprmacs-session-disconnect)
+  (let* ((path (or socket-path (hyprmacs-ipc-default-socket-path)))
+         (process (make-network-process :name "hyprmacs-ipc"
+                                        :family 'local
+                                        :service path
+                                        :coding 'utf-8-unix
+                                        :noquery t
+                                        :filter #'hyprmacs-session--process-filter
+                                        :sentinel #'hyprmacs-session--process-sentinel)))
+    (setq hyprmacs-session--process process)
+    (setq hyprmacs-session--partial-frame "")
+    (setq hyprmacs-session--transport-send
+          (lambda (frame)
+            (when (process-live-p hyprmacs-session--process)
+              (process-send-string hyprmacs-session--process frame))))
+    (hyprmacs-session--set-connection-status 'connected)
+    hyprmacs-session-state))
 
 (defun hyprmacs-session-disconnect ()
-  "Mark session as disconnected and clear transport state."
-  (setq hyprmacs-session-state
-        (plist-put hyprmacs-session-state :connection-status 'disconnected))
+  "Disconnect and clear transport process state."  
+  (when (process-live-p hyprmacs-session--process)
+    (delete-process hyprmacs-session--process))
+  (setq hyprmacs-session--process nil)
+  (setq hyprmacs-session--partial-frame "")
   (setq hyprmacs-session--transport-send #'ignore)
+  (hyprmacs-session--set-connection-status 'disconnected)
   hyprmacs-session-state)
 
 (defun hyprmacs-session-use-fake-transport ()
@@ -115,6 +144,23 @@
                         (hyprmacs-ipc-mode-from-wire
                          (alist-get 'input_mode payload nil nil #'equal)))))))
   hyprmacs-session-state)
+
+(defun hyprmacs-session--process-filter (_process chunk)
+  "Handle transport CHUNK from process filter."  
+  (let* ((split (hyprmacs-ipc-split-frames (concat hyprmacs-session--partial-frame chunk)))
+         (frames (car split))
+         (tail (cdr split)))
+    (setq hyprmacs-session--partial-frame tail)
+    (dolist (frame frames)
+      (hyprmacs-session-handle-frame frame))))
+
+(defun hyprmacs-session--process-sentinel (_process event)
+  "Handle process lifecycle EVENT."  
+  (when (string-match-p "closed\\|deleted\\|failed" event)
+    (setq hyprmacs-session--process nil)
+    (setq hyprmacs-session--partial-frame "")
+    (setq hyprmacs-session--transport-send #'ignore)
+    (hyprmacs-session--set-connection-status 'disconnected)))
 
 (defun hyprmacs-session-fake-receive (frame)
   "Feed FRAME into the fake transport receive path."

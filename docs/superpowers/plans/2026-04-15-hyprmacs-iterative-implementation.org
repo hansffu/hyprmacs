@@ -297,7 +297,7 @@ Validation:
 - Run ERT tests for session transitions and buffer creation.
 - Open the state buffer in Emacs and inspect mock client data rendered there.
 
-** TODO Task 5: Wire up the real IPC handshake and coarse workspace commands
+** DONE Task 5: Wire up the real IPC handshake and coarse workspace commands
 Purpose:
 - Replace the fake transport with a real plugin-owned socket and prove that both sides stay synchronized.
 
@@ -311,18 +311,30 @@ Files:
 - Create =plugin/tests/ipc_server_tests.cpp=
 
 Steps:
-*** TODO Start the plugin socket server
+*** DONE Start the plugin socket server
 - Create and own a Unix socket path under =$XDG_RUNTIME_DIR=.
 - Support exactly one controller connection in v1 and reject extra controllers with a clear error.
-*** TODO Implement the first live command path
+*** DONE Implement the first live command path
 - Handle =manage-workspace=, =unmanage-workspace=, and =request-state= on the plugin side.
 - Send =workspace-managed=, =workspace-unmanaged=, and =state-dump= back to Emacs.
-*** TODO Implement reconnect-safe session handling
+*** DONE Implement reconnect-safe session handling
 - Ensure Emacs can disconnect and reconnect without leaking duplicate event handlers or stale process objects.
-*** TODO Add integration logging
+*** DONE Add integration logging
 - Log every message type at debug level with enough context to diagnose sync bugs.
-*** WAIT Review task 5 with user
+*** DONE Review task 5 with user
 - Stop when Emacs can manage and unmanage a workspace and display real plugin state.
+
+*** DONE Session note: Task 5 plugin socket path and command routing
+- Added plugin-owned Unix socket server at =$XDG_RUNTIME_DIR/hyprmacs-v1.sock= with newline-delimited JSON frames.
+- Added routing for =manage-workspace=, =unmanage-workspace=, and =request-state= to corresponding plugin responses.
+- Added =ipc_server_tests= coverage for command routing response shapes.
+
+*** DONE Session note: Task 5 reconnect-safe Emacs transport
+- Emacs session now connects through a real local socket process, with explicit filter/sentinel handling and partial-frame buffering.
+- Connect now tears down any existing process first; disconnect clears process handles and transport functions.
+
+*** DONE Session note: Task 5 integration logging
+- Plugin now logs IPC listen path, controller connect/disconnect, every received message type, and every sent message type.
 
 Validation:
 - Start nested Hyprland, connect Emacs, manage a workspace, request state, and verify the state buffer matches the live workspace contents.

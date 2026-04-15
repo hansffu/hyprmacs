@@ -1,5 +1,6 @@
 #include <string>
 
+#include "hyprmacs/ipc_server.hpp"
 #include "hyprmacs/workspace_manager.hpp"
 
 #if __has_include(<hyprland/src/plugins/PluginAPI.hpp>)
@@ -36,6 +37,7 @@ constexpr auto kPluginAuthor = "Hans Fredrik Furholt";
 constexpr auto kPluginVersion = "0.1.0";
 
 hyprmacs::WorkspaceManager g_workspace_manager;
+hyprmacs::IpcServer g_ipc_server(&g_workspace_manager);
 }
 
 #if HYPRMACS_HAS_REAL_PLUGIN_API
@@ -61,10 +63,11 @@ APICALL EXPORT PLUGIN_DESCRIPTION_INFO PLUGIN_INIT(HANDLE handle) {
     }
 
     g_workspace_manager.start_event_tap();
+    g_ipc_server.start();
 
     HyprlandAPI::addNotification(
         PHANDLE,
-        "[hyprmacs] event tap enabled (Task 3.1)",
+        "[hyprmacs] event tap + ipc enabled (Task 5)",
         CHyprColor {0.2, 1.0, 0.4, 1.0},
         4000
     );
@@ -73,6 +76,7 @@ APICALL EXPORT PLUGIN_DESCRIPTION_INFO PLUGIN_INIT(HANDLE handle) {
 }
 
 APICALL EXPORT void PLUGIN_EXIT() {
+    g_ipc_server.stop();
     g_workspace_manager.stop_event_tap();
 }
 #else
@@ -84,6 +88,7 @@ APICALL EXPORT std::string PLUGIN_API_VERSION() {
 
 APICALL EXPORT PLUGIN_DESCRIPTION_INFO PLUGIN_INIT(HANDLE) {
     g_workspace_manager.start_event_tap();
+    g_ipc_server.start();
     return {
         kPluginName,
         std::string {kPluginDescription} + " Built without Hyprland headers.",
@@ -93,6 +98,7 @@ APICALL EXPORT PLUGIN_DESCRIPTION_INFO PLUGIN_INIT(HANDLE) {
 }
 
 APICALL EXPORT void PLUGIN_EXIT() {
+    g_ipc_server.stop();
     g_workspace_manager.stop_event_tap();
 }
 #endif

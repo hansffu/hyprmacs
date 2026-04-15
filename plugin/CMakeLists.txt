@@ -14,6 +14,8 @@ add_library(hyprmacs SHARED
   src/workspace_manager.cpp
   src/client_registry.cpp
   src/client_classifier.cpp
+  src/protocol.cpp
+  src/ipc_server.cpp
 )
 
 target_include_directories(hyprmacs PRIVATE

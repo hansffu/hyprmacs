@@ -6,7 +6,7 @@
 
 ;;; Commentary:
 
-;; Task 1 bootstrap entrypoint for the hyprmacs package.
+;; Entry point for hyprmacs user commands.
 
 ;;; Code:
 
@@ -16,13 +16,15 @@
 (defconst hyprmacs-version "0.1.0"
   "Current hyprmacs bootstrap version.")
 
-(defun hyprmacs-connect ()
-  "Connect to hyprmacs session state.
-This still uses fake transport until Task 5 adds the real socket path."  
+(defun hyprmacs-connect (&optional socket-path)
+  "Connect to hyprmacs plugin IPC at SOCKET-PATH."  
   (interactive)
-  (hyprmacs-session-connect)
-  (hyprmacs-session-use-fake-transport)
-  (message "hyprmacs: connected (fake transport)"))
+  (condition-case err
+      (progn
+        (hyprmacs-session-connect socket-path)
+        (message "hyprmacs: connected to plugin IPC"))
+    (error
+     (message "hyprmacs: connect failed: %s" (error-message-string err)))))
 
 (defun hyprmacs-disconnect ()
   "Disconnect from hyprmacs session state."  
@@ -43,6 +45,13 @@ This still uses fake transport until Task 5 adds the real socket path."
                                   (or (plist-get hyprmacs-session-state :workspace-id) "1"))))
   (hyprmacs-session-unmanage-workspace workspace-id "user-request")
   (message "hyprmacs: requested unmanage-workspace for %s" workspace-id))
+
+(defun hyprmacs-request-state (workspace-id)
+  "Request state dump for WORKSPACE-ID."  
+  (interactive (list (read-string "Workspace ID: "
+                                  (or (plist-get hyprmacs-session-state :workspace-id) "1"))))
+  (hyprmacs-session-request-state workspace-id)
+  (message "hyprmacs: requested state for %s" workspace-id))
 
 (defun hyprmacs-dump-state ()
   "Render current session state in a debug buffer."  

@@ -9,6 +9,7 @@
 #include <unordered_map>
 
 #include "hyprmacs/client_registry.hpp"
+#include "hyprmacs/plugin_state.hpp"
 
 namespace hyprmacs {
 
@@ -33,6 +34,11 @@ class WorkspaceManager {
 
     std::unordered_map<std::string, size_t> event_counts() const;
 
+    bool manage_workspace(const WorkspaceId& workspace_id);
+    bool unmanage_workspace(const WorkspaceId& workspace_id);
+    void set_controller_connected(bool connected);
+    StateDumpPayload build_state_dump(const WorkspaceId& workspace_id) const;
+
   private:
     void event_loop();
     void handle_line(const std::string& line);
@@ -45,6 +51,8 @@ class WorkspaceManager {
     mutable std::mutex mutex_;
     std::unordered_map<std::string, size_t> event_counts_;
     ClientRegistry client_registry_;
+    std::optional<WorkspaceId> managed_workspace_id_;
+    bool controller_connected_ = false;
 };
 
 }  // namespace hyprmacs
