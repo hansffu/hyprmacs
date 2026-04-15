@@ -29,11 +29,26 @@
           :workspace-id nil
           :managed nil
           :controller-connected nil
+          :known-clients nil
+          :associated-buffers nil
           :eligible-clients nil
           :managed-clients nil
           :selected-client nil
           :input-mode nil
           :last-message-type nil)))
+
+(defun hyprmacs-session-connect ()
+  "Mark session as connected (fake transport phase)."
+  (setq hyprmacs-session-state
+        (plist-put hyprmacs-session-state :connection-status 'connected))
+  hyprmacs-session-state)
+
+(defun hyprmacs-session-disconnect ()
+  "Mark session as disconnected and clear transport state."
+  (setq hyprmacs-session-state
+        (plist-put hyprmacs-session-state :connection-status 'disconnected))
+  (setq hyprmacs-session--transport-send #'ignore)
+  hyprmacs-session-state)
 
 (defun hyprmacs-session-use-fake-transport ()
   "Enable fake transport that captures outbound frames in-memory."
@@ -85,6 +100,9 @@
                         (hyprmacs-session--payload-bool payload 'controller_connected)))
        (setq hyprmacs-session-state
              (plist-put hyprmacs-session-state :eligible-clients
+                        (alist-get 'eligible_clients payload nil nil #'equal)))
+       (setq hyprmacs-session-state
+             (plist-put hyprmacs-session-state :known-clients
                         (alist-get 'eligible_clients payload nil nil #'equal)))
        (setq hyprmacs-session-state
              (plist-put hyprmacs-session-state :managed-clients

@@ -17,4 +17,4 @@ load:
   nix run .#hyprmacs-load
 
 emacs:
-  emacs -L emacs --eval "(require 'hyprmacs-session)"
+  emacs -L emacs --eval "(require 'hyprmacs)"

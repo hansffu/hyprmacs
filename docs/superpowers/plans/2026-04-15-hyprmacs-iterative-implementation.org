@@ -257,7 +257,7 @@ Steps:
 Validation:
 - Launch nested Hyprland, open a few windows, and confirm the registry reflects open and close events plus float transitions.
 
-** TODO Task 4: Build the Emacs-side session and buffer skeleton
+** DONE Task 4: Build the Emacs-side session and buffer skeleton
 Purpose:
 - Let Emacs observe plugin state and create the logical handles users will interact with later.
 
@@ -269,17 +269,29 @@ Files:
 - Create =tests/emacs/buffer-tests.el=
 
 Steps:
-*** TODO Create the session state object
+*** DONE Create the session state object
 - Track current connection status, active workspace, known clients, associated buffers, selected client, and current input mode.
-*** TODO Create user-visible commands
+*** DONE Create user-visible commands
 - Add interactive commands for connect, disconnect, manage current workspace, unmanage workspace, and dump known state into an Emacs buffer.
-*** TODO Create buffer association primitives
+*** DONE Create buffer association primitives
 - Define the buffer-local metadata that identifies a managed client buffer.
 - Add helper functions to create, rename, and clean up those buffers from plugin events.
-*** TODO Drive the Emacs code from fake plugin payloads
+*** DONE Drive the Emacs code from fake plugin payloads
 - Use fixture messages to prove state transitions happen correctly before the real socket is connected.
-*** WAIT Review task 4 with user
+*** DONE Review task 4 with user
 - Confirm the Emacs-side UX for state inspection before real IPC is enabled.
+
+*** DONE Session note: Task 4 Emacs modules and tests
+- Added =emacs/hyprmacs-buffers.el= for client-to-buffer mapping, title sync, and cleanup helpers.
+- Expanded =emacs/hyprmacs-session.el= with explicit connect/disconnect transitions, session fields for known clients and associations, and fake-transport command paths.
+- Expanded =emacs/hyprmacs.el= user commands to call session primitives and render a =*hyprmacs-state*= inspection buffer.
+- Added ERT coverage in =tests/emacs/session-tests.el= and =tests/emacs/buffer-tests.el= for command-side effects and buffer lifecycle behavior.
+
+*** DONE Session note: stale bytecode handling in Task 4 tests
+- Set =load-prefer-newer= in Task 4 session tests so source edits are always preferred over stale =.elc= artifacts during batch runs.
+
+*** DONE Session note: just emacs entrypoint
+- Updated =just emacs= to load =hyprmacs= (package entrypoint) instead of =hyprmacs-session= so interactive commands are available immediately.
 
 Validation:
 - Run ERT tests for session transitions and buffer creation.
