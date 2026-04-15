@@ -27,7 +27,8 @@ This repository uses the implementation plan in `docs/superpowers/plans/2026-04-
 2. When starting a task, mark it `NEXT` or `TODO` as appropriate and update completed steps to `DONE`.
 3. When blocked, mark the relevant item `BLOCKED` and document the reason in the org plan.
 4. When the user changes direction, update the org plan first, then continue implementation.
-5. Before ending a session, leave the org plan in a state where the next agent can resume work without reconstructing context from chat history.
+5. Make a git commit when completing each top-level task, unless the user explicitly says not to.
+6. Before ending a session, leave the org plan in a state where the next agent can resume work without reconstructing context from chat history.
 
 ## Current Starting Point
 

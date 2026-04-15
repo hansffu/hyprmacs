@@ -1,0 +1,69 @@
+#+title: ADR 0001: v1 Prototype Boundaries
+#+date: 2026-04-15
+
+* Status
+Accepted
+
+* Context
+hyprmacs is starting from an empty repository. The first implementation needs a narrow boundary so the initial prototype can validate the architecture without committing to unnecessary complexity.
+
+The main risks at this stage are:
+- overbuilding the control plane before the basic model works
+- recreating EXWM failure modes around popups and input routing
+- making protocol and layout decisions that are harder to undo later
+
+* Decision
+The first prototype will use the following boundaries:
+
+** Private Unix socket with JSON frames
+- The plugin and Emacs package communicate over a plugin-owned Unix socket under =$XDG_RUNTIME_DIR=.
+- Frames use newline-delimited JSON with an explicit =version= field.
+
+Reason:
+- It is simple to inspect, debug, and evolve early in development.
+- The expected v1 traffic volume is low enough that JSON overhead is acceptable.
+- It avoids overusing user-facing =hyprctl= commands for live synchronization.
+
+** One controller and one active managed workspace
+- Only one Emacs controller may be connected at a time.
+- Only one workspace is managed per active session.
+
+Reason:
+- It keeps lifecycle, ownership, and recovery logic easy to reason about.
+- It matches the goal of proving the architecture before generalizing it.
+
+** Nix is the required development environment
+- Required build dependencies, test dependencies, and runnable development tooling must be available through the repository's Nix flake.
+- The existing nested Hyprland flake setup is extended as the main development entrypoint rather than replaced with a parallel environment.
+
+Reason:
+- The repository already uses Nix as its primary development surface.
+- Keeping setup inside the flake reduces environment drift across sessions and contributors.
+- The nested Hyprland session is part of the intended validation loop for this project.
+
+** Overlapping managed rectangles are rejected
+- Emacs must not send overlapping visible rectangles in v1.
+- The plugin validates the same rule and refuses to guess an overlap policy.
+
+Reason:
+- Overlap is not required to validate the core design.
+- Rejecting overlap removes ambiguity from stacking and input behavior.
+- It keeps the first layout model predictable.
+
+** Controller disconnect restores native behavior
+- If Emacs disconnects, the plugin unmanages the workspace and returns clients to native Hyprland behavior.
+
+Reason:
+- A partially managed workspace is harder to recover from than a clean fallback.
+- This avoids stale control state after Emacs crashes, restarts, or hangs.
+
+* Consequences
+- The protocol stays intentionally small at first.
+- Some richer features, such as overlapping layouts, multi-workspace support, and persistence across controller outages, are explicitly delayed.
+- The implementation favors deterministic recovery and debuggability over feature breadth.
+- Tooling decisions must account for whether they can be packaged or exposed cleanly through Nix.
+
+* Follow-Up
+- Revisit the transport format only if profiling or protocol complexity shows JSON is becoming a real bottleneck.
+- Revisit overlap only after the non-overlapping rectangle model is stable and useful.
+- Revisit disconnect behavior only after there is a proven need for plugin-side layout persistence.

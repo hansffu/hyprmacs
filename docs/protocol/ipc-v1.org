@@ -1,0 +1,157 @@
+#+title: hyprmacs IPC Protocol v1
+#+date: 2026-04-15
+
+* Status
+This document defines the first wire contract between the Hyprland plugin and the Emacs package. It intentionally covers only coarse session and workspace-management messages.
+
+* Transport
+- Unix domain socket owned by the plugin.
+- Socket location lives under =$XDG_RUNTIME_DIR=.
+- Exactly one Emacs controller may be connected at a time.
+- Payload format is newline-delimited JSON.
+- Each line is one complete protocol frame.
+
+* Frame Envelope
+Every message uses this envelope:
+
+#+begin_src json
+{
+  "version": 1,
+  "type": "manage-workspace",
+  "workspace_id": "1",
+  "timestamp": "2026-04-15T12:00:00Z",
+  "payload": {}
+}
+#+end_src
+
+Envelope rules:
+- =version=: integer protocol version. v1 messages must use =1=.
+- =type=: string message name.
+- =workspace_id=: opaque workspace identifier represented as a string. The plugin and Emacs compare it by equality only.
+- =timestamp=: UTC timestamp in RFC 3339 format.
+- =payload=: message-specific JSON object. Use ={}= when no fields are needed.
+
+* Message Flow
+** Emacs -> Plugin
+*** =manage-workspace=
+Purpose:
+- Request that the target workspace enter hyprmacs-managed mode.
+
+Payload:
+#+begin_src json
+{
+  "adopt_existing_clients": true
+}
+#+end_src
+
+Rules:
+- =adopt_existing_clients= defaults to =true= if omitted.
+- If the workspace is already managed, the plugin treats the command as idempotent and replies with =workspace-managed= followed by =state-dump=.
+
+*** =unmanage-workspace=
+Purpose:
+- Request that the target workspace leave hyprmacs-managed mode and return to native Hyprland behavior.
+
+Payload:
+#+begin_src json
+{
+  "reason": "user-request"
+}
+#+end_src
+
+Rules:
+- =reason= is optional. Recommended values in v1 are =user-request= and =controller-disconnect=.
+- If the workspace is already unmanaged, the plugin still returns =workspace-unmanaged=.
+
+*** =request-state=
+Purpose:
+- Request a snapshot of the plugin's current understanding of the target workspace.
+
+Payload:
+#+begin_src json
+{}
+#+end_src
+
+Rules:
+- The plugin replies with =state-dump=.
+
+** Plugin -> Emacs
+*** =workspace-managed=
+Purpose:
+- Notify Emacs that the workspace is now under hyprmacs management.
+
+Payload:
+#+begin_src json
+{
+  "managed": true,
+  "controller_connected": true
+}
+#+end_src
+
+*** =workspace-unmanaged=
+Purpose:
+- Notify Emacs that the workspace is no longer under hyprmacs management.
+
+Payload:
+#+begin_src json
+{
+  "managed": false,
+  "reason": "user-request"
+}
+#+end_src
+
+Rules:
+- =reason= should be present when known.
+- Recommended v1 values are =user-request=, =controller-disconnect=, and =plugin-shutdown=.
+
+*** =state-dump=
+Purpose:
+- Send a canonical workspace snapshot that Emacs can use to build local state.
+
+Payload:
+#+begin_src json
+{
+  "managed": true,
+  "controller_connected": true,
+  "eligible_clients": [
+    {
+      "client_id": "0xabc123",
+      "title": "foot",
+      "app_id": "foot",
+      "floating": false
+    }
+  ],
+  "managed_clients": [],
+  "selected_client": null,
+  "input_mode": null
+}
+#+end_src
+
+Payload field rules:
+- =eligible_clients=: clients in the workspace that could be managed if adoption rules allow it.
+- =managed_clients=: currently managed clients. In the earliest prototype this may be empty even when eligible clients exist.
+- =selected_client=: current managed client ID or =null= when none is selected.
+- =input_mode=: =null= until focus-mode support exists. Later values are expected to be =emacs-control= or =client-control=.
+
+* Reserved For Later Messages
+The following fields are reserved for later layout-oriented protocol work and are not part of the first coarse implementation:
+- =visible_clients=
+- =hidden_clients=
+- =rectangles=
+- =stacking_order=
+
+The future =set-layout= payload is expected to carry:
+- workspace identity
+- selected managed client
+- current input mode
+- visible managed clients
+- hidden managed clients
+- exact rectangles for visible clients
+- stacking order within the managed layer
+
+* Protocol Rules
+- Unknown protocol versions are rejected.
+- Unknown message types are protocol violations and may be logged and ignored in the prototype.
+- Messages are processed in receive order.
+- The latest =state-dump= is authoritative when Emacs needs to resynchronize.
+- This version does not define a dedicated =error= frame. Command rejection is handled by state-preserving no-op behavior plus logging until a richer error path is added.

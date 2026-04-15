@@ -14,6 +14,8 @@ Hyprland remains the compositor and input authority. The plugin owns workspace p
 - Stop at every headline marked =WAIT= and review behavior together before moving on.
 - Prefer vertical slices over large foundation-only branches.
 - Keep v1 intentionally narrow so we can validate the design early.
+- Keep dependencies, tooling, and runnable development environments available through Nix.
+- Make a git commit when completing each top-level task unless the user explicitly says otherwise.
 
 * Plan Maintenance
 - This org file is the primary source of truth for implementation status across sessions.
@@ -25,6 +27,7 @@ Hyprland remains the compositor and input authority. The plugin owns workspace p
 - One Emacs controller process and one managed workspace per active session.
 - Plugin implementation in C++.
 - Emacs package implementation in Emacs Lisp.
+- The existing flake-based nested Hyprland environment is the base developer workflow and should be extended rather than replaced.
 - IPC transport is a plugin-owned Unix domain socket under =$XDG_RUNTIME_DIR=.
 - IPC payloads are newline-delimited JSON with an explicit protocol version field.
 - Overlapping managed rectangles are rejected in v1 instead of guessed.
@@ -64,7 +67,7 @@ Hyprland remains the compositor and input authority. The plugin owns workspace p
 - =docs/testing/manual-smoke-tests.org=: nested Hyprland manual validation checklist.
 
 * Iterative Plan
-** NEXT Task 0: Lock the prototype contract
+** DONE Task 0: Lock the prototype contract
 Purpose:
 - Freeze the first implementation target before code exists.
 
@@ -74,21 +77,29 @@ Files:
 - Create =docs/adr/0001-v1-boundaries.org=
 
 Steps:
-*** TODO Write the v1 scope document
+*** DONE Write the v1 scope document
 - Explicitly include: one managed workspace, native floating windows, native dialogs and popups, native Emacs child frames, single-controller IPC, and non-overlapping rectangles.
 - Explicitly exclude: multi-workspace management, prefix mode, animations, independent plugin layout persistence, and overlap support.
-*** TODO Define protocol version 1
+*** DONE Define protocol version 1
 - Specify message envelope fields: =version=, =type=, =workspace_id=, =timestamp=, and payload object.
 - Fully define the first coarse message set: =manage-workspace=, =unmanage-workspace=, =request-state=, =workspace-managed=, =workspace-unmanaged=, =state-dump=.
 - Reserve but do not implement the later layout fields now: =selected_client=, =input_mode=, =visible_clients=, =hidden_clients=, =rectangles=, =stacking_order=.
-*** TODO Write the first architecture decision record
+*** DONE Write the first architecture decision record
 - Record why JSON over Unix socket is acceptable for v1.
 - Record why overlap is rejected in v1.
 - Record why disconnect restores native workspace behavior.
 *** WAIT Review task 0 with user
 - Confirm the v1 boundaries before any code scaffold is created.
+*** DONE Session note: branch and workflow decision
+- By user request, this session proceeds without a git worktree.
+- Implementation work continues on local branch =task-0-prototype-contract= instead of =main=.
+*** DONE Session note: nix environment requirement
+- Required dependencies, build tools, and runnable developer workflows must be supported through Nix.
+- The existing flake that boots a nested Hyprland session is the base environment to extend in later tasks.
+*** DONE Session note: task commit rule
+- Completed top-level tasks should be committed before moving on unless the user explicitly overrides that rule.
 
-** TODO Task 1: Bootstrap the repository and developer loop
+** NEXT Task 1: Bootstrap the repository and developer loop
 Purpose:
 - Make the repo buildable and testable before adding behavior.
 
@@ -112,6 +123,7 @@ Steps:
 - Configure =ERT= batch execution for Emacs tests.
 *** TODO Extend the Nix dev environment
 - Add build tooling needed for C++, CMake, and test execution.
+- Extend the existing flake-based nested Hyprland session instead of creating a parallel non-Nix workflow.
 - Add a demo app or script that starts nested Hyprland with the plugin path wired into the config.
 *** WAIT Review task 1 with user
 - Stop when the empty plugin loads and the empty Emacs package byte-compiles.
