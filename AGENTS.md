@@ -9,6 +9,7 @@ This repository uses the implementation plan in `docs/superpowers/plans/2026-04-
 3. Update TODO states in that org document as work progresses.
 4. Stop at every `WAIT` heading and ask the user for review before continuing.
 5. Do not silently skip a `WAIT` checkpoint, even if the next task seems straightforward.
+6. After the user approves a `WAIT` checkpoint, update that checkpoint from `WAIT` to `DONE` immediately.
 
 ## Plan Maintenance Rules
 

@@ -12,6 +12,7 @@ Hyprland remains the compositor and input authority. The plugin owns workspace p
 * Working Agreement
 - Treat each top-level task as one reviewable increment.
 - Stop at every headline marked =WAIT= and review behavior together before moving on.
+- After a user approves a =WAIT= checkpoint, change that checkpoint to =DONE= immediately.
 - Prefer vertical slices over large foundation-only branches.
 - Keep v1 intentionally narrow so we can validate the design early.
 - Keep dependencies, tooling, and runnable development environments available through Nix.
@@ -88,7 +89,7 @@ Steps:
 - Record why JSON over Unix socket is acceptable for v1.
 - Record why overlap is rejected in v1.
 - Record why disconnect restores native workspace behavior.
-*** WAIT Review task 0 with user
+*** DONE Review task 0 with user
 - Confirm the v1 boundaries before any code scaffold is created.
 *** DONE Session note: branch and workflow decision
 - By user request, this session proceeds without a git worktree.
