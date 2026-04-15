@@ -36,24 +36,40 @@
       system:
       let
         pkgs = import nixpkgs { inherit system; };
-
         # Official debug package from the Hyprland flake.
         hyprPkg = hyprland.packages.${system}.hyprland-debug;
+
+        commonTools = [
+          pkgs.coreutils
+          pkgs.which
+          pkgs.git
+          pkgs.ripgrep
+          pkgs.fd
+          pkgs.gnused
+          pkgs.gnugrep
+          pkgs.findutils
+          pkgs.jq
+          pkgs.cmake
+          pkgs.pkg-config
+          pkgs.gnumake
+          pkgs.clang
+        ];
+
+        agentTools = [
+          pkgs.emacs
+        ];
+
+        devTools = [
+          hyprPkg
+          pkgs.foot
+          pkgs.gdb
+          pkgs.wayland-utils
+        ];
         codex-sandbox = sandbox.lib.${system}.mkSandbox {
           pkg = llm-agents.packages.${system}.codex;
           binName = "codex";
-          outName = "codex-sandboxed"; # or whatever alias you'd like
-          allowedPackages = [
-            pkgs.coreutils
-            pkgs.which
-            pkgs.git
-            pkgs.ripgrep
-            pkgs.fd
-            pkgs.gnused
-            pkgs.gnugrep
-            pkgs.findutils
-            pkgs.jq
-          ];
+          outName = "codex-sandbox"; # or whatever alias you'd like
+          allowedPackages = commonTools ++ agentTools;
           stateDirs = [
             "$HOME/.codex"
             "$HOME/.agents"
@@ -99,12 +115,8 @@
 
         runNested = pkgs.writeShellApplication {
           name = "run-nested-hyprland-debug";
-          runtimeInputs = [
-            hyprPkg
-            pkgs.foot
-            pkgs.gdb
+          runtimeInputs = devTools ++ [
             pkgs.jq
-            pkgs.wayland-utils
           ];
           text = ''
             echo "Starting nested Hyprland debug session..."
@@ -122,21 +134,21 @@
       in
       {
         packages.default = runNested;
+        packages.codex-sandbox = codex-sandbox;
 
         apps.default = {
           type = "app";
           program = "${runNested}/bin/run-nested-hyprland-debug";
         };
+        apps.codex-sandbox = {
+          type = "app";
+          program = "${codex-sandbox}/bin/codex-sandbox";
+        };
 
         devShells.default = pkgs.mkShell {
-          packages = [
+          packages = commonTools ++ devTools ++ [
             runNested
             codex-sandbox
-            hyprPkg
-            pkgs.foot
-            pkgs.gdb
-            pkgs.jq
-            pkgs.wayland-utils
           ];
         };
       }

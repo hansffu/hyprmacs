@@ -126,6 +126,14 @@ Steps:
 - Add build tooling needed for C++, CMake, and test execution.
 - Extend the existing flake-based nested Hyprland session instead of creating a parallel non-Nix workflow.
 - Add a demo app or script that starts nested Hyprland with the plugin path wired into the config.
+*** DONE Session note: flake tool list split
+- The flake should separate =commonTools=, =agentTools=, and =devTools= to keep sandbox-visible tools and the developer shell aligned without duplicating package lists.
+*** DONE Session note: sandbox flake target
+- Expose =codex-sandbox= as both a flake package and app so restart flow can use =nix run .#codex-sandbox= directly.
+*** DONE Session note: sandbox artifact ignore
+- Ignore the empty =.codex= file created by the sandbox wrapper so it does not pollute repository status.
+*** DONE Session note: nix execution boundary
+- Keep the flake updated in-repo, but let the user run =nix= commands outside the agent sandbox for validation and restart flows.
 *** WAIT Review task 1 with user
 - Stop when the empty plugin loads and the empty Emacs package byte-compiles.
 
