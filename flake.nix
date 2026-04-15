@@ -13,6 +13,8 @@
   inputs = {
     nixpkgs.url = "github:NixOS/nixpkgs/nixos-unstable";
 
+    sandbox.url = "github:archie-judd/agent-sandbox.nix";
+    llm-agents.url = "github:numtide/llm-agents.nix";
     flake-utils.url = "github:numtide/flake-utils";
 
     hyprland = {
@@ -27,6 +29,8 @@
       nixpkgs,
       flake-utils,
       hyprland,
+      sandbox,
+      llm-agents,
     }:
     flake-utils.lib.eachDefaultSystem (
       system:
@@ -35,6 +39,29 @@
 
         # Official debug package from the Hyprland flake.
         hyprPkg = hyprland.packages.${system}.hyprland-debug;
+        codex-sandbox = sandbox.lib.${system}.mkSandbox {
+          pkg = llm-agents.packages.${system}.codex;
+          binName = "codex";
+          outName = "codex-sandboxed"; # or whatever alias you'd like
+          allowedPackages = [
+            pkgs.coreutils
+            pkgs.which
+            pkgs.git
+            pkgs.ripgrep
+            pkgs.fd
+            pkgs.gnused
+            pkgs.gnugrep
+            pkgs.findutils
+            pkgs.jq
+          ];
+          stateDirs = [
+            "$HOME/.codex"
+            "$HOME/.agents"
+          ];
+          stateFiles = [ ];
+          extraEnv = { };
+          restrictNetwork = false;
+        };
 
         hyprDebugConfig = pkgs.writeText "hyprlandd.conf" ''
           monitor = , preferred, auto, 1
@@ -104,6 +131,7 @@
         devShells.default = pkgs.mkShell {
           packages = [
             runNested
+            codex-sandbox
             hyprPkg
             pkgs.foot
             pkgs.gdb
