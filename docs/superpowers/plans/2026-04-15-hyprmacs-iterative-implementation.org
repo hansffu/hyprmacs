@@ -163,7 +163,7 @@ Validation:
 - =ctest --test-dir build/plugin --output-on-failure=
 - =emacs -Q --batch -L emacs -L tests/emacs -l bootstrap-tests.el -f ert-run-tests-batch-and-exit=
 
-** TODO Task 2: Implement shared protocol and state models first
+** DONE Task 2: Implement shared protocol and state models first
 Purpose:
 - Put the hardest coordination contract under test before compositor behavior enters the picture.
 
@@ -177,18 +177,30 @@ Files:
 - Create =tests/emacs/protocol-tests.el=
 
 Steps:
-*** TODO Define canonical identifiers
+*** DONE Define canonical identifiers
 - Standardize how workspace IDs, client IDs, buffer IDs, and mode names are represented on both sides.
-*** TODO Implement protocol encode and decode helpers
+*** DONE Implement protocol encode and decode helpers
 - Build parser and serializer helpers on the plugin side.
 - Build parser and serializer helpers on the Emacs side.
-*** TODO Add golden tests for wire compatibility
+*** DONE Add golden tests for wire compatibility
 - Add C++ tests for decoding example JSON payloads.
 - Add ERT tests that encode the same objects and compare them to the documented payload shapes.
-*** TODO Add a fake transport harness
+*** DONE Add a fake transport harness
 - Make it possible to drive the Emacs session code with fixture payloads before a real plugin server exists.
-*** WAIT Review task 2 with user
+*** DONE Review task 2 with user
 - Confirm the message contract before event hooks or layout logic are added.
+
+*** DONE Session note: canonical identifier and mode representation
+- Workspace IDs, client IDs, and buffer IDs are represented as opaque strings on both sides.
+- Input mode is represented as =emacs-control= and =client-control= on the wire, and mapped to Emacs symbols =emacs-control= and =client-control= in Lisp.
+
+*** DONE Session note: protocol helper coverage in Task 2
+- Plugin side includes explicit parse and serialize helpers for frame envelopes and =state-dump= payloads.
+- Emacs side includes envelope construction, newline-delimited frame encode/decode, mode conversion helpers, and frame splitting for incremental reads.
+
+*** DONE Session note: fake transport scope
+- Task 2 fake transport is in-memory only: outbound frames are captured in an outbox and inbound fixture frames are applied through session handlers.
+- Real Unix socket lifecycle and controller arbitration remain in Task 5.
 
 Validation:
 - Run plugin protocol tests and ERT protocol tests with fixture payloads from =docs/protocol/ipc-v1.org=.

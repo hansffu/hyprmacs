@@ -18,3 +18,21 @@ add_test(
   NAME hyprmacs_plugin_symbol_smoke
   COMMAND $<TARGET_FILE:hyprmacs_plugin_symbol_smoke> $<TARGET_FILE:hyprmacs>
 )
+
+add_executable(hyprmacs_protocol_tests
+  protocol_tests.cpp
+  ../src/protocol.cpp
+)
+
+target_include_directories(hyprmacs_protocol_tests PRIVATE
+  ${CMAKE_CURRENT_SOURCE_DIR}/../include
+)
+
+if(CMAKE_CXX_COMPILER_ID MATCHES "Clang|GNU")
+  target_compile_options(hyprmacs_protocol_tests PRIVATE -Wall -Wextra -Wpedantic)
+endif()
+
+add_test(
+  NAME hyprmacs_protocol_tests
+  COMMAND hyprmacs_protocol_tests
+)
