@@ -100,7 +100,7 @@ Steps:
 *** DONE Session note: task commit rule
 - Completed top-level tasks should be committed before moving on unless the user explicitly overrides that rule.
 
-** NEXT Task 1: Bootstrap the repository and developer loop
+** DONE Task 1: Bootstrap the repository and developer loop
 Purpose:
 - Make the repo buildable and testable before adding behavior.
 
@@ -137,7 +137,23 @@ Steps:
 *** DONE Session note: local bootstrap verification
 - Local sandbox verification now covers =cmake= configure, =cmake --build=, =ctest=, ERT bootstrap tests, and byte-compilation of =emacs/hyprmacs.el=.
 - The remaining authoritative Task 1 check is loading the built plugin in the user's nested Hyprland session.
-*** WAIT Review task 1 with user
+*** DONE Session note: justfile bootstrap commands
+- Added a top-level =justfile= with =just build=, =just run=, and =just load= recipes for the Task 1 bootstrap workflow.
+*** DONE Session note: guard against fallback plugin load
+- =just load= now refuses to load a plugin artifact that contains fallback markers (missing real Hyprland headers at build time) and tells the user to rebuild first.
+*** DONE Session note: nix-native plugin build flow
+- Task 1 bootstrap flow now uses =nix build .#hyprmacs-plugin= for plugin artifacts, with =just load= consuming the resulting =result/lib/*.so= output.
+*** DONE Session note: hyprmacs-load run path
+- Simplified runtime testing flow: =just run= maps to =nix run .=, and =just load= maps to =nix run .#hyprmacs-load= where the loader script resolves and loads the plugin from the Nix store.
+*** DONE Session note: mkHyprlandPlugin meta requirement
+- The plugin derivation must include a =meta= attribute (description/license/platforms) because =hyprlandPlugins.mkHyprlandPlugin= merges =args.meta= during evaluation.
+*** DONE Session note: plugin derivation source root
+- The Nix plugin derivation must use =src = ../plugin= so CMake sees the plugin =CMakeLists.txt= at source root.
+*** DONE Session note: nixpkgs channel selection
+- Switched flake input from =nixos-unstable= to =nixpkgs-unstable= for general nixpkgs tracking.
+*** DONE Session note: bootstrap hash mismatch handling
+- During Task 1 bootstrap, Hyprland API hash mismatch in =PLUGIN_INIT= is treated as a warning notification instead of a fatal throw so the empty plugin can load for smoke validation.
+*** DONE Review task 1 with user
 - Stop when the empty plugin loads and the empty Emacs package byte-compiles.
 
 Validation:

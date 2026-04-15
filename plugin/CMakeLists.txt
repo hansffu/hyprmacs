@@ -22,6 +22,10 @@ if(CMAKE_CXX_COMPILER_ID MATCHES "Clang|GNU")
   target_compile_options(hyprmacs PRIVATE -Wall -Wextra -Wpedantic)
 endif()
 
+install(TARGETS hyprmacs
+  LIBRARY DESTINATION lib
+)
+
 enable_testing()
 
 if(HYPRMACS_BUILD_TESTS)

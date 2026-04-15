@@ -11,7 +11,7 @@
   };
 
   inputs = {
-    nixpkgs.url = "github:NixOS/nixpkgs/nixos-unstable";
+    nixpkgs.url = "github:NixOS/nixpkgs/nixpkgs-unstable";
 
     sandbox.url = "github:archie-judd/agent-sandbox.nix";
     llm-agents.url = "github:numtide/llm-agents.nix";
@@ -131,10 +131,40 @@
             exec ${hyprPkg}/bin/Hyprland --config ${hyprDebugConfig}
           '';
         };
+
+        hyprmacsPlugin = pkgs.callPackage ./nix/hyprmacs-plugin.nix {
+          hyprland = hyprPkg;
+        };
+
+        hyprmacsLoad = pkgs.writeShellApplication {
+          name = "hyprmacs-load";
+          runtimeInputs = [
+            hyprPkg
+            pkgs.findutils
+            pkgs.gnugrep
+          ];
+          text = ''
+            so_path="$(find ${hyprmacsPlugin}/lib -maxdepth 1 -type f -name '*.so' | head -n 1)"
+            if [ -z "$so_path" ]; then
+              echo "No plugin shared object found under ${hyprmacsPlugin}/lib"
+              exit 1
+            fi
+
+            if strings "$so_path" | grep -Eq "bootstrap-fallback|Built without Hyprland headers"; then
+              echo "Refusing to load fallback plugin build from $so_path"
+              echo "Rebuild the plugin package in an environment with Hyprland headers."
+              exit 1
+            fi
+
+            hyprctl plugin load "$so_path"
+          '';
+        };
       in
       {
         packages.default = runNested;
         packages.codex-sandbox = codex-sandbox;
+        packages.hyprmacs-plugin = hyprmacsPlugin;
+        packages.hyprmacs-load = hyprmacsLoad;
 
         apps.default = {
           type = "app";
@@ -143,6 +173,14 @@
         apps.codex-sandbox = {
           type = "app";
           program = "${codex-sandbox}/bin/codex-sandbox";
+        };
+        apps.hyprmacs-plugin = {
+          type = "app";
+          program = "${hyprmacsPlugin}";
+        };
+        apps.hyprmacs-load = {
+          type = "app";
+          program = "${hyprmacsLoad}/bin/hyprmacs-load";
         };
 
         devShells.default = pkgs.mkShell {

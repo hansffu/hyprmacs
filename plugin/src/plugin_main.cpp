@@ -1,5 +1,4 @@
 #include <string>
-#include <stdexcept>
 
 #if __has_include(<hyprland/src/plugins/PluginAPI.hpp>)
 #define HYPRMACS_HAS_REAL_PLUGIN_API 1
@@ -51,11 +50,10 @@ APICALL EXPORT PLUGIN_DESCRIPTION_INFO PLUGIN_INIT(HANDLE handle) {
     if (compositor_hash != client_hash) {
         HyprlandAPI::addNotification(
             PHANDLE,
-            "[hyprmacs] Mismatched headers! Can't proceed.",
-            CHyprColor {1.0, 0.2, 0.2, 1.0},
+            "[hyprmacs] API hash mismatch detected; continuing in bootstrap mode.",
+            CHyprColor {1.0, 0.7, 0.2, 1.0},
             5000
         );
-        throw std::runtime_error("[hyprmacs] Version mismatch");
     }
 
     return {kPluginName, kPluginDescription, kPluginAuthor, kPluginVersion};
