@@ -11,6 +11,11 @@ option(HYPRMACS_BUILD_TESTS "Build bootstrap tests for the hyprmacs plugin." ON)
 
 add_library(hyprmacs SHARED
   src/plugin_main.cpp
+  src/workspace_manager.cpp
+)
+
+target_include_directories(hyprmacs PRIVATE
+  ${CMAKE_CURRENT_SOURCE_DIR}/include
 )
 
 set_target_properties(hyprmacs PROPERTIES

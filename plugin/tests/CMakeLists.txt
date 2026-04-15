@@ -36,3 +36,21 @@ add_test(
   NAME hyprmacs_protocol_tests
   COMMAND hyprmacs_protocol_tests
 )
+
+add_executable(hyprmacs_workspace_manager_tests
+  workspace_manager_tests.cpp
+  ../src/workspace_manager.cpp
+)
+
+target_include_directories(hyprmacs_workspace_manager_tests PRIVATE
+  ${CMAKE_CURRENT_SOURCE_DIR}/../include
+)
+
+if(CMAKE_CXX_COMPILER_ID MATCHES "Clang|GNU")
+  target_compile_options(hyprmacs_workspace_manager_tests PRIVATE -Wall -Wextra -Wpedantic)
+endif()
+
+add_test(
+  NAME hyprmacs_workspace_manager_tests
+  COMMAND hyprmacs_workspace_manager_tests
+)

@@ -1,5 +1,7 @@
 #include <string>
 
+#include "hyprmacs/workspace_manager.hpp"
+
 #if __has_include(<hyprland/src/plugins/PluginAPI.hpp>)
 #define HYPRMACS_HAS_REAL_PLUGIN_API 1
 #include <hyprland/src/plugins/PluginAPI.hpp>
@@ -32,6 +34,8 @@ constexpr auto kPluginDescription =
     "Bootstrap plugin scaffold for Emacs-directed Hyprland workspaces.";
 constexpr auto kPluginAuthor = "Hans Fredrik Furholt";
 constexpr auto kPluginVersion = "0.1.0";
+
+hyprmacs::WorkspaceManager g_workspace_manager;
 }
 
 #if HYPRMACS_HAS_REAL_PLUGIN_API
@@ -56,10 +60,21 @@ APICALL EXPORT PLUGIN_DESCRIPTION_INFO PLUGIN_INIT(HANDLE handle) {
         );
     }
 
+    g_workspace_manager.start_event_tap();
+
+    HyprlandAPI::addNotification(
+        PHANDLE,
+        "[hyprmacs] event tap enabled (Task 3.1)",
+        CHyprColor {0.2, 1.0, 0.4, 1.0},
+        4000
+    );
+
     return {kPluginName, kPluginDescription, kPluginAuthor, kPluginVersion};
 }
 
-APICALL EXPORT void PLUGIN_EXIT() {}
+APICALL EXPORT void PLUGIN_EXIT() {
+    g_workspace_manager.stop_event_tap();
+}
 #else
 // Fallback bootstrap path for agent sandboxes that do not expose Hyprland headers.
 // The real nested-Hyprland validation must still be done in the user's Nix env.
@@ -68,6 +83,7 @@ APICALL EXPORT std::string PLUGIN_API_VERSION() {
 }
 
 APICALL EXPORT PLUGIN_DESCRIPTION_INFO PLUGIN_INIT(HANDLE) {
+    g_workspace_manager.start_event_tap();
     return {
         kPluginName,
         std::string {kPluginDescription} + " Built without Hyprland headers.",
@@ -76,5 +92,7 @@ APICALL EXPORT PLUGIN_DESCRIPTION_INFO PLUGIN_INIT(HANDLE) {
     };
 }
 
-APICALL EXPORT void PLUGIN_EXIT() {}
+APICALL EXPORT void PLUGIN_EXIT() {
+    g_workspace_manager.stop_event_tap();
+}
 #endif
