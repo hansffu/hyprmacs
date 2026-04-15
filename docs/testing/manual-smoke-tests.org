@@ -1,0 +1,37 @@
+#+title: hyprmacs Manual Smoke Tests
+#+date: 2026-04-15
+
+* Task 1 Bootstrap
+** Emacs package
+- Run:
+  =emacs -Q --batch -L emacs -L tests/emacs -l bootstrap-tests.el -f ert-run-tests-batch-and-exit=
+- Expect:
+  - both bootstrap ERT tests pass
+  - =hyprmacs.el= loads successfully
+
+** Plugin bootstrap build
+- Run:
+  =cmake -S plugin -B build/plugin=
+- Then:
+  =cmake --build build/plugin=
+- Then:
+  =ctest --test-dir build/plugin --output-on-failure=
+- Expect:
+  - CMake configure succeeds
+  - the =hyprmacs= shared library is built
+  - the symbol smoke test passes
+
+** Nested Hyprland smoke test
+- Start the nested session:
+  =nix run .#default=
+- In another shell, build the plugin and get its absolute path.
+- Inside the nested session, run:
+  =hyprctl plugin load /absolute/path/to/hyprmacs.so=
+- Expect:
+  - Hyprland loads the plugin without crashing
+  - the plugin can be unloaded cleanly with:
+    =hyprctl plugin unload /absolute/path/to/hyprmacs.so=
+
+* Notes
+- The agent sandbox may not expose Hyprland headers directly even when the flake does in the user environment.
+- If the plugin binary is built in fallback mode, the nested Hyprland load check is the authoritative validation step.

@@ -114,15 +114,15 @@ Files:
 - Create =docs/testing/manual-smoke-tests.org=
 
 Steps:
-*** TODO Add plugin build scaffolding
+*** DONE Add plugin build scaffolding
 - Create a minimal shared-library target that matches Hyprland's plugin loading expectations.
 - Add a trivial plugin entrypoint that logs successful load and unload.
-*** TODO Add Emacs package scaffolding
+*** DONE Add Emacs package scaffolding
 - Create a package entry file with a version constant, feature provide, and placeholder interactive commands for connect and manage-workspace.
-*** TODO Add test entrypoints
+*** DONE Add test entrypoints
 - Configure =ctest= for plugin-side pure tests.
 - Configure =ERT= batch execution for Emacs tests.
-*** TODO Extend the Nix dev environment
+*** DONE Extend the Nix dev environment
 - Add build tooling needed for C++, CMake, and test execution.
 - Extend the existing flake-based nested Hyprland session instead of creating a parallel non-Nix workflow.
 - Add a demo app or script that starts nested Hyprland with the plugin path wired into the config.
@@ -134,6 +134,9 @@ Steps:
 - Ignore the empty =.codex= file created by the sandbox wrapper so it does not pollute repository status.
 *** DONE Session note: nix execution boundary
 - Keep the flake updated in-repo, but let the user run =nix= commands outside the agent sandbox for validation and restart flows.
+*** DONE Session note: local bootstrap verification
+- Local sandbox verification now covers =cmake= configure, =cmake --build=, =ctest=, ERT bootstrap tests, and byte-compilation of =emacs/hyprmacs.el=.
+- The remaining authoritative Task 1 check is loading the built plugin in the user's nested Hyprland session.
 *** WAIT Review task 1 with user
 - Stop when the empty plugin loads and the empty Emacs package byte-compiles.
 
