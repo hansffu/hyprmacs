@@ -111,6 +111,14 @@
           bind = ALT, Return, exec, ${pkgs.foot}/bin/foot
           bind = ALT, Q, killactive,
           bind = ALT_SHIFT, E, exit,
+          bind = ALT, H, movefocus, l
+          bind = ALT, J, movefocus, d
+          bind = ALT, K, movefocus, u
+          bind = ALT, L, movefocus, r
+          bind = ALT_SHIFT, H, movewindow, l
+          bind = ALT_SHIFT, J, movewindow, d
+          bind = ALT_SHIFT, K, movewindow, u
+          bind = ALT_SHIFT, L, movewindow, r
         '';
 
         runNested = pkgs.writeShellApplication {
@@ -122,6 +130,8 @@
             echo "Starting nested Hyprland debug session..."
             echo "  ALT+Return   open foot"
             echo "  ALT+Q        close active window"
+            echo "  ALT+H/J/K/L  focus left/down/up/right"
+            echo "  ALT+Shift+H/J/K/L  move window left/down/up/right"
             echo "  ALT+Shift+E  exit nested Hyprland"
 
             export XDG_CURRENT_DESKTOP=Hyprland

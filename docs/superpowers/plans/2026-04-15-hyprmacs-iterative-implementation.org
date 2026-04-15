@@ -205,7 +205,7 @@ Steps:
 Validation:
 - Run plugin protocol tests and ERT protocol tests with fixture payloads from =docs/protocol/ipc-v1.org=.
 
-** NEXT Task 3: Build the plugin event tap and managed-state registry
+** DONE Task 3: Build the plugin event tap and managed-state registry
 Purpose:
 - Give the plugin read-only awareness of relevant Hyprland state before it starts changing window behavior.
 
@@ -224,15 +224,15 @@ Steps:
 *** DONE Review task 3.1 with user
 - Validate the event tap can connect to Hyprland's event socket and log tracked lifecycle events in nested Hyprland.
 - Do not start Task 3.2 until this checkpoint is approved.
-*** TODO Implement the in-memory registry
+*** DONE Implement the in-memory registry
 - Store client identity, workspace identity, visibility state, selected state, rectangle, eligibility, and association placeholders.
-*** TODO Implement client classification rules
+*** DONE Implement client classification rules
 - Exclude Emacs itself.
 - Exclude floating clients and obvious popup or transient clients.
 - Mark later edge cases with explicit TODO comments in code only if backed by an ADR or issue.
-*** TODO Add a plugin state dump path
+*** DONE Add a plugin state dump path
 - Expose a coarse debug command or log path that prints current managed and eligible client state without mutating it.
-*** WAIT Review task 3 with user
+*** DONE Review task 3 with user
 - Stop when we can inspect tracked clients in nested Hyprland without any layout control yet.
 
 *** DONE Session note: Task 3.1 event subscription mechanism
@@ -245,6 +245,14 @@ Steps:
 *** DONE Session note: local non-Nix build and load path
 - Added top-level =Makefile= with =make build=, =make test=, and =make load= for local plugin workflows without =nix build=.
 - Keep =justfile= on user-facing Nix commands (=just build=, =just run=, =just load=) while the =Makefile= exists as an agent/developer local path.
+
+*** DONE Session note: Task 3 registry and classification wiring
+- Added =ClientRegistry= state tracking for client identity, workspace, title, app ID, visibility, selected state, floating flag, eligibility, managed placeholder, rectangle placeholder, and buffer association placeholder.
+- Event ingestion now uses v2 events where available (=openwindowv2=, =activewindowv2=, =windowtitlev2=, =movewindowv2=) to maintain richer per-client state.
+- Added coarse classification rules that currently exclude Emacs clients, known popup/transient-like clients, and floating clients from eligibility.
+
+*** DONE Session note: Task 3 state-dump logging
+- The plugin now emits =state-dump= log lines after registry mutations, including global counts and per-client snapshots, so Task 3 can be validated without IPC or layout control.
 
 Validation:
 - Launch nested Hyprland, open a few windows, and confirm the registry reflects open and close events plus float transitions.

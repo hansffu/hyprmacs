@@ -5,9 +5,11 @@
 #include <cstdlib>
 #include <cstring>
 #include <iostream>
+#include <string_view>
 #include <sys/socket.h>
 #include <sys/un.h>
 #include <unistd.h>
+#include <vector>
 
 namespace hyprmacs {
 namespace {
@@ -58,6 +60,37 @@ bool connect_unix_socket(const std::string& path, int* socket_fd) {
     return true;
 }
 
+std::vector<std::string> split_csv_limited(std::string_view value, size_t max_fields) {
+    std::vector<std::string> fields;
+    if (max_fields == 0) {
+        return fields;
+    }
+
+    size_t start = 0;
+    while (fields.size() + 1 < max_fields) {
+        const size_t comma = value.find(',', start);
+        if (comma == std::string_view::npos) {
+            break;
+        }
+        fields.emplace_back(value.substr(start, comma - start));
+        start = comma + 1;
+    }
+    fields.emplace_back(value.substr(start));
+    return fields;
+}
+
+bool parse_boolish(std::string_view value, bool* out) {
+    if (value == "1" || value == "true") {
+        *out = true;
+        return true;
+    }
+    if (value == "0" || value == "false") {
+        *out = false;
+        return true;
+    }
+    return false;
+}
+
 }  // namespace
 
 std::optional<EventFrame> parse_event_frame(const std::string& line) {
@@ -77,9 +110,10 @@ std::optional<EventFrame> parse_event_frame(const std::string& line) {
 }
 
 bool is_tracked_event_name(std::string_view event_name) {
-    if (event_name == "openwindow" || event_name == "closewindow" || event_name == "movewindow" ||
-        event_name == "activewindow" || event_name == "windowtitle" || event_name == "changefloatingmode" ||
-        event_name == "changefloatingmodev2") {
+    if (event_name == "openwindow" || event_name == "openwindowv2" || event_name == "closewindow" ||
+        event_name == "movewindow" || event_name == "movewindowv2" || event_name == "activewindow" ||
+        event_name == "activewindowv2" || event_name == "windowtitle" || event_name == "windowtitlev2" ||
+        event_name == "changefloatingmode" || event_name == "changefloatingmodev2") {
         return true;
     }
 
@@ -171,20 +205,88 @@ void WorkspaceManager::handle_line(const std::string& line) {
         return;
     }
 
+    bool state_mutated = false;
+
     {
         std::scoped_lock lock(mutex_);
         event_counts_[frame->name] += 1;
-    }
 
-    std::cerr << "[hyprmacs] event: " << frame->name;
-    if (!frame->payload.empty()) {
-        std::cerr << " payload=" << frame->payload;
+        if (frame->name == "openwindow" || frame->name == "openwindowv2") {
+            const auto parts = split_csv_limited(frame->payload, 4);
+            if (parts.size() == 4) {
+                client_registry_.upsert_open(parts[0], parts[1], parts[2], parts[3]);
+                state_mutated = true;
+            }
+        } else if (frame->name == "closewindow") {
+            const auto parts = split_csv_limited(frame->payload, 2);
+            if (!parts.empty()) {
+                client_registry_.erase(parts[0]);
+                state_mutated = true;
+            }
+        } else if (frame->name == "movewindow" || frame->name == "movewindowv2") {
+            const auto parts = split_csv_limited(frame->payload, 3);
+            if (parts.size() >= 2) {
+                client_registry_.update_workspace(parts[0], parts[1]);
+                state_mutated = true;
+            }
+        } else if (frame->name == "activewindowv2") {
+            const auto parts = split_csv_limited(frame->payload, 2);
+            if (!parts.empty()) {
+                client_registry_.set_focus(parts[0]);
+                state_mutated = true;
+            }
+        } else if (frame->name == "windowtitlev2") {
+            const auto parts = split_csv_limited(frame->payload, 2);
+            if (parts.size() == 2) {
+                client_registry_.update_title(parts[0], parts[1]);
+                state_mutated = true;
+            }
+        } else if (frame->name == "changefloatingmode" || frame->name == "changefloatingmodev2" ||
+                   frame->name.find("floating") != std::string::npos) {
+            const auto parts = split_csv_limited(frame->payload, 3);
+            if (parts.size() >= 2) {
+                bool floating = false;
+                if (parse_boolish(parts[1], &floating)) {
+                    client_registry_.set_floating(parts[0], floating);
+                    state_mutated = true;
+                }
+            }
+        }
+
+        std::cerr << "[hyprmacs] event: " << frame->name;
+        if (!frame->payload.empty()) {
+            std::cerr << " payload=" << frame->payload;
+        }
+        std::cerr << '\n';
+
+        if (state_mutated) {
+            log_state_dump_locked();
+        }
     }
-    std::cerr << '\n';
 }
 
 bool WorkspaceManager::should_track(const std::string& event_name) const {
     return is_tracked_event_name(event_name);
+}
+
+void WorkspaceManager::log_state_dump_locked() const {
+    const auto snapshot = client_registry_.snapshot();
+    size_t eligible_count = 0;
+    for (const auto& client : snapshot.clients) {
+        if (client.eligible) {
+            ++eligible_count;
+        }
+    }
+
+    std::cerr << "[hyprmacs] state-dump clients=" << snapshot.clients.size() << " eligible=" << eligible_count
+              << " selected=" << (snapshot.selected_client.has_value() ? *snapshot.selected_client : "none") << '\n';
+
+    for (const auto& client : snapshot.clients) {
+        std::cerr << "[hyprmacs] state-dump client id=" << client.client_id << " ws=" << client.workspace_id
+                  << " app=" << client.app_id << " floating=" << (client.floating ? "true" : "false")
+                  << " eligible=" << (client.eligible ? "true" : "false") << " selected="
+                  << (client.selected ? "true" : "false") << " title=" << client.title << '\n';
+    }
 }
 
 }  // namespace hyprmacs

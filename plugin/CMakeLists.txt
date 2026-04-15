@@ -12,6 +12,8 @@ option(HYPRMACS_BUILD_TESTS "Build bootstrap tests for the hyprmacs plugin." ON)
 add_library(hyprmacs SHARED
   src/plugin_main.cpp
   src/workspace_manager.cpp
+  src/client_registry.cpp
+  src/client_classifier.cpp
 )
 
 target_include_directories(hyprmacs PRIVATE
