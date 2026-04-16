@@ -60,6 +60,12 @@ void ClientRegistry::set_floating(const std::string& client_id, bool floating) {
     it->second.eligible = is_client_eligible(it->second);
 }
 
+void ClientRegistry::reconcile_management(const std::optional<std::string>& managed_workspace_id) {
+    for (auto& [_, client] : clients_) {
+        client.managed = managed_workspace_id.has_value() && client.workspace_id == *managed_workspace_id && client.eligible;
+    }
+}
+
 const ClientRecord* ClientRegistry::find(const std::string& client_id) const {
     const auto it = clients_.find(client_id);
     if (it == clients_.end()) {

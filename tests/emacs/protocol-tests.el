@@ -7,6 +7,7 @@
 
 (require 'hyprmacs-ipc)
 (require 'hyprmacs-session)
+(require 'hyprmacs-buffers)
 
 (defun hyprmacs-test--decode (frame)
   "Decode FRAME and return message alist."  
@@ -57,6 +58,7 @@
 
 (ert-deftest hyprmacs-session-fake-transport-captures-and-applies-fixtures ()
   (hyprmacs-session-reset)
+  (hyprmacs-buffer-reset)
   (hyprmacs-session-use-fake-transport)
   (hyprmacs-session-request-state "1")
   (let* ((outbox (hyprmacs-session-fake-outbox))
@@ -75,5 +77,23 @@
   (should (equal (plist-get hyprmacs-session-state :workspace-id) "1"))
   (should (equal (plist-get hyprmacs-session-state :last-message-type) "state-dump"))
   (should (equal (plist-get hyprmacs-session-state :managed-clients) '("0xabc123")))
+  (should (equal (length (plist-get hyprmacs-session-state :associated-buffers)) 1))
+  (should (buffer-live-p (hyprmacs-buffer-for-client "0xabc123")))
   (should (equal (plist-get hyprmacs-session-state :selected-client) "0xabc123"))
-  (should (eq (plist-get hyprmacs-session-state :input-mode) 'emacs-control)))
+  (should (eq (plist-get hyprmacs-session-state :input-mode) 'emacs-control))
+  (hyprmacs-buffer-reset))
+
+(ert-deftest hyprmacs-session-state-dump-syncs-managed-buffer-lifecycle ()
+  (hyprmacs-session-reset)
+  (hyprmacs-buffer-reset)
+
+  (hyprmacs-session-fake-receive
+   "{\"version\":1,\"type\":\"state-dump\",\"workspace_id\":\"1\",\"timestamp\":\"2026-04-15T12:00:00Z\",\"payload\":{\"managed\":true,\"controller_connected\":true,\"eligible_clients\":[{\"client_id\":\"0xaaa\",\"title\":\"foot-a\",\"app_id\":\"foot\",\"floating\":false},{\"client_id\":\"0xbbb\",\"title\":\"foot-b\",\"app_id\":\"foot\",\"floating\":false}],\"managed_clients\":[\"0xaaa\",\"0xbbb\"],\"selected_client\":\"0xaaa\",\"input_mode\":\"emacs-control\"}}\n")
+  (should (buffer-live-p (hyprmacs-buffer-for-client "0xaaa")))
+  (should (buffer-live-p (hyprmacs-buffer-for-client "0xbbb")))
+
+  (hyprmacs-session-fake-receive
+   "{\"version\":1,\"type\":\"state-dump\",\"workspace_id\":\"1\",\"timestamp\":\"2026-04-15T12:00:01Z\",\"payload\":{\"managed\":true,\"controller_connected\":true,\"eligible_clients\":[{\"client_id\":\"0xaaa\",\"title\":\"foot-a\",\"app_id\":\"foot\",\"floating\":false}],\"managed_clients\":[\"0xaaa\"],\"selected_client\":\"0xaaa\",\"input_mode\":\"emacs-control\"}}\n")
+  (should (buffer-live-p (hyprmacs-buffer-for-client "0xaaa")))
+  (should-not (hyprmacs-buffer-for-client "0xbbb"))
+  (hyprmacs-buffer-reset))

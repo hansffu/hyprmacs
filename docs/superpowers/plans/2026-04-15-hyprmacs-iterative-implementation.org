@@ -405,12 +405,12 @@ Files:
 - Create =tests/emacs/mode-tests.el=
 
 Steps:
-*** NEXT Adopt eligible clients into a managed set
+*** DONE Adopt eligible clients into a managed set
 - When a workspace becomes managed, adopt existing eligible tiled clients.
 - Auto-adopt newly opened eligible tiled clients in that workspace.
-*** TODO Create one buffer per managed client
+*** DONE Create one buffer per managed client
 - Ensure each adopted client gets a corresponding Emacs buffer with stable identity.
-*** TODO Make exactly one managed client visible
+*** NEXT Make exactly one managed client visible
 - Tie visibility to the selected managed buffer.
 - Hide every other managed client while keeping them alive.
 *** TODO Implement the first two input modes
@@ -420,6 +420,16 @@ Steps:
 - Support selecting a managed buffer from Emacs and reflecting that in the workspace.
 *** WAIT Review task 7 with user
 - Stop when buffer switching can swap one live client in and out without recreating it.
+
+*** DONE Session note: Task 7 managed-set adoption
+- Added registry reconciliation so managed membership is derived from three facts: workspace is currently managed, client is in that workspace, and client remains eligible.
+- Workspace manage/unmanage now immediately recalculates managed membership across tracked clients.
+- Lifecycle updates (open, close, move, title/classification changes, floating changes) also recalculate managed membership so new eligible clients auto-adopt and ineligible/moved clients auto-drop.
+
+*** DONE Session note: Task 7 managed buffer identity sync
+- Emacs now synchronizes one buffer per managed client from each =state-dump=, using client ID as stable identity and eligible-client metadata for naming and app id.
+- Session state now tracks =:associated-buffers= and prunes buffers for clients that leave the managed set.
+- Added ERT coverage for create/update/remove behavior when managed client membership changes across snapshots.
 
 Validation:
 - Manage a workspace with multiple apps.

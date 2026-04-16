@@ -2,6 +2,7 @@
 #include "hyprmacs/client_registry.hpp"
 
 #include <iostream>
+#include <optional>
 #include <string>
 
 namespace {
@@ -89,11 +90,48 @@ bool test_registry_lifecycle() {
     return ok;
 }
 
+bool test_registry_management_reconcile() {
+    bool ok = true;
+    hyprmacs::ClientRegistry registry;
+
+    registry.upsert_open("0x100", "1", "foot", "one");
+    registry.upsert_open("0x200", "2", "foot", "two");
+    registry.upsert_open("0x300", "1", "emacs", "GNU Emacs");
+
+    registry.reconcile_management(std::make_optional<std::string>("1"));
+
+    const auto* c1 = registry.find("0x100");
+    const auto* c2 = registry.find("0x200");
+    const auto* c3 = registry.find("0x300");
+    ok &= expect(c1 != nullptr && c1->managed, "eligible client in managed workspace should be managed");
+    ok &= expect(c2 != nullptr && !c2->managed, "eligible client outside managed workspace should not be managed");
+    ok &= expect(c3 != nullptr && !c3->managed, "ineligible client should not be managed");
+
+    registry.update_workspace("0x200", "1");
+    registry.reconcile_management(std::make_optional<std::string>("1"));
+    c2 = registry.find("0x200");
+    ok &= expect(c2 != nullptr && c2->managed, "eligible moved into managed workspace should be managed");
+
+    registry.set_floating("0x200", true);
+    registry.reconcile_management(std::make_optional<std::string>("1"));
+    c2 = registry.find("0x200");
+    ok &= expect(c2 != nullptr && !c2->managed, "floating client should leave managed set");
+
+    registry.reconcile_management(std::nullopt);
+    c1 = registry.find("0x100");
+    c2 = registry.find("0x200");
+    ok &= expect(c1 != nullptr && !c1->managed, "unmanaged workspace should clear managed flag");
+    ok &= expect(c2 != nullptr && !c2->managed, "unmanaged workspace should clear managed flag");
+
+    return ok;
+}
+
 }  // namespace
 
 int main() {
     bool ok = true;
     ok &= test_classifier_rules();
     ok &= test_registry_lifecycle();
+    ok &= test_registry_management_reconcile();
     return ok ? 0 : 1;
 }

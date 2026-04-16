@@ -61,6 +61,41 @@
            hyprmacs-buffer-table)
   (clrhash hyprmacs-buffer-table))
 
+(defun hyprmacs-buffer-client-ids ()
+  "Return all known managed client IDs."
+  (let (out)
+    (maphash (lambda (client-id _buffer)
+               (push client-id out))
+             hyprmacs-buffer-table)
+    (nreverse out)))
+
+(defun hyprmacs-buffer-sync-managed (managed-client-ids eligible-clients)
+  "Sync managed buffers for MANAGED-CLIENT-IDS using ELIGIBLE-CLIENTS metadata.
+ELIGIBLE-CLIENTS should be the decoded `eligible_clients' payload list."
+  (let ((managed-set (make-hash-table :test #'equal))
+        (metadata-by-client (make-hash-table :test #'equal))
+        associated-buffers)
+    (dolist (client managed-client-ids)
+      (puthash client t managed-set))
+    (dolist (entry eligible-clients)
+      (let ((client-id (alist-get 'client_id entry nil nil #'equal)))
+        (when client-id
+          (puthash client-id entry metadata-by-client))))
+
+    (dolist (client-id managed-client-ids)
+      (let* ((entry (gethash client-id metadata-by-client))
+             (app-id (or (alist-get 'app_id entry nil nil #'equal) "unknown"))
+             (title (or (alist-get 'title entry nil nil #'equal) app-id))
+             (buffer (hyprmacs-buffer-ensure-for-client client-id app-id)))
+        (hyprmacs-buffer-update-title client-id title)
+        (push (cons client-id (buffer-name buffer)) associated-buffers)))
+
+    (dolist (client-id (hyprmacs-buffer-client-ids))
+      (unless (gethash client-id managed-set)
+        (hyprmacs-buffer-remove-client client-id)))
+
+    (nreverse associated-buffers)))
+
 (provide 'hyprmacs-buffers)
 
 ;;; hyprmacs-buffers.el ends here

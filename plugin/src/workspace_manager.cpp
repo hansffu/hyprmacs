@@ -158,6 +158,7 @@ bool WorkspaceManager::manage_workspace(const WorkspaceId& workspace_id) {
     std::scoped_lock lock(mutex_);
     const bool changed = !managed_workspace_id_.has_value() || *managed_workspace_id_ != workspace_id;
     managed_workspace_id_ = workspace_id;
+    client_registry_.reconcile_management(managed_workspace_id_);
     return changed;
 }
 
@@ -167,6 +168,7 @@ bool WorkspaceManager::unmanage_workspace(const WorkspaceId& workspace_id) {
         return false;
     }
     managed_workspace_id_ = std::nullopt;
+    client_registry_.reconcile_management(managed_workspace_id_);
     return true;
 }
 
@@ -274,18 +276,21 @@ void WorkspaceManager::handle_line(const std::string& line) {
             const auto parts = split_csv_limited(frame->payload, 4);
             if (parts.size() == 4) {
                 client_registry_.upsert_open(parts[0], parts[1], parts[2], parts[3]);
+                client_registry_.reconcile_management(managed_workspace_id_);
                 state_mutated = true;
             }
         } else if (frame->name == "closewindow") {
             const auto parts = split_csv_limited(frame->payload, 2);
             if (!parts.empty()) {
                 client_registry_.erase(parts[0]);
+                client_registry_.reconcile_management(managed_workspace_id_);
                 state_mutated = true;
             }
         } else if (frame->name == "movewindow" || frame->name == "movewindowv2") {
             const auto parts = split_csv_limited(frame->payload, 3);
             if (parts.size() >= 2) {
                 client_registry_.update_workspace(parts[0], parts[1]);
+                client_registry_.reconcile_management(managed_workspace_id_);
                 state_mutated = true;
             }
         } else if (frame->name == "activewindowv2") {
@@ -298,6 +303,7 @@ void WorkspaceManager::handle_line(const std::string& line) {
             const auto parts = split_csv_limited(frame->payload, 2);
             if (parts.size() == 2) {
                 client_registry_.update_title(parts[0], parts[1]);
+                client_registry_.reconcile_management(managed_workspace_id_);
                 state_mutated = true;
             }
         } else if (frame->name == "changefloatingmode" || frame->name == "changefloatingmodev2" ||
@@ -307,6 +313,7 @@ void WorkspaceManager::handle_line(const std::string& line) {
                 bool floating = false;
                 if (parse_boolish(parts[1], &floating)) {
                     client_registry_.set_floating(parts[0], floating);
+                    client_registry_.reconcile_management(managed_workspace_id_);
                     state_mutated = true;
                 }
             }

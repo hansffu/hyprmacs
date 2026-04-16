@@ -11,6 +11,7 @@
 ;;; Code:
 
 (require 'cl-lib)
+(require 'hyprmacs-buffers)
 (require 'hyprmacs-ipc)
 
 (defvar hyprmacs-session-state nil
@@ -119,23 +120,30 @@ Any existing connection is closed first."
                         (hyprmacs-session--payload-bool payload 'controller_connected))))
       ("workspace-unmanaged"
        (setq hyprmacs-session-state
-             (plist-put hyprmacs-session-state :managed nil)))
+             (plist-put hyprmacs-session-state :managed nil))
+       (setq hyprmacs-session-state
+             (plist-put hyprmacs-session-state :managed-clients nil))
+       (setq hyprmacs-session-state
+             (plist-put hyprmacs-session-state :associated-buffers nil))
+       (hyprmacs-buffer-reset))
       ("state-dump"
-       (setq hyprmacs-session-state
-             (plist-put hyprmacs-session-state :managed
-                        (hyprmacs-session--payload-bool payload 'managed)))
-       (setq hyprmacs-session-state
-             (plist-put hyprmacs-session-state :controller-connected
-                        (hyprmacs-session--payload-bool payload 'controller_connected)))
-       (setq hyprmacs-session-state
-             (plist-put hyprmacs-session-state :eligible-clients
-                        (alist-get 'eligible_clients payload nil nil #'equal)))
-       (setq hyprmacs-session-state
-             (plist-put hyprmacs-session-state :known-clients
-                        (alist-get 'eligible_clients payload nil nil #'equal)))
-       (setq hyprmacs-session-state
-             (plist-put hyprmacs-session-state :managed-clients
-                        (alist-get 'managed_clients payload nil nil #'equal)))
+       (let ((eligible-clients (alist-get 'eligible_clients payload nil nil #'equal))
+             (managed-clients (alist-get 'managed_clients payload nil nil #'equal)))
+         (setq hyprmacs-session-state
+               (plist-put hyprmacs-session-state :managed
+                          (hyprmacs-session--payload-bool payload 'managed)))
+         (setq hyprmacs-session-state
+               (plist-put hyprmacs-session-state :controller-connected
+                          (hyprmacs-session--payload-bool payload 'controller_connected)))
+         (setq hyprmacs-session-state
+               (plist-put hyprmacs-session-state :eligible-clients eligible-clients))
+         (setq hyprmacs-session-state
+               (plist-put hyprmacs-session-state :known-clients eligible-clients))
+         (setq hyprmacs-session-state
+               (plist-put hyprmacs-session-state :managed-clients managed-clients))
+         (setq hyprmacs-session-state
+               (plist-put hyprmacs-session-state :associated-buffers
+                          (hyprmacs-buffer-sync-managed managed-clients eligible-clients))))
        (setq hyprmacs-session-state
              (plist-put hyprmacs-session-state :selected-client
                         (alist-get 'selected_client payload nil nil #'equal)))
