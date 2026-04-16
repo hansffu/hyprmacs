@@ -41,7 +41,10 @@
         (plist-put hyprmacs-session-state :workspace-id "1"))
   (setq hyprmacs-session-state
         (plist-put hyprmacs-session-state :managed t))
+  (setq hyprmacs-session-state
+        (plist-put hyprmacs-session-state :associated-buffers '(("0xabc" . "*hyprmacs:0xabc:foot*"))))
   (hyprmacs-dump-state)
   (with-current-buffer "*hyprmacs-state*"
     (should (string-match-p "workspace-id: 1" (buffer-string)))
-    (should (string-match-p "managed: t" (buffer-string)))))
+    (should (string-match-p "managed: t" (buffer-string)))
+    (should (string-match-p "associated-buffers:" (buffer-string)))))

@@ -1,6 +1,7 @@
 #include "hyprmacs/workspace_manager.hpp"
 
 #include <array>
+#include <cctype>
 #include <cerrno>
 #include <cstdlib>
 #include <cstring>
@@ -91,6 +92,10 @@ bool parse_boolish(std::string_view value, bool* out) {
     return false;
 }
 
+bool is_internal_hidden_workspace_target(std::string_view workspace_id) {
+    return workspace_id == "-98" || workspace_id == "special:hyprmacs-hidden";
+}
+
 }  // namespace
 
 std::optional<EventFrame> parse_event_frame(const std::string& line) {
@@ -158,6 +163,7 @@ bool WorkspaceManager::manage_workspace(const WorkspaceId& workspace_id) {
     std::scoped_lock lock(mutex_);
     const bool changed = !managed_workspace_id_.has_value() || *managed_workspace_id_ != workspace_id;
     managed_workspace_id_ = workspace_id;
+    input_mode_ = InputMode::kEmacsControl;
     client_registry_.reconcile_management(managed_workspace_id_);
     return changed;
 }
@@ -168,8 +174,72 @@ bool WorkspaceManager::unmanage_workspace(const WorkspaceId& workspace_id) {
         return false;
     }
     managed_workspace_id_ = std::nullopt;
+    input_mode_ = std::nullopt;
     client_registry_.reconcile_management(managed_workspace_id_);
     return true;
+}
+
+bool WorkspaceManager::set_selected_client(const WorkspaceId& workspace_id, const ClientId& client_id) {
+    std::scoped_lock lock(mutex_);
+    const ClientRecord* record = client_registry_.find(client_id);
+    if (record == nullptr || record->workspace_id != workspace_id || !record->managed) {
+        return false;
+    }
+    client_registry_.set_focus(client_id);
+    return true;
+}
+
+bool WorkspaceManager::set_input_mode(const WorkspaceId& workspace_id, InputMode mode) {
+    std::scoped_lock lock(mutex_);
+    if (!managed_workspace_id_.has_value() || *managed_workspace_id_ != workspace_id) {
+        return false;
+    }
+    input_mode_ = mode;
+    return true;
+}
+
+void WorkspaceManager::seed_client(
+    const ClientId& client_id,
+    const WorkspaceId& workspace_id,
+    const std::string& app_id,
+    const std::string& title,
+    bool floating
+) {
+    std::scoped_lock lock(mutex_);
+    client_registry_.upsert_open(client_id, workspace_id, app_id, title);
+    client_registry_.set_floating(client_id, floating);
+    client_registry_.reconcile_management(managed_workspace_id_);
+}
+
+std::optional<ClientId> WorkspaceManager::selected_managed_client(const WorkspaceId& workspace_id) const {
+    std::scoped_lock lock(mutex_);
+    const auto snapshot = client_registry_.snapshot();
+    if (!snapshot.selected_client.has_value()) {
+        return std::nullopt;
+    }
+    const ClientRecord* selected = client_registry_.find(*snapshot.selected_client);
+    if (selected == nullptr || selected->workspace_id != workspace_id || !selected->managed) {
+        return std::nullopt;
+    }
+    return *snapshot.selected_client;
+}
+
+std::optional<ClientId> WorkspaceManager::emacs_client(const WorkspaceId& workspace_id) const {
+    std::scoped_lock lock(mutex_);
+    const auto snapshot = client_registry_.snapshot();
+    for (const auto& client : snapshot.clients) {
+        if (client.workspace_id != workspace_id) {
+            continue;
+        }
+        std::string app = client.app_id;
+        for (char& c : app) {
+            c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
+        }
+        if (app.find("emacs") != std::string::npos) {
+            return client.client_id;
+        }
+    }
+    return std::nullopt;
 }
 
 void WorkspaceManager::set_controller_connected(bool connected) {
@@ -211,8 +281,12 @@ StateDumpPayload WorkspaceManager::build_state_dump(const WorkspaceId& workspace
         }
     }
 
-    out.input_mode = std::nullopt;
+    out.input_mode = input_mode_;
     return out;
+}
+
+void WorkspaceManager::process_event_for_tests(const std::string& line) {
+    handle_line(line);
 }
 
 void WorkspaceManager::event_loop() {
@@ -289,9 +363,11 @@ void WorkspaceManager::handle_line(const std::string& line) {
         } else if (frame->name == "movewindow" || frame->name == "movewindowv2") {
             const auto parts = split_csv_limited(frame->payload, 3);
             if (parts.size() >= 2) {
-                client_registry_.update_workspace(parts[0], parts[1]);
-                client_registry_.reconcile_management(managed_workspace_id_);
-                state_mutated = true;
+                if (!is_internal_hidden_workspace_target(parts[1])) {
+                    client_registry_.update_workspace(parts[0], parts[1]);
+                    client_registry_.reconcile_management(managed_workspace_id_);
+                    state_mutated = true;
+                }
             }
         } else if (frame->name == "activewindowv2") {
             const auto parts = split_csv_limited(frame->payload, 2);

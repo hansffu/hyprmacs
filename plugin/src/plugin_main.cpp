@@ -7,6 +7,7 @@
 #include <sys/un.h>
 #include <unistd.h>
 
+#include "hyprmacs/focus_controller.hpp"
 #include "hyprmacs/ipc_server.hpp"
 #include "hyprmacs/layout_applier.hpp"
 #include "hyprmacs/workspace_manager.hpp"
@@ -44,7 +45,7 @@ constexpr auto kPluginDescription =
 constexpr auto kPluginAuthor = "Hans Fredrik Furholt";
 constexpr auto kPluginVersion = "0.1.0";
 
-int dispatch_via_hypr_socket(const std::string& dispatch_arg) {
+int dispatch_hypr_command_via_socket(const std::string& command) {
     const char* runtime_dir = std::getenv("XDG_RUNTIME_DIR");
     const char* instance = std::getenv("HYPRLAND_INSTANCE_SIGNATURE");
     if (runtime_dir == nullptr || instance == nullptr || *runtime_dir == '\0' || *instance == '\0') {
@@ -81,9 +82,9 @@ int dispatch_via_hypr_socket(const std::string& dispatch_arg) {
         return -1;
     }
 
-    std::string command = "dispatch movetoworkspacesilent " + dispatch_arg;
-    command.push_back('\n');
-    if (::send(fd, command.c_str(), command.size(), 0) < 0) {
+    std::string command_with_newline = command;
+    command_with_newline.push_back('\n');
+    if (::send(fd, command_with_newline.c_str(), command_with_newline.size(), 0) < 0) {
         std::cerr << "[hyprmacs] dispatch failed: send() errno=" << errno << '\n';
         ::close(fd);
         return -1;
@@ -109,9 +110,12 @@ int dispatch_via_hypr_socket(const std::string& dispatch_arg) {
 
 hyprmacs::WorkspaceManager g_workspace_manager;
 hyprmacs::LayoutApplier g_layout_applier([](const std::string& dispatch_arg) {
-    return dispatch_via_hypr_socket(dispatch_arg);
+    return dispatch_hypr_command_via_socket("dispatch movetoworkspacesilent " + dispatch_arg);
 });
-hyprmacs::IpcServer g_ipc_server(&g_workspace_manager, &g_layout_applier);
+hyprmacs::FocusController g_focus_controller([](const std::string& command) {
+    return dispatch_hypr_command_via_socket(command);
+});
+hyprmacs::IpcServer g_ipc_server(&g_workspace_manager, &g_layout_applier, &g_focus_controller);
 }
 
 #if HYPRMACS_HAS_REAL_PLUGIN_API

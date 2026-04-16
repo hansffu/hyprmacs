@@ -54,6 +54,16 @@ bool test_classifier_rules() {
     };
     ok &= expect(hyprmacs::is_client_eligible(regular), "regular tiled client should be eligible");
 
+    hyprmacs::ClientRecord titled_emacs_but_not_emacs {
+        .client_id = "0x5",
+        .workspace_id = "1",
+        .title = "just emacs",
+        .app_id = "foot",
+        .floating = false,
+    };
+    ok &= expect(hyprmacs::is_client_eligible(titled_emacs_but_not_emacs),
+                 "non-emacs app should remain eligible even if title mentions emacs");
+
     return ok;
 }
 
@@ -126,6 +136,29 @@ bool test_registry_management_reconcile() {
     return ok;
 }
 
+bool test_registry_normalizes_client_ids() {
+    bool ok = true;
+    hyprmacs::ClientRegistry registry;
+
+    registry.upsert_open("55c31e4088a0", "1", "foot", "one");
+    registry.upsert_open("0x55c31e4088a0", "1", "foot", "one-updated");
+    registry.set_focus("55c31e4088a0");
+    registry.set_floating("0x55c31e4088a0", true);
+
+    const auto snapshot = registry.snapshot();
+    ok &= expect(snapshot.clients.size() == 1, "normalized ids should deduplicate into one client");
+    if (snapshot.clients.size() == 1) {
+        ok &= expect(snapshot.clients[0].client_id == "0x55c31e4088a0", "stored id should be 0x-prefixed");
+        ok &= expect(snapshot.clients[0].floating, "floating update should apply across normalized forms");
+    }
+    ok &= expect(snapshot.selected_client.has_value(), "selected client should be set");
+    if (snapshot.selected_client.has_value()) {
+        ok &= expect(*snapshot.selected_client == "0x55c31e4088a0", "selected id should be normalized");
+    }
+
+    return ok;
+}
+
 }  // namespace
 
 int main() {
@@ -133,5 +166,6 @@ int main() {
     ok &= test_classifier_rules();
     ok &= test_registry_lifecycle();
     ok &= test_registry_management_reconcile();
+    ok &= test_registry_normalizes_client_ids();
     return ok ? 0 : 1;
 }

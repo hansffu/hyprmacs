@@ -17,6 +17,7 @@ add_library(hyprmacs SHARED
   src/protocol.cpp
   src/ipc_server.cpp
   src/layout_applier.cpp
+  src/focus_controller.cpp
 )
 
 target_include_directories(hyprmacs PRIVATE

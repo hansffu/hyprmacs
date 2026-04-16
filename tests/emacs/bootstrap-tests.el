@@ -10,4 +10,6 @@
   (require 'hyprmacs)
   (should (commandp #'hyprmacs-connect))
   (should (commandp #'hyprmacs-disconnect))
-  (should (commandp #'hyprmacs-manage-current-workspace)))
+  (should (commandp #'hyprmacs-manage-current-workspace))
+  (should (commandp #'hyprmacs-run-smoke-test))
+  (should (commandp #'hyprmacs-run-gui-smoke-test)))

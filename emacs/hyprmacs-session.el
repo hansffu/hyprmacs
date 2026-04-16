@@ -126,6 +126,15 @@ Any existing connection is closed first."
        (setq hyprmacs-session-state
              (plist-put hyprmacs-session-state :associated-buffers nil))
        (hyprmacs-buffer-reset))
+      ("layout-applied"
+       (setq hyprmacs-session-state
+             (plist-put hyprmacs-session-state :selected-client
+                        (alist-get 'selected_client payload nil nil #'equal))))
+      ("mode-changed"
+       (setq hyprmacs-session-state
+             (plist-put hyprmacs-session-state :input-mode
+                        (hyprmacs-ipc-mode-from-wire
+                         (alist-get 'mode payload nil nil #'equal)))))
       ("state-dump"
        (let ((eligible-clients (alist-get 'eligible_clients payload nil nil #'equal))
              (managed-clients (alist-get 'managed_clients payload nil nil #'equal)))
@@ -201,6 +210,33 @@ When ADOPT-EXISTING is nil, defaults to true."
    (if reason
        `((reason . ,reason))
      '())))
+
+(defun hyprmacs-session-set-selected-client (workspace-id client-id)
+  "Send set-selected-client for WORKSPACE-ID and CLIENT-ID."
+  (hyprmacs-session-send
+   "set-selected-client"
+   workspace-id
+   `((client_id . ,client-id))))
+
+(defun hyprmacs-session-set-input-mode (workspace-id mode)
+  "Send set-input-mode for WORKSPACE-ID and MODE symbol."
+  (let ((wire (hyprmacs-ipc-mode-to-wire mode)))
+    (when wire
+      (hyprmacs-session-send
+       "set-input-mode"
+       workspace-id
+       `((mode . ,wire))))))
+
+(defun hyprmacs-session-seed-client (workspace-id client-id app-id title floating)
+  "Send seed-client for WORKSPACE-ID with client metadata."
+  (hyprmacs-session-send
+   "seed-client"
+   workspace-id
+   `((client_id . ,client-id)
+     (workspace_id . ,workspace-id)
+     (app_id . ,app-id)
+     (title . ,title)
+     (floating . ,(if floating t :json-false)))))
 
 (hyprmacs-session-reset)
 

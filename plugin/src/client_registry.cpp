@@ -5,11 +5,25 @@
 #include "hyprmacs/client_classifier.hpp"
 
 namespace hyprmacs {
+namespace {
+
+std::string normalize_client_id(std::string_view client_id) {
+    if (client_id.rfind("address:", 0) == 0) {
+        client_id = client_id.substr(8);
+    }
+    if (client_id.rfind("0x", 0) == 0) {
+        return std::string(client_id);
+    }
+    return "0x" + std::string(client_id);
+}
+
+}  // namespace
 
 void ClientRegistry::upsert_open(const std::string& client_id, const std::string& workspace_id, const std::string& app_id,
                                  const std::string& title) {
-    auto& client = clients_[client_id];
-    client.client_id = client_id;
+    const std::string normalized_id = normalize_client_id(client_id);
+    auto& client = clients_[normalized_id];
+    client.client_id = normalized_id;
     client.workspace_id = workspace_id;
     client.app_id = app_id;
     client.title = title;
@@ -17,14 +31,15 @@ void ClientRegistry::upsert_open(const std::string& client_id, const std::string
 }
 
 void ClientRegistry::erase(const std::string& client_id) {
-    clients_.erase(client_id);
-    if (selected_client_.has_value() && *selected_client_ == client_id) {
+    const std::string normalized_id = normalize_client_id(client_id);
+    clients_.erase(normalized_id);
+    if (selected_client_.has_value() && *selected_client_ == normalized_id) {
         selected_client_ = std::nullopt;
     }
 }
 
 void ClientRegistry::update_workspace(const std::string& client_id, const std::string& workspace_id) {
-    const auto it = clients_.find(client_id);
+    const auto it = clients_.find(normalize_client_id(client_id));
     if (it == clients_.end()) {
         return;
     }
@@ -32,7 +47,7 @@ void ClientRegistry::update_workspace(const std::string& client_id, const std::s
 }
 
 void ClientRegistry::update_title(const std::string& client_id, const std::string& title) {
-    const auto it = clients_.find(client_id);
+    const auto it = clients_.find(normalize_client_id(client_id));
     if (it == clients_.end()) {
         return;
     }
@@ -41,18 +56,19 @@ void ClientRegistry::update_title(const std::string& client_id, const std::strin
 }
 
 void ClientRegistry::set_focus(const std::string& client_id) {
-    if (clients_.find(client_id) == clients_.end()) {
+    const std::string normalized_id = normalize_client_id(client_id);
+    if (clients_.find(normalized_id) == clients_.end()) {
         return;
     }
 
-    selected_client_ = client_id;
+    selected_client_ = normalized_id;
     for (auto& [id, client] : clients_) {
-        client.selected = (id == client_id);
+        client.selected = (id == normalized_id);
     }
 }
 
 void ClientRegistry::set_floating(const std::string& client_id, bool floating) {
-    const auto it = clients_.find(client_id);
+    const auto it = clients_.find(normalize_client_id(client_id));
     if (it == clients_.end()) {
         return;
     }
@@ -67,7 +83,7 @@ void ClientRegistry::reconcile_management(const std::optional<std::string>& mana
 }
 
 const ClientRecord* ClientRegistry::find(const std::string& client_id) const {
-    const auto it = clients_.find(client_id);
+    const auto it = clients_.find(normalize_client_id(client_id));
     if (it == clients_.end()) {
         return nullptr;
     }

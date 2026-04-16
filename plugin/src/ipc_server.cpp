@@ -56,6 +56,24 @@ std::string payload_for_debug_hide_show_result(std::string_view client_id, bool 
     return out.str();
 }
 
+std::string payload_for_layout_applied(std::string_view selected_client, bool ok) {
+    std::ostringstream out;
+    out << "{";
+    out << "\"selected_client\":\"" << selected_client << "\",";
+    out << "\"ok\":" << (ok ? "true" : "false");
+    out << "}";
+    return out.str();
+}
+
+std::string payload_for_mode_changed(std::string_view mode, bool ok) {
+    std::ostringstream out;
+    out << "{";
+    out << "\"mode\":\"" << mode << "\",";
+    out << "\"ok\":" << (ok ? "true" : "false");
+    out << "}";
+    return out.str();
+}
+
 ProtocolMessage make_message(std::string_view type, const WorkspaceId& workspace_id, std::string payload_json) {
     return ProtocolMessage {
         .version = 1,
@@ -91,6 +109,70 @@ std::optional<std::string> parse_client_id_from_payload(std::string_view payload
     return std::string(payload_json.substr(first_quote + 1, second_quote - first_quote - 1));
 }
 
+std::optional<std::string> parse_string_field_from_payload(std::string_view payload_json, std::string_view key) {
+    const std::string token = "\"" + std::string(key) + "\"";
+    const size_t key_pos = payload_json.find(token);
+    if (key_pos == std::string_view::npos) {
+        return std::nullopt;
+    }
+
+    const size_t colon_pos = payload_json.find(':', key_pos + token.size());
+    if (colon_pos == std::string_view::npos) {
+        return std::nullopt;
+    }
+
+    const size_t first_quote = payload_json.find('"', colon_pos + 1);
+    if (first_quote == std::string_view::npos) {
+        return std::nullopt;
+    }
+
+    const size_t second_quote = payload_json.find('"', first_quote + 1);
+    if (second_quote == std::string_view::npos) {
+        return std::nullopt;
+    }
+
+    return std::string(payload_json.substr(first_quote + 1, second_quote - first_quote - 1));
+}
+
+std::optional<bool> parse_bool_field_from_payload(std::string_view payload_json, std::string_view key) {
+    const std::string token = "\"" + std::string(key) + "\"";
+    const size_t key_pos = payload_json.find(token);
+    if (key_pos == std::string_view::npos) {
+        return std::nullopt;
+    }
+
+    const size_t colon_pos = payload_json.find(':', key_pos + token.size());
+    if (colon_pos == std::string_view::npos) {
+        return std::nullopt;
+    }
+
+    const size_t value_start = payload_json.find_first_not_of(" \t\r\n", colon_pos + 1);
+    if (value_start == std::string_view::npos) {
+        return std::nullopt;
+    }
+    if (payload_json.compare(value_start, 4, "true") == 0) {
+        return true;
+    }
+    if (payload_json.compare(value_start, 5, "false") == 0) {
+        return false;
+    }
+    return std::nullopt;
+}
+
+std::optional<InputMode> parse_input_mode_field_from_payload(std::string_view payload_json) {
+    const auto mode = parse_string_field_from_payload(payload_json, "mode");
+    if (!mode.has_value()) {
+        return std::nullopt;
+    }
+    if (*mode == "emacs-control") {
+        return InputMode::kEmacsControl;
+    }
+    if (*mode == "client-control") {
+        return InputMode::kClientControl;
+    }
+    return std::nullopt;
+}
+
 }  // namespace
 
 std::optional<std::string> default_ipc_socket_path() {
@@ -110,7 +192,8 @@ std::optional<std::string> default_ipc_socket_path() {
 std::vector<ProtocolMessage> route_command_for_tests(
     const ProtocolMessage& incoming,
     WorkspaceManager& workspace_manager,
-    LayoutApplier& layout_applier
+    LayoutApplier& layout_applier,
+    FocusController* focus_controller
 ) {
     std::vector<ProtocolMessage> out;
 
@@ -167,12 +250,88 @@ std::vector<ProtocolMessage> route_command_for_tests(
         return out;
     }
 
+    if (incoming.type == "set-selected-client") {
+        const auto client_id = parse_client_id_from_payload(incoming.payload_json);
+        if (client_id.has_value()) {
+            const bool ok = workspace_manager.set_selected_client(incoming.workspace_id, *client_id);
+            if (ok) {
+                const auto state = workspace_manager.build_state_dump(incoming.workspace_id);
+                if (state.selected_client.has_value()) {
+                    for (const auto& managed_client : state.managed_clients) {
+                        if (managed_client == *state.selected_client) {
+                            (void)layout_applier.show_client(managed_client);
+                        } else {
+                            (void)layout_applier.hide_client(managed_client, incoming.workspace_id);
+                        }
+                    }
+                }
+            }
+
+            out.push_back(make_message("layout-applied", incoming.workspace_id, payload_for_layout_applied(*client_id, ok)));
+            out.push_back(make_message(
+                "state-dump", incoming.workspace_id, serialize_state_dump_payload(workspace_manager.build_state_dump(incoming.workspace_id))
+            ));
+        }
+        return out;
+    }
+
+    if (incoming.type == "set-input-mode") {
+        const auto mode = parse_input_mode_field_from_payload(incoming.payload_json);
+        bool ok = false;
+        std::string wire_mode = "unknown";
+        if (mode.has_value()) {
+            ok = workspace_manager.set_input_mode(incoming.workspace_id, *mode);
+            wire_mode = (*mode == InputMode::kClientControl) ? "client-control" : "emacs-control";
+            if (ok && focus_controller != nullptr) {
+                if (*mode == InputMode::kClientControl) {
+                    auto selected = workspace_manager.selected_managed_client(incoming.workspace_id);
+                    if (!selected.has_value()) {
+                        const auto state = workspace_manager.build_state_dump(incoming.workspace_id);
+                        if (!state.managed_clients.empty()) {
+                            selected = state.managed_clients.front();
+                            (void)workspace_manager.set_selected_client(incoming.workspace_id, *selected);
+                        }
+                    }
+                    if (selected.has_value()) {
+                        (void)focus_controller->focus_client(*selected);
+                    }
+                } else if (*mode == InputMode::kEmacsControl) {
+                    const auto emacs_client = workspace_manager.emacs_client(incoming.workspace_id);
+                    if (emacs_client.has_value()) {
+                        (void)focus_controller->focus_client(*emacs_client);
+                    }
+                }
+            }
+        }
+        out.push_back(make_message("mode-changed", incoming.workspace_id, payload_for_mode_changed(wire_mode, ok)));
+        out.push_back(make_message(
+            "state-dump", incoming.workspace_id, serialize_state_dump_payload(workspace_manager.build_state_dump(incoming.workspace_id))
+        ));
+        return out;
+    }
+
+    if (incoming.type == "seed-client") {
+        const auto client_id = parse_string_field_from_payload(incoming.payload_json, "client_id");
+        const auto workspace_id = parse_string_field_from_payload(incoming.payload_json, "workspace_id");
+        const auto app_id = parse_string_field_from_payload(incoming.payload_json, "app_id");
+        const auto title = parse_string_field_from_payload(incoming.payload_json, "title");
+        const auto floating = parse_bool_field_from_payload(incoming.payload_json, "floating");
+        if (client_id.has_value() && workspace_id.has_value() && app_id.has_value() && title.has_value() && floating.has_value()) {
+            workspace_manager.seed_client(*client_id, *workspace_id, *app_id, *title, *floating);
+            out.push_back(make_message(
+                "state-dump", incoming.workspace_id, serialize_state_dump_payload(workspace_manager.build_state_dump(incoming.workspace_id))
+            ));
+        }
+        return out;
+    }
+
     return out;
 }
 
-IpcServer::IpcServer(WorkspaceManager* workspace_manager, LayoutApplier* layout_applier)
+IpcServer::IpcServer(WorkspaceManager* workspace_manager, LayoutApplier* layout_applier, FocusController* focus_controller)
     : workspace_manager_(workspace_manager)
-    , layout_applier_(layout_applier) {}
+    , layout_applier_(layout_applier)
+    , focus_controller_(focus_controller) {}
 
 IpcServer::~IpcServer() {
     stop();
@@ -320,7 +479,7 @@ void IpcServer::serve_controller(int controller_fd) {
                     std::cerr << "[hyprmacs] ipc unsupported version: " << incoming->version << '\n';
                 } else {
                     std::cerr << "[hyprmacs] ipc recv type=" << incoming->type << " workspace=" << incoming->workspace_id << '\n';
-                    const auto responses = route_command_for_tests(*incoming, *workspace_manager_, *layout_applier_);
+                    const auto responses = route_command_for_tests(*incoming, *workspace_manager_, *layout_applier_, focus_controller_);
                     for (const auto& response : responses) {
                         send_message(controller_fd, response);
                     }

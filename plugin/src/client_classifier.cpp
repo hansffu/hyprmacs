@@ -30,7 +30,16 @@ bool contains_any(std::string_view value, const std::array<std::string_view, 6>&
 bool is_emacs_client(std::string_view app_id, std::string_view title) {
     const auto app = to_lower(app_id);
     const auto ttl = to_lower(title);
-    return app == "emacs" || app == "org.gnu.emacs" || ttl.find("emacs") != std::string::npos;
+    if (app == "emacs" || app == "org.gnu.emacs") {
+        return true;
+    }
+
+    // Fallback only for launchers that omit class/app-id; avoid false positives
+    // like a terminal titled "just emacs".
+    if (app.empty() || app == "unknown") {
+        return ttl.find("gnu emacs") != std::string::npos;
+    }
+    return false;
 }
 
 bool is_popup_or_transient_client(std::string_view app_id, std::string_view title) {

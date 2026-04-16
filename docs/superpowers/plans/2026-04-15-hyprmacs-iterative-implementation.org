@@ -296,6 +296,9 @@ Steps:
 
 *** DONE Session note: just emacs entrypoint
 - Updated =just emacs= to load =hyprmacs= (package entrypoint) instead of =hyprmacs-session= so interactive commands are available immediately.
+- Updated =just emacs= to delete stale =emacs/*.elc= before launching Emacs to avoid loading stale bytecode during manual testing.
+- Added =just emacs-test= to run an automated non-GUI smoke flow and write deterministic debug output to =logs.txt=.
+- User requested reverting from GUI smoke to the original batch/non-GUI flow because GUI variant provided less useful debug signal.
 
 Validation:
 - Run ERT tests for session transitions and buffer creation.
@@ -390,7 +393,7 @@ Steps:
 Validation:
 - Manual smoke test passes for hide, restore, workspace switch away and back, and client close while hidden.
 
-** TODO Task 7: Deliver the first vertical slice with one visible managed client
+** DONE Task 7: Deliver the first vertical slice with one visible managed client
 Purpose:
 - Make the workspace feel meaningfully different as early as possible.
 
@@ -410,21 +413,52 @@ Steps:
 - Auto-adopt newly opened eligible tiled clients in that workspace.
 *** DONE Create one buffer per managed client
 - Ensure each adopted client gets a corresponding Emacs buffer with stable identity.
-*** NEXT Make exactly one managed client visible
+*** DONE Make exactly one managed client visible
 - Tie visibility to the selected managed buffer.
 - Hide every other managed client while keeping them alive.
-*** TODO Implement the first two input modes
+*** DONE Implement the first two input modes
 - Add Emacs-control mode where Emacs keeps focus.
 - Add client-control mode where the selected managed client receives keyboard focus.
-*** TODO Add the first user-facing switching commands
+*** DONE Add the first user-facing switching commands
 - Support selecting a managed buffer from Emacs and reflecting that in the workspace.
-*** WAIT Review task 7 with user
+*** DONE Review task 7 with user
 - Stop when buffer switching can swap one live client in and out without recreating it.
+
+*** DONE Session note: Task 7 selection-driven single visibility
+- Added =set-selected-client= IPC command path; when selection changes, plugin now hides other managed clients and keeps the selected client shown.
+- Added =layout-applied= response and updated state dump flow to reflect selected client after visibility updates.
+
+*** DONE Session note: Task 7 input mode command path
+- Added =set-input-mode= command with =mode-changed= response and state-dump propagation.
+- Workspace state dump now includes current input mode for managed workspaces.
+- Added =FocusController= and runtime focus dispatch for mode switching: =client-control= focuses selected managed client, =emacs-control= attempts to focus Emacs client in the managed workspace.
+
+*** DONE Session note: Task 7 adoption backfill for pre-existing windows
+- Added temporary =seed-client= command so Emacs can seed already-open clients when a workspace first becomes managed.
+- =hyprmacs-manage-current-workspace= now performs a one-shot =hyprctl -j clients= seed pass to avoid missing the initial terminal/emacs-launch window.
+- Added automatic Hyprland instance-signature detection in Emacs command paths so smoke commands can target a running nested instance without manual =HYPRLAND_INSTANCE_SIGNATURE= export.
+
+*** DONE Session note: Task 7 user-facing commands
+- Added Emacs commands to set selected managed client and set input mode, backed by new session send helpers.
+- Session handler now applies =layout-applied= and =mode-changed= frames to local session state.
+- Added =hyprmacs-run-smoke-test= for scripted connect/manage/request/select/mode-switch flow with state + =hyprctl clients= capture to =logs.txt=.
+- Added =hyprmacs-run-gui-smoke-test= for GUI-mode automation: spawns a second =foot= client, runs selection and mode toggles, and logs =hyprctl activewindow= snapshots after each step.
+- Extended non-GUI =hyprmacs-run-smoke-test= logging to capture =hyprctl activewindow= snapshots and intermediate =after-client-control= state, so mode diagnostics are still visible after reverting to non-GUI workflow.
+
+*** DONE Session note: Task 7 client-id canonicalization and seed false handling
+- Fixed registry-level client-id canonicalization to always use =0x...= form, preventing duplicate records for the same client (raw hex vs prefixed forms).
+- Fixed Emacs JSON boolean normalization for seed payloads to treat both =:json-false= and =:false= as false; this prevented incorrectly marking seeded tiled clients as floating/ineligible.
+- Verified by direct socket inspection that =seed-client= now yields non-empty =eligible_clients= and =managed_clients= in subsequent =state-dump= frames.
 
 *** DONE Session note: Task 7 managed-set adoption
 - Added registry reconciliation so managed membership is derived from three facts: workspace is currently managed, client is in that workspace, and client remains eligible.
 - Workspace manage/unmanage now immediately recalculates managed membership across tracked clients.
 - Lifecycle updates (open, close, move, title/classification changes, floating changes) also recalculate managed membership so new eligible clients auto-adopt and ineligible/moved clients auto-drop.
+
+*** DONE Session note: Task 7 internal hidden workspace move handling
+- Identified a switching bug where hidden-client moves to internal workspace =-98= could remove that client from the managed snapshot.
+- Added a regression test in =plugin/tests/workspace_manager_tests.cpp= that verifies an internal hide move event keeps both clients in managed state for workspace =1=.
+- Updated plugin move-event handling to ignore internal hide targets (=-98= and =special:hyprmacs-hidden=) for registry workspace updates so hidden clients remain switchable.
 
 *** DONE Session note: Task 7 managed buffer identity sync
 - Emacs now synchronizes one buffer per managed client from each =state-dump=, using client ID as stable identity and eligible-client metadata for naming and app id.
@@ -436,7 +470,7 @@ Validation:
 - Switch managed buffers in Emacs and verify only the selected client is visible.
 - Toggle Emacs-control and client-control modes and confirm focus moves as expected.
 
-** TODO Task 8: Implement rectangle-first layout updates and multi-client visibility
+** NEXT Task 8: Implement rectangle-first layout updates and multi-client visibility
 Purpose:
 - Upgrade from a one-client prototype to the core design model.
 
@@ -450,7 +484,7 @@ Files:
 - Modify =plugin/tests/layout_applier_tests.cpp=
 
 Steps:
-*** TODO Compute managed-client rectangles in Emacs
+*** NEXT Compute managed-client rectangles in Emacs
 - Detect which managed buffers are visible in the current Emacs window tree.
 - Convert visible window geometry into plugin-facing rectangles relative to the Emacs frame.
 *** TODO Send snapshot-style =set-layout= messages

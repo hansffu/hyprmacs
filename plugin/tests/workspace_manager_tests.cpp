@@ -45,11 +45,32 @@ bool test_tracked_event_names() {
     return ok;
 }
 
+bool test_internal_hidden_workspace_move_keeps_managed_membership() {
+    bool ok = true;
+
+    hyprmacs::WorkspaceManager manager;
+    manager.process_event_for_tests("openwindowv2>>0xaaa,1,foot,foot-a");
+    manager.process_event_for_tests("openwindowv2>>0xbbb,1,foot,foot-b");
+    manager.manage_workspace("1");
+
+    auto before_hide_move = manager.build_state_dump("1");
+    ok &= expect(before_hide_move.managed_clients.size() == 2, "both workspace clients should be managed before hide move");
+
+    manager.process_event_for_tests("movewindowv2>>0xaaa,-98");
+
+    const auto after_hide_move = manager.build_state_dump("1");
+    ok &= expect(after_hide_move.managed_clients.size() == 2,
+                 "internal hide move should not remove client from managed set");
+
+    return ok;
+}
+
 }  // namespace
 
 int main() {
     bool ok = true;
     ok &= test_parse_event_frame();
     ok &= test_tracked_event_names();
+    ok &= test_internal_hidden_workspace_move_keeps_managed_membership();
     return ok ? 0 : 1;
 }

@@ -121,6 +121,96 @@ bool test_route_debug_hide_show() {
     return ok;
 }
 
+bool test_route_set_selected_client_hides_non_selected() {
+    hyprmacs::WorkspaceManager manager;
+    auto applier = make_noop_applier();
+
+    manager.process_event_for_tests("openwindowv2>>0xaaa,1,foot,foot-a");
+    manager.process_event_for_tests("openwindowv2>>0xbbb,1,foot,foot-b");
+    manager.manage_workspace("1");
+
+    const hyprmacs::ProtocolMessage select {
+        .version = 1,
+        .type = "set-selected-client",
+        .workspace_id = "1",
+        .timestamp = "2026-04-16T00:00:00Z",
+        .payload_json = "{\"client_id\":\"0xaaa\"}",
+    };
+
+    const auto responses = hyprmacs::route_command_for_tests(select, manager, applier);
+    bool ok = true;
+    ok &= expect(responses.size() == 2, "set-selected-client should produce two responses");
+    if (responses.size() == 2) {
+        ok &= expect(responses[0].type == "layout-applied", "first response should be layout-applied");
+        ok &= expect(responses[1].type == "state-dump", "second response should be state-dump");
+    }
+
+    ok &= expect(!applier.is_hidden("0xaaa"), "selected client should remain visible");
+    ok &= expect(applier.is_hidden("0xbbb"), "non-selected managed client should be hidden");
+    return ok;
+}
+
+bool test_route_set_input_mode_updates_state_dump() {
+    hyprmacs::WorkspaceManager manager;
+    auto applier = make_noop_applier();
+    manager.manage_workspace("1");
+
+    const hyprmacs::ProtocolMessage incoming {
+        .version = 1,
+        .type = "set-input-mode",
+        .workspace_id = "1",
+        .timestamp = "2026-04-16T00:00:00Z",
+        .payload_json = "{\"mode\":\"client-control\"}",
+    };
+
+    const auto responses = hyprmacs::route_command_for_tests(incoming, manager, applier);
+    bool ok = true;
+    ok &= expect(responses.size() == 2, "set-input-mode should produce two responses");
+    if (responses.size() == 2) {
+        ok &= expect(responses[0].type == "mode-changed", "first response should be mode-changed");
+        ok &= expect(responses[1].type == "state-dump", "second response should be state-dump");
+        const auto payload = hyprmacs::parse_state_dump_payload(responses[1].payload_json);
+        ok &= expect(payload.has_value(), "state-dump payload should parse");
+        if (payload.has_value()) {
+            ok &= expect(payload->input_mode.has_value(), "state-dump input_mode should be set");
+            if (payload->input_mode.has_value()) {
+                ok &= expect(*payload->input_mode == hyprmacs::InputMode::kClientControl,
+                             "state-dump input_mode should be client-control");
+            }
+        }
+    }
+    return ok;
+}
+
+bool test_route_seed_client_adopts_existing_window() {
+    hyprmacs::WorkspaceManager manager;
+    auto applier = make_noop_applier();
+    manager.manage_workspace("1");
+
+    const hyprmacs::ProtocolMessage seed {
+        .version = 1,
+        .type = "seed-client",
+        .workspace_id = "1",
+        .timestamp = "2026-04-16T00:00:00Z",
+        .payload_json = "{\"client_id\":\"0xabc\",\"workspace_id\":\"1\",\"app_id\":\"foot\",\"title\":\"seeded\",\"floating\":false}",
+    };
+    const auto seed_responses = hyprmacs::route_command_for_tests(seed, manager, applier);
+    bool ok = true;
+    ok &= expect(seed_responses.size() == 1, "seed-client should produce one response");
+    if (seed_responses.size() == 1) {
+        ok &= expect(seed_responses[0].type == "state-dump", "seed-client response should be state-dump");
+        const auto payload = hyprmacs::parse_state_dump_payload(seed_responses[0].payload_json);
+        ok &= expect(payload.has_value(), "seed-client state-dump payload should parse");
+        if (payload.has_value()) {
+            ok &= expect(payload->managed_clients.size() == 1, "seeded eligible client should be adopted as managed");
+            if (payload->managed_clients.size() == 1) {
+                ok &= expect(payload->managed_clients[0] == "0xabc", "managed client should match seeded client");
+            }
+        }
+    }
+    return ok;
+}
+
 }  // namespace
 
 int main() {
@@ -129,5 +219,8 @@ int main() {
     ok &= test_route_unmanage_workspace();
     ok &= test_route_request_state();
     ok &= test_route_debug_hide_show();
+    ok &= test_route_set_selected_client_hides_non_selected();
+    ok &= test_route_set_input_mode_updates_state_dump();
+    ok &= test_route_seed_client_adopts_existing_window();
     return ok ? 0 : 1;
 }

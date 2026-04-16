@@ -6,6 +6,7 @@
 #include <thread>
 #include <vector>
 
+#include "hyprmacs/focus_controller.hpp"
 #include "hyprmacs/layout_applier.hpp"
 #include "hyprmacs/protocol.hpp"
 #include "hyprmacs/workspace_manager.hpp"
@@ -16,12 +17,13 @@ std::optional<std::string> default_ipc_socket_path();
 std::vector<ProtocolMessage> route_command_for_tests(
     const ProtocolMessage& incoming,
     WorkspaceManager& workspace_manager,
-    LayoutApplier& layout_applier
+    LayoutApplier& layout_applier,
+    FocusController* focus_controller = nullptr
 );
 
 class IpcServer {
   public:
-    IpcServer(WorkspaceManager* workspace_manager, LayoutApplier* layout_applier);
+    IpcServer(WorkspaceManager* workspace_manager, LayoutApplier* layout_applier, FocusController* focus_controller);
     ~IpcServer();
 
     IpcServer(const IpcServer&) = delete;
@@ -39,6 +41,7 @@ class IpcServer {
 
     WorkspaceManager* workspace_manager_ = nullptr;
     LayoutApplier* layout_applier_ = nullptr;
+    FocusController* focus_controller_ = nullptr;
     std::optional<std::string> socket_path_;
 
     std::atomic<bool> running_ {false};

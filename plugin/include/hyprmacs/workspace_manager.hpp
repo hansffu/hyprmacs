@@ -36,8 +36,15 @@ class WorkspaceManager {
 
     bool manage_workspace(const WorkspaceId& workspace_id);
     bool unmanage_workspace(const WorkspaceId& workspace_id);
+    bool set_selected_client(const WorkspaceId& workspace_id, const ClientId& client_id);
+    bool set_input_mode(const WorkspaceId& workspace_id, InputMode mode);
+    void seed_client(const ClientId& client_id, const WorkspaceId& workspace_id, const std::string& app_id,
+                     const std::string& title, bool floating);
+    std::optional<ClientId> selected_managed_client(const WorkspaceId& workspace_id) const;
+    std::optional<ClientId> emacs_client(const WorkspaceId& workspace_id) const;
     void set_controller_connected(bool connected);
     StateDumpPayload build_state_dump(const WorkspaceId& workspace_id) const;
+    void process_event_for_tests(const std::string& line);
 
   private:
     void event_loop();
@@ -52,6 +59,7 @@ class WorkspaceManager {
     std::unordered_map<std::string, size_t> event_counts_;
     ClientRegistry client_registry_;
     std::optional<WorkspaceId> managed_workspace_id_;
+    std::optional<InputMode> input_mode_;
     bool controller_connected_ = false;
 };
 
