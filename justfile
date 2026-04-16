@@ -17,4 +17,4 @@ load:
   nix run .#hyprmacs-load
 
 emacs:
-  emacs -L emacs --eval "(require 'hyprmacs)"
+  emacs -L emacs --eval "(setq load-prefer-newer t)" --eval "(require 'hyprmacs)"

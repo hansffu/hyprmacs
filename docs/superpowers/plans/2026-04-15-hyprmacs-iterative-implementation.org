@@ -401,7 +401,7 @@ Files:
 - Create =tests/emacs/mode-tests.el=
 
 Steps:
-*** TODO Adopt eligible clients into a managed set
+*** NEXT Adopt eligible clients into a managed set
 - When a workspace becomes managed, adopt existing eligible tiled clients.
 - Auto-adopt newly opened eligible tiled clients in that workspace.
 *** TODO Create one buffer per managed client
