@@ -1,5 +1,5 @@
 {
-  description = "Nested debug Hyprland session";
+  description = "Nested Hyprland session for hyprmacs development";
 
   nixConfig = {
     extra-substituters = [
@@ -36,8 +36,7 @@
       system:
       let
         pkgs = import nixpkgs { inherit system; };
-        # Official debug package from the Hyprland flake.
-        hyprPkg = hyprland.packages.${system}.hyprland-debug;
+        hyprPkg = hyprland.packages.${system}.hyprland;
 
         commonTools = [
           pkgs.coreutils
@@ -79,6 +78,10 @@
           restrictNetwork = false;
         };
 
+        hyprmacsPlugin = pkgs.callPackage ./nix/hyprmacs-plugin.nix {
+          hyprland = hyprPkg;
+        };
+
         hyprDebugConfig = pkgs.writeText "hyprlandd.conf" ''
           monitor = , preferred, auto, 1
 
@@ -102,10 +105,7 @@
             force_default_wallpaper = 0
           }
 
-          debug {
-            disable_logs = false
-            gl_debugging = true
-          }
+          plugin = ${hyprmacsPlugin}/lib/hyprmacs.so
 
           # Nested debug-friendly binds using ALT instead of SUPER
           bind = ALT, Return, exec, ${pkgs.foot}/bin/foot
@@ -127,7 +127,7 @@
             pkgs.jq
           ];
           text = ''
-            echo "Starting nested Hyprland debug session..."
+            echo "Starting nested Hyprland session..."
             echo "  ALT+Return   open foot"
             echo "  ALT+Q        close active window"
             echo "  ALT+H/J/K/L  focus left/down/up/right"
@@ -140,10 +140,6 @@
 
             exec ${hyprPkg}/bin/Hyprland --config ${hyprDebugConfig}
           '';
-        };
-
-        hyprmacsPlugin = pkgs.callPackage ./nix/hyprmacs-plugin.nix {
-          hyprland = hyprPkg;
         };
 
         hyprmacsLoad = pkgs.writeShellApplication {

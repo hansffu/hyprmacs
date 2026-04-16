@@ -145,6 +145,10 @@ Steps:
 - Task 1 bootstrap flow now uses =nix build .#hyprmacs-plugin= for plugin artifacts, with =just load= consuming the resulting =result/lib/*.so= output.
 *** DONE Session note: hyprmacs-load run path
 - Simplified runtime testing flow: =just run= maps to =nix run .=, and =just load= maps to =nix run .#hyprmacs-load= where the loader script resolves and loads the plugin from the Nix store.
+*** DONE Session note: nested config autoload and quieter runtime
+- Nested Hyprland now autoloads the plugin via =plugin = ${hyprmacsPlugin}/lib/hyprmacs.so= in the generated config, so =just run= starts with hyprmacs loaded.
+- Kept =just load= (=nix run .#hyprmacs-load=) as a fallback/manual reload path.
+- Switched nested runtime package from =hyprland-debug= to =hyprland= to avoid debug/profiling noise during normal =hyprctl= usage.
 *** DONE Session note: mkHyprlandPlugin meta requirement
 - The plugin derivation must include a =meta= attribute (description/license/platforms) because =hyprlandPlugins.mkHyprlandPlugin= merges =args.meta= during evaluation.
 *** DONE Session note: plugin derivation source root
