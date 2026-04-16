@@ -1,31 +1,47 @@
 #+title: hyprmacs Manual Smoke Tests
-#+date: 2026-04-15
+#+date: 2026-04-16
 
-* Task 1 Bootstrap
-** Emacs package
-- Run:
-  =emacs -Q --batch -L emacs -L tests/emacs -l bootstrap-tests.el -f ert-run-tests-batch-and-exit=
-- Expect:
-  - both bootstrap ERT tests pass
-  - =hyprmacs.el= loads successfully
+* Purpose
+Quick manual checks for each prototype checkpoint in the nested Hyprland environment.
 
-** Plugin bootstrap build
-- Run:
-  =nix build .#hyprmacs-plugin=
-- Expect:
-  - Nix build succeeds
-  - a plugin shared object is available under =result/lib/*.so=
+* Prerequisites
+- Run nested Hyprland with =just run=.
+- Load plugin with =just load=.
+- Load Emacs package with =just emacs=.
 
-** Nested Hyprland smoke test
-- Start the nested session:
-  =just run=
-- Inside the nested session, run:
-  =just load=
-- Expect:
-  - Hyprland loads the plugin from the Nix store without crashing
-  - the plugin can be unloaded cleanly with:
-    =hyprctl plugin unload /nix/store/.../lib/<plugin>.so=
+* Task 1 Bootstrap Smoke
+- Confirm plugin load prints a hyprmacs bootstrap notification.
+- Confirm Emacs can load =hyprmacs.el= without errors.
+
+* Task 3 Registry Smoke
+- Open two =foot= windows and move focus between them.
+- Verify plugin logs show event lines and =state-dump= lines.
+- Verify Emacs window is present in logs but marked =eligible=false=.
+
+* Task 5 IPC Smoke
+- In Emacs run:
+  - =M-x hyprmacs-connect=
+  - =M-x hyprmacs-manage-current-workspace=
+  - =M-x hyprmacs-request-state=
+  - =M-x hyprmacs-dump-state=
+- Verify plugin logs include =ipc recv= and =ipc send= entries.
+- Verify =*hyprmacs-state*= updates with live workspace state.
+
+* Task 6 Hidden-Client Spike Smoke
+- Ensure at least one eligible client exists (e.g. =foot=).
+- In Emacs run:
+  - =M-x hyprmacs-debug-hide-client=
+  - enter client ID like =0x...=
+  - =M-x hyprmacs-debug-show-client=
+  - enter same client ID
+- Validate for =foot= and one GUI app:
+  - Client disappears after hide command.
+  - Client process remains alive.
+  - Client returns with state intact after show command.
+- Additional checks:
+  - Switch away and back to workspace while hidden.
+  - Close a client while hidden and ensure no plugin crash.
 
 * Notes
-- The agent sandbox may not expose Hyprland headers directly even when the flake does in the user environment.
-- If the plugin binary is built in fallback mode, do not load it. Rebuild through =nix build .#hyprmacs-plugin= in the user environment first.
+- Task 6 uses temporary debug commands and a special workspace (=special:hyprmacs-hidden=) for hide/restore.
+- This is a spike path and may change before layout integration.

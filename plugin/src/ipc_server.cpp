@@ -46,6 +46,16 @@ std::string payload_for_workspace_unmanaged(std::string_view reason) {
     return out.str();
 }
 
+std::string payload_for_debug_hide_show_result(std::string_view client_id, bool ok, std::string_view action) {
+    std::ostringstream out;
+    out << "{";
+    out << "\"client_id\":\"" << client_id << "\",";
+    out << "\"action\":\"" << action << "\",";
+    out << "\"ok\":" << (ok ? "true" : "false");
+    out << "}";
+    return out.str();
+}
+
 ProtocolMessage make_message(std::string_view type, const WorkspaceId& workspace_id, std::string payload_json) {
     return ProtocolMessage {
         .version = 1,
@@ -54,6 +64,31 @@ ProtocolMessage make_message(std::string_view type, const WorkspaceId& workspace
         .timestamp = now_rfc3339(),
         .payload_json = std::move(payload_json),
     };
+}
+
+std::optional<std::string> parse_client_id_from_payload(std::string_view payload_json) {
+    const std::string key = "\"client_id\"";
+    const size_t key_pos = payload_json.find(key);
+    if (key_pos == std::string_view::npos) {
+        return std::nullopt;
+    }
+
+    const size_t colon_pos = payload_json.find(':', key_pos + key.size());
+    if (colon_pos == std::string_view::npos) {
+        return std::nullopt;
+    }
+
+    const size_t first_quote = payload_json.find('"', colon_pos + 1);
+    if (first_quote == std::string_view::npos) {
+        return std::nullopt;
+    }
+
+    const size_t second_quote = payload_json.find('"', first_quote + 1);
+    if (second_quote == std::string_view::npos) {
+        return std::nullopt;
+    }
+
+    return std::string(payload_json.substr(first_quote + 1, second_quote - first_quote - 1));
 }
 
 }  // namespace
@@ -72,7 +107,11 @@ std::optional<std::string> default_ipc_socket_path() {
     return path;
 }
 
-std::vector<ProtocolMessage> route_command_for_tests(const ProtocolMessage& incoming, WorkspaceManager& workspace_manager) {
+std::vector<ProtocolMessage> route_command_for_tests(
+    const ProtocolMessage& incoming,
+    WorkspaceManager& workspace_manager,
+    LayoutApplier& layout_applier
+) {
     std::vector<ProtocolMessage> out;
 
     if (incoming.type == "manage-workspace") {
@@ -100,19 +139,48 @@ std::vector<ProtocolMessage> route_command_for_tests(const ProtocolMessage& inco
         return out;
     }
 
+    if (incoming.type == "debug-hide-client") {
+        const auto client_id = parse_client_id_from_payload(incoming.payload_json);
+        if (client_id.has_value()) {
+            const bool ok = layout_applier.hide_client(*client_id, incoming.workspace_id);
+            out.push_back(make_message(
+                "debug-hide-client-result", incoming.workspace_id, payload_for_debug_hide_show_result(*client_id, ok, "hide")
+            ));
+            out.push_back(make_message(
+                "state-dump", incoming.workspace_id, serialize_state_dump_payload(workspace_manager.build_state_dump(incoming.workspace_id))
+            ));
+        }
+        return out;
+    }
+
+    if (incoming.type == "debug-show-client") {
+        const auto client_id = parse_client_id_from_payload(incoming.payload_json);
+        if (client_id.has_value()) {
+            const bool ok = layout_applier.show_client(*client_id);
+            out.push_back(make_message(
+                "debug-show-client-result", incoming.workspace_id, payload_for_debug_hide_show_result(*client_id, ok, "show")
+            ));
+            out.push_back(make_message(
+                "state-dump", incoming.workspace_id, serialize_state_dump_payload(workspace_manager.build_state_dump(incoming.workspace_id))
+            ));
+        }
+        return out;
+    }
+
     return out;
 }
 
-IpcServer::IpcServer(WorkspaceManager* workspace_manager)
-    : workspace_manager_(workspace_manager) {}
+IpcServer::IpcServer(WorkspaceManager* workspace_manager, LayoutApplier* layout_applier)
+    : workspace_manager_(workspace_manager)
+    , layout_applier_(layout_applier) {}
 
 IpcServer::~IpcServer() {
     stop();
 }
 
 bool IpcServer::start() {
-    if (workspace_manager_ == nullptr) {
-        std::cerr << "[hyprmacs] ipc server start failed: missing workspace manager\n";
+    if (workspace_manager_ == nullptr || layout_applier_ == nullptr) {
+        std::cerr << "[hyprmacs] ipc server start failed: missing dependencies\n";
         return false;
     }
 
@@ -252,7 +320,7 @@ void IpcServer::serve_controller(int controller_fd) {
                     std::cerr << "[hyprmacs] ipc unsupported version: " << incoming->version << '\n';
                 } else {
                     std::cerr << "[hyprmacs] ipc recv type=" << incoming->type << " workspace=" << incoming->workspace_id << '\n';
-                    const auto responses = route_command_for_tests(*incoming, *workspace_manager_);
+                    const auto responses = route_command_for_tests(*incoming, *workspace_manager_, *layout_applier_);
                     for (const auto& response : responses) {
                         send_message(controller_fd, response);
                     }

@@ -339,7 +339,7 @@ Steps:
 Validation:
 - Start nested Hyprland, connect Emacs, manage a workspace, request state, and verify the state buffer matches the live workspace contents.
 
-** TODO Task 6: Prove the hidden-client mechanism in isolation
+** DONE Task 6: Prove the hidden-client mechanism in isolation
 Purpose:
 - Retire the highest-risk compositor behavior before layout work depends on it.
 
@@ -351,16 +351,37 @@ Files:
 - Modify =docs/testing/manual-smoke-tests.org=
 
 Steps:
-*** TODO Implement a minimal show and hide experiment path
+*** DONE Implement a minimal show and hide experiment path
 - Add temporary plugin-only commands that can hide a tracked tiled client and then restore it without destroying the application.
-*** TODO Evaluate the mechanism against real applications
+*** DONE Evaluate the mechanism against real applications
 - Test at least =foot= and one GUI app inside nested Hyprland.
 - Verify the client stays alive, disappears from the visible tiled layout, and returns intact.
-*** TODO Write the strategy ADR
+*** DONE Write the strategy ADR
 - Document the exact Hyprland primitive used for hide and restore.
 - Document the failure cases discovered during the spike.
-*** WAIT Review task 6 with user
+*** DONE Review task 6 with user
 - Do not proceed to the first vertical slice until we trust the hide mechanism.
+
+*** DONE Session note: Task 6 hide and restore mechanism
+- Added =LayoutApplier= with hide/restore bookkeeping by client ID and original workspace.
+- Hide command path uses =hyprctl dispatch movetoworkspacesilent special:hyprmacs-hidden,address:<client-id>=.
+- Restore command path uses =hyprctl dispatch movetoworkspacesilent <workspace>,address:<client-id>=.
+
+*** DONE Session note: Task 6 temporary control surface
+- Added temporary plugin IPC commands =debug-hide-client= and =debug-show-client= plus result frames for manual validation.
+- Added temporary Emacs commands =hyprmacs-debug-hide-client= and =hyprmacs-debug-show-client= to drive the spike without raw socket tooling.
+
+*** DONE Session note: Task 6 docs sync
+- Added =docs/adr/0002-hidden-client-strategy.org= and updated =docs/testing/manual-smoke-tests.org= with hide/restore scenarios.
+- Added a Task 6 temporary command section to =docs/protocol/ipc-v1.org= to avoid protocol drift during the spike.
+
+*** DONE Session note: Task 6 dispatch path hardening
+- Replaced hide/restore execution from shelling out to =hyprctl= with direct writes to Hyprland command socket =.socket.sock=.
+- Added extra runtime error logging around connect/send/recv and added newline-terminated dispatch writes to reduce protocol ambiguity.
+
+*** DONE Session note: Task 6 user validation outcome
+- User validated restore behavior in nested Hyprland after dispatch hardening ("Now it worked to show!").
+- Task 6 review checkpoint approved and closed.
 
 Validation:
 - Manual smoke test passes for hide, restore, workspace switch away and back, and client close while hidden.

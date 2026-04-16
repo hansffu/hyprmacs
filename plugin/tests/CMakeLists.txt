@@ -82,6 +82,7 @@ add_executable(hyprmacs_ipc_server_tests
   ../src/workspace_manager.cpp
   ../src/client_registry.cpp
   ../src/client_classifier.cpp
+  ../src/layout_applier.cpp
   ../src/protocol.cpp
 )
 
@@ -96,4 +97,22 @@ endif()
 add_test(
   NAME hyprmacs_ipc_server_tests
   COMMAND hyprmacs_ipc_server_tests
+)
+
+add_executable(hyprmacs_layout_applier_tests
+  layout_applier_tests.cpp
+  ../src/layout_applier.cpp
+)
+
+target_include_directories(hyprmacs_layout_applier_tests PRIVATE
+  ${CMAKE_CURRENT_SOURCE_DIR}/../include
+)
+
+if(CMAKE_CXX_COMPILER_ID MATCHES "Clang|GNU")
+  target_compile_options(hyprmacs_layout_applier_tests PRIVATE -Wall -Wextra -Wpedantic)
+endif()
+
+add_test(
+  NAME hyprmacs_layout_applier_tests
+  COMMAND hyprmacs_layout_applier_tests
 )

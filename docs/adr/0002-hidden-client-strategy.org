@@ -1,0 +1,67 @@
+#+title: ADR 0002 - Hidden Client Strategy for Task 6 Spike
+#+date: 2026-04-16
+
+* Status
+Accepted for prototype spike (Task 6), pending follow-up hardening in later tasks.
+
+* Context
+The design requires hiding managed clients without killing their processes so buffer switching can restore them instantly. Task 6 isolates this behavior before layout logic depends on it.
+
+Constraints in current prototype:
+- The plugin tracks client IDs and workspaces from socket2 events.
+- No direct Hyprland internal client-pointer API is used yet for geometry/show-hide operations.
+- We need a mechanism that works in nested testing with minimal risk.
+
+* Decision
+Use Hyprland dispatch command =movetoworkspacesilent= to move a target client to a dedicated special workspace and move it back later.
+
+Prototype execution path:
+- Plugin writes dispatch commands directly to Hyprland command socket =.socket.sock=.
+- Command shape is equivalent to =hyprctl dispatch movetoworkspacesilent ...=.
+
+Hide path:
+- Move client to =special:hyprmacs-hidden= with:
+  - =hyprctl dispatch movetoworkspacesilent special:hyprmacs-hidden,address:<client-id>=
+
+Restore path:
+- Move client back to previously recorded workspace:
+  - =hyprctl dispatch movetoworkspacesilent <original-workspace>,address:<client-id>=
+
+State kept by plugin:
+- =client_id -> original_workspace_id= map for hidden clients.
+
+Control path (temporary):
+- IPC debug commands:
+  - =debug-hide-client= with payload ={"client_id":"0x..."}=
+  - =debug-show-client= with payload ={"client_id":"0x..."}=
+- Response messages:
+  - =debug-hide-client-result=
+  - =debug-show-client-result=
+
+* Consequences
+Pros:
+- Keeps client process alive while removing it from visible tiled layout.
+- Restores quickly without recreating application state.
+- Uses existing compositor dispatch path, avoiding deep compositor integration in the spike.
+
+Cons:
+- Depends on command-socket dispatch behavior and runtime env (=XDG_RUNTIME_DIR= and =HYPRLAND_INSTANCE_SIGNATURE=).
+- Temporary command path is intentionally narrow and not final protocol surface.
+- Special-workspace transitions may have compositor-specific visual quirks.
+
+Known limits observed in current environment:
+- Float-change events are not reliably emitted on socket2 for this build, so this spike does not depend on float-event correctness.
+
+* Rejected Alternatives
+1. Kill and relaunch clients on switch.
+- Rejected because it loses app state and violates design goals.
+
+2. Off-screen geometry placement as hide mechanism.
+- Rejected for spike due to risk of input/visibility edge cases and geometry drift.
+
+3. Full compositor-native show/hide integration before proving semantics.
+- Rejected for spike complexity; defer until behavior is validated.
+
+* Follow-up
+- Replace temporary debug commands with layout-driven hide/show integration.
+- Consider moving from command-socket dispatch toward a tighter compositor-integrated control path when Task 8+ architecture settles.

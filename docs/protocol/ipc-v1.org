@@ -155,3 +155,48 @@ The future =set-layout= payload is expected to carry:
 - Messages are processed in receive order.
 - The latest =state-dump= is authoritative when Emacs needs to resynchronize.
 - This version does not define a dedicated =error= frame. Command rejection is handled by state-preserving no-op behavior plus logging until a richer error path is added.
+
+* Task 6 Temporary Debug Commands
+These commands are temporary spike controls for validating hidden-client behavior before layout integration.
+
+** Emacs -> Plugin
+*** =debug-hide-client=
+Payload:
+#+begin_src json
+{
+  "client_id": "0xabc123"
+}
+#+end_src
+
+*** =debug-show-client=
+Payload:
+#+begin_src json
+{
+  "client_id": "0xabc123"
+}
+#+end_src
+
+** Plugin -> Emacs
+*** =debug-hide-client-result=
+Payload:
+#+begin_src json
+{
+  "client_id": "0xabc123",
+  "action": "hide",
+  "ok": true
+}
+#+end_src
+
+*** =debug-show-client-result=
+Payload:
+#+begin_src json
+{
+  "client_id": "0xabc123",
+  "action": "show",
+  "ok": true
+}
+#+end_src
+
+Notes:
+- These command types are for Task 6 spike validation only.
+- They are expected to be replaced by layout-driven visibility control in later tasks.

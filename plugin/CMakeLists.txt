@@ -16,6 +16,7 @@ add_library(hyprmacs SHARED
   src/client_classifier.cpp
   src/protocol.cpp
   src/ipc_server.cpp
+  src/layout_applier.cpp
 )
 
 target_include_directories(hyprmacs PRIVATE

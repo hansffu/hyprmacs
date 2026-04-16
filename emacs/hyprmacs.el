@@ -53,6 +53,29 @@
   (hyprmacs-session-request-state workspace-id)
   (message "hyprmacs: requested state for %s" workspace-id))
 
+(defun hyprmacs-debug-hide-client (workspace-id client-id)
+  "Task 6 temporary command to hide CLIENT-ID in WORKSPACE-ID."  
+  (interactive (list (read-string "Workspace ID: "
+                                  (or (plist-get hyprmacs-session-state :workspace-id) "1"))
+                     (read-string "Client ID (e.g. 0xabc): ")))
+  (hyprmacs-session-send "debug-hide-client" workspace-id `((client_id . ,client-id)))
+  (message "hyprmacs: requested debug hide for %s" client-id))
+
+(defun hyprmacs-debug-show-client (workspace-id client-id)
+  "Task 6 temporary command to restore CLIENT-ID in WORKSPACE-ID."  
+  (interactive (list (read-string "Workspace ID: "
+                                  (or (plist-get hyprmacs-session-state :workspace-id) "1"))
+                     (read-string "Client ID (e.g. 0xabc): ")))
+  (hyprmacs-session-send "debug-show-client" workspace-id `((client_id . ,client-id)))
+  (message "hyprmacs: requested debug show for %s" client-id))
+
+(defun hyprmacs-debug-open-layout-log (&optional path)
+  "Open Task 6 layout debug log file at PATH.
+Defaults to /tmp/hyprmacs-layout.log."
+  (interactive)
+  (let ((target (or path "/tmp/hyprmacs-layout.log")))
+    (find-file target)))
+
 (defun hyprmacs-dump-state ()
   "Render current session state in a debug buffer."  
   (interactive)
