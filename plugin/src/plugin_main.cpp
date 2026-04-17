@@ -2,6 +2,7 @@
 #include <cstring>
 #include <cerrno>
 #include <iostream>
+#include <optional>
 #include <string>
 #include <sys/socket.h>
 #include <sys/un.h>
@@ -45,12 +46,12 @@ constexpr auto kPluginDescription =
 constexpr auto kPluginAuthor = "Hans Fredrik Furholt";
 constexpr auto kPluginVersion = "0.1.0";
 
-int dispatch_hypr_command_via_socket(const std::string& command) {
+std::optional<std::string> send_hypr_command_via_socket(const std::string& command) {
     const char* runtime_dir = std::getenv("XDG_RUNTIME_DIR");
     const char* instance = std::getenv("HYPRLAND_INSTANCE_SIGNATURE");
     if (runtime_dir == nullptr || instance == nullptr || *runtime_dir == '\0' || *instance == '\0') {
         std::cerr << "[hyprmacs] dispatch failed: missing runtime env\n";
-        return -1;
+        return std::nullopt;
     }
 
     std::string socket_path = runtime_dir;
@@ -64,7 +65,7 @@ int dispatch_hypr_command_via_socket(const std::string& command) {
     const int fd = ::socket(AF_UNIX, SOCK_STREAM, 0);
     if (fd < 0) {
         std::cerr << "[hyprmacs] dispatch failed: socket() rc=" << fd << '\n';
-        return -1;
+        return std::nullopt;
     }
 
     sockaddr_un addr {};
@@ -72,14 +73,14 @@ int dispatch_hypr_command_via_socket(const std::string& command) {
     if (socket_path.size() >= sizeof(addr.sun_path)) {
         std::cerr << "[hyprmacs] dispatch failed: socket path too long path=" << socket_path << '\n';
         ::close(fd);
-        return -1;
+        return std::nullopt;
     }
     std::memcpy(addr.sun_path, socket_path.c_str(), socket_path.size() + 1);
 
     if (::connect(fd, reinterpret_cast<const sockaddr*>(&addr), sizeof(addr)) != 0) {
         std::cerr << "[hyprmacs] dispatch failed: connect() path=" << socket_path << " errno=" << errno << '\n';
         ::close(fd);
-        return -1;
+        return std::nullopt;
     }
 
     std::string command_with_newline = command;
@@ -87,7 +88,7 @@ int dispatch_hypr_command_via_socket(const std::string& command) {
     if (::send(fd, command_with_newline.c_str(), command_with_newline.size(), 0) < 0) {
         std::cerr << "[hyprmacs] dispatch failed: send() errno=" << errno << '\n';
         ::close(fd);
-        return -1;
+        return std::nullopt;
     }
     (void)::shutdown(fd, SHUT_WR);
 
@@ -96,11 +97,20 @@ int dispatch_hypr_command_via_socket(const std::string& command) {
     ::close(fd);
     if (read_bytes < 0) {
         std::cerr << "[hyprmacs] dispatch failed: recv() errno=" << errno << '\n';
-        return -1;
+        return std::nullopt;
     }
 
     response[read_bytes] = '\0';
-    const std::string reply(response);
+    return std::string(response);
+}
+
+int dispatch_hypr_command_via_socket(const std::string& command) {
+    const auto reply_opt = send_hypr_command_via_socket(command);
+    if (!reply_opt.has_value()) {
+        return -1;
+    }
+
+    const std::string& reply = *reply_opt;
     if (reply.find("ok") == std::string::npos) {
         std::cerr << "[hyprmacs] dispatch non-ok response: " << reply << '\n';
         return 1;
@@ -108,7 +118,14 @@ int dispatch_hypr_command_via_socket(const std::string& command) {
     return 0;
 }
 
-hyprmacs::WorkspaceManager g_workspace_manager;
+hyprmacs::WorkspaceManager g_workspace_manager(
+    [](const std::string& command) {
+        return dispatch_hypr_command_via_socket(command);
+    },
+    [](const std::string& command) -> std::optional<std::string> {
+        return send_hypr_command_via_socket(command);
+    }
+);
 hyprmacs::LayoutApplier g_layout_applier([](const std::string& command) {
     return dispatch_hypr_command_via_socket(command);
 });

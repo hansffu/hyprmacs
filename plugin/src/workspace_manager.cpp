@@ -126,6 +126,9 @@ bool is_tracked_event_name(std::string_view event_name) {
 }
 
 WorkspaceManager::WorkspaceManager() = default;
+WorkspaceManager::WorkspaceManager(DispatchExecutor dispatch_executor, QueryExecutor query_executor)
+    : dispatch_executor_(std::move(dispatch_executor))
+    , query_executor_(std::move(query_executor)) {}
 
 WorkspaceManager::~WorkspaceManager() {
     stop_event_tap();
@@ -162,9 +165,13 @@ std::unordered_map<std::string, size_t> WorkspaceManager::event_counts() const {
 bool WorkspaceManager::manage_workspace(const WorkspaceId& workspace_id) {
     std::scoped_lock lock(mutex_);
     const bool changed = !managed_workspace_id_.has_value() || *managed_workspace_id_ != workspace_id;
+    if (changed && policy_applied_) {
+        restore_policy_locked();
+    }
     managed_workspace_id_ = workspace_id;
     input_mode_ = InputMode::kEmacsControl;
     client_registry_.reconcile_management(managed_workspace_id_);
+    apply_managed_policy_locked();
     return changed;
 }
 
@@ -176,6 +183,7 @@ bool WorkspaceManager::unmanage_workspace(const WorkspaceId& workspace_id) {
     managed_workspace_id_ = std::nullopt;
     input_mode_ = std::nullopt;
     client_registry_.reconcile_management(managed_workspace_id_);
+    restore_policy_locked();
     return true;
 }
 
@@ -244,7 +252,14 @@ std::optional<ClientId> WorkspaceManager::emacs_client(const WorkspaceId& worksp
 
 void WorkspaceManager::set_controller_connected(bool connected) {
     std::scoped_lock lock(mutex_);
+    const bool transition_to_disconnected = controller_connected_ && !connected;
     controller_connected_ = connected;
+    if (transition_to_disconnected && managed_workspace_id_.has_value()) {
+        managed_workspace_id_ = std::nullopt;
+        input_mode_ = std::nullopt;
+        client_registry_.reconcile_management(managed_workspace_id_);
+        restore_policy_locked();
+    }
 }
 
 StateDumpPayload WorkspaceManager::build_state_dump(const WorkspaceId& workspace_id) const {
@@ -287,6 +302,97 @@ StateDumpPayload WorkspaceManager::build_state_dump(const WorkspaceId& workspace
 
 void WorkspaceManager::process_event_for_tests(const std::string& line) {
     handle_line(line);
+}
+
+std::optional<int> WorkspaceManager::parse_int_field(std::string_view json, std::string_view key) {
+    const std::string token = "\"" + std::string(key) + "\"";
+    const size_t key_pos = json.find(token);
+    if (key_pos == std::string_view::npos) {
+        return std::nullopt;
+    }
+
+    const size_t colon = json.find(':', key_pos + token.size());
+    if (colon == std::string_view::npos) {
+        return std::nullopt;
+    }
+
+    size_t pos = colon + 1;
+    while (pos < json.size() && std::isspace(static_cast<unsigned char>(json[pos])) != 0) {
+        ++pos;
+    }
+    if (pos >= json.size()) {
+        return std::nullopt;
+    }
+
+    size_t end = pos;
+    if (json[end] == '-') {
+        ++end;
+    }
+    while (end < json.size() && std::isdigit(static_cast<unsigned char>(json[end])) != 0) {
+        ++end;
+    }
+    if (end == pos || (end == pos + 1 && json[pos] == '-')) {
+        return std::nullopt;
+    }
+
+    try {
+        return std::stoi(std::string(json.substr(pos, end - pos)));
+    } catch (...) {
+        return std::nullopt;
+    }
+}
+
+std::optional<int> WorkspaceManager::query_option_int_locked(std::string_view option_name) const {
+    if (!query_executor_) {
+        return std::nullopt;
+    }
+    auto response = query_executor_(std::string("j/getoption ") + std::string(option_name));
+    if (!response.has_value()) {
+        return std::nullopt;
+    }
+    return parse_int_field(*response, "int");
+}
+
+bool WorkspaceManager::dispatch_keyword_locked(std::string_view key, std::string_view value) const {
+    if (!dispatch_executor_) {
+        return false;
+    }
+    const std::string command = "keyword " + std::string(key) + " " + std::string(value);
+    return dispatch_executor_(command) == 0;
+}
+
+void WorkspaceManager::capture_policy_snapshot_locked() {
+    policy_snapshot_.follow_mouse = query_option_int_locked("input:follow_mouse");
+    policy_snapshot_.animations_enabled = query_option_int_locked("animations:enabled");
+    policy_snapshot_.focus_on_activate = query_option_int_locked("misc:focus_on_activate");
+}
+
+void WorkspaceManager::apply_managed_policy_locked() {
+    if (policy_applied_) {
+        return;
+    }
+    capture_policy_snapshot_locked();
+    (void)dispatch_keyword_locked("input:follow_mouse", "0");
+    (void)dispatch_keyword_locked("animations:enabled", "0");
+    (void)dispatch_keyword_locked("misc:focus_on_activate", "0");
+    policy_applied_ = true;
+}
+
+void WorkspaceManager::restore_policy_locked() {
+    if (!policy_applied_) {
+        return;
+    }
+    if (policy_snapshot_.follow_mouse.has_value()) {
+        (void)dispatch_keyword_locked("input:follow_mouse", std::to_string(*policy_snapshot_.follow_mouse));
+    }
+    if (policy_snapshot_.animations_enabled.has_value()) {
+        (void)dispatch_keyword_locked("animations:enabled", std::to_string(*policy_snapshot_.animations_enabled));
+    }
+    if (policy_snapshot_.focus_on_activate.has_value()) {
+        (void)dispatch_keyword_locked("misc:focus_on_activate", std::to_string(*policy_snapshot_.focus_on_activate));
+    }
+    policy_snapshot_ = PolicySnapshot {};
+    policy_applied_ = false;
 }
 
 void WorkspaceManager::event_loop() {

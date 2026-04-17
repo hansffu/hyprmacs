@@ -64,6 +64,20 @@ Quick manual checks for each prototype checkpoint in the nested Hyprland environ
   - non-visible managed clients move to =special:hyprmacs-hidden=
   - overlapping Emacs panes are rejected with a layout error (no partial mutation)
 
+* Task 8A Workspace Policy Smoke
+- Start nested Hyprland with =just run= and open Emacs + at least one app window.
+- In Emacs run:
+  - =M-x hyprmacs-manage-current-workspace=
+- Validate while managed:
+  - workspace policy applies:
+    - =hyprctl getoption input:follow_mouse= shows =0=
+    - =hyprctl getoption animations:enabled= shows =0=
+    - =hyprctl getoption misc:focus_on_activate= shows =0=
+- In Emacs run:
+  - =M-x hyprmacs-unmanage-workspace=
+- Validate after unmanage:
+  - the three options above are restored to pre-manage values.
+
 * Notes
 - Task 6 uses temporary debug commands and a special workspace (=special:hyprmacs-hidden=) for hide/restore.
 - This is a spike path and may change before layout integration.

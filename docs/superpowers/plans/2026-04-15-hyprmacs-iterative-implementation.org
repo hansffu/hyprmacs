@@ -581,7 +581,7 @@ Validation:
 - Split the Emacs frame, show two managed buffers, and verify both clients become visible in matching rectangles.
 - Delete one split and verify the corresponding client becomes hidden but remains alive.
 
-** NEXT Task 8A: Introduce the dedicated hyprmacs workspace policy profile
+** DONE Task 8A: Introduce the dedicated hyprmacs workspace policy profile
 Purpose:
 - Add a workspace-local policy mode that protects Emacs-directed layout semantics from conflicting Hyprland behaviors.
 
@@ -598,13 +598,23 @@ Steps:
 - Document required baseline constraints:
   - focus-follows-mouse disabled for managed workspaces
   - window animations disabled for managed geometry transitions
-*** TODO Implement workspace policy enforcement and restore
-- Apply the =hyprmacs= policy profile when a workspace becomes managed.
-- Snapshot and restore previous workspace policy on unmanage/disconnect.
-*** TODO Add additional safeguards for layout ownership
+*** DONE Implement workspace policy enforcement and restore
+- Workspace manager now applies managed policy keywords on =manage-workspace=:
+  - =input:follow_mouse = 0=
+  - =animations:enabled = 0=
+  - =misc:focus_on_activate = 0=
+- Workspace manager snapshots prior option values using Hyprland =j/getoption= queries before applying policy.
+- Workspace manager restores snapped policy values on =unmanage-workspace=.
+- Controller disconnect transition now triggers workspace unmanage + policy restore in the manager state path.
+*** DONE Add additional safeguards for layout ownership
 - Prevent native focus/layout heuristics from overriding Emacs layout intent in managed mode.
 - Keep managed-layer stacking and non-overlap guarantees intact.
-*** WAIT Review task 8A with user
+- Added manager-level policy guard for =focus_on_activate= during managed sessions.
+- Existing layout safeguards remain active:
+  - plugin overlap rejection in =LayoutApplier=
+  - managed-layer visibility and geometry from Emacs snapshots
+  - native popup/floating surfaces remain outside managed set by classifier rules
+*** DONE Review task 8A with user
 - Stop when policy constraints are active and restored correctly across manage/unmanage.
 
 *** DONE Session note: post-Task-8 architecture agreement (2026-04-17)
@@ -636,7 +646,26 @@ Steps:
 - Added explicit =M-x hyprmacs-set-emacs-control-mode= command for forcing =emacs-control= from Emacs when needed.
 - Kept backward-compatible non-interactive argument forms for automation/tests.
 
-** TODO Task 9: Harden popup, floating, and Emacs auxiliary-window behavior
+*** DONE Session note: new-client adoption UX gap discovered during manual test (2026-04-17)
+- Reproduction: with a managed workspace active, launching a new app can first appear as native tiled until Emacs receives refreshed state and re-publishes layout.
+- Current root cause: plugin-to-Emacs live lifecycle notifications (=client-opened/client-closed= style push) are not implemented yet; Emacs session state is primarily refreshed by explicit =request-state= command/response cycles.
+- Consequence: newly opened eligible clients are managed in plugin state, but Emacs buffer/layout intent may not update immediately in the same interaction step.
+- This is currently treated as not-yet-implemented behavior (synchronization gap), not a regression in existing implemented contract.
+
+*** DONE Session note: Task 8A policy implementation and test coverage (2026-04-17)
+- Injected command/query executors into =WorkspaceManager= so policy application and snapshot restore can be unit-tested without a live compositor.
+- Added policy tests in =plugin/tests/workspace_manager_tests.cpp= covering:
+  - apply-on-manage and restore-on-unmanage
+  - restore and managed-state cleanup on controller disconnect transition.
+- Plugin main now shares a raw Hyprland command-socket helper for both command dispatch and option query responses used by workspace policy handling.
+
+*** DONE Session note: live nested focus-handoff failure diagnosis (2026-04-17)
+- In live nested testing, Emacs appeared unresponsive while session state remained in =client-control=.
+- Root cause observed in plugin logs: dispatch helper failed with =missing runtime env= during focus handoff and policy restore paths.
+- Current plugin dispatch/query helpers read =HYPRLAND_INSTANCE_SIGNATURE= at call time; in this runtime, that env var can be unavailable later even though startup succeeded.
+- Consequence: mode state may update in IPC/session state, but compositor focus handoff command can fail, leaving keyboard ownership on client surfaces.
+
+** NEXT Task 9: Harden popup, floating, and Emacs auxiliary-window behavior
 Purpose:
 - Make sure the design avoids the EXWM failure modes it was created to avoid.
 
@@ -667,11 +696,13 @@ Validation:
 ** TODO Task 10: Add disconnect recovery, resync, and failure handling
 Purpose:
 - Make the system survivable when either side lags, restarts, or disappears.
+- Eliminate runtime dispatch fragility caused by environment-dependent socket resolution after startup.
 
 Files:
 - Modify =plugin/src/ipc_server.cpp=
 - Modify =plugin/src/workspace_manager.cpp=
 - Modify =plugin/src/focus_controller.cpp=
+- Modify =plugin/src/plugin_main.cpp=
 - Modify =emacs/hyprmacs-ipc.el=
 - Modify =emacs/hyprmacs-session.el=
 - Create =tests/emacs/reconnect-tests.el=
@@ -684,6 +715,10 @@ Steps:
 - Let Emacs reconnect, request a state dump, and rebuild its session state from plugin truth.
 *** TODO Harden message processing
 - Handle malformed messages, unsupported versions, and stale socket paths with clear errors.
+*** TODO Harden plugin dispatch/query runtime dependencies
+- Remove per-call dependency on process environment for Hyprland command-socket resolution after plugin startup.
+- Ensure focus handoff and policy dispatches remain functional even if =HYPRLAND_INSTANCE_SIGNATURE= is unavailable at call time.
+- Add regression coverage for this path where feasible (unit tests for resolver logic and/or deterministic integration check in nested session).
 *** TODO Document recovery behavior
 - Write the ADR and add manual tests for restart scenarios.
 *** WAIT Review task 10 with user
@@ -691,6 +726,7 @@ Steps:
 
 Validation:
 - Kill Emacs during both input modes, reconnect, and verify the workspace is usable and re-manageable.
+- Validate mode switch handoff and policy dispatch continue working in a long-lived session where runtime env vars may be absent from plugin process environment.
 
 ** TODO Task 11: Package the prototype, document usage, and freeze the first demo flow
 Purpose:

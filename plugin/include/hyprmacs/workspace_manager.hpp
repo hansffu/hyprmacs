@@ -1,6 +1,7 @@
 #pragma once
 
 #include <atomic>
+#include <functional>
 #include <mutex>
 #include <optional>
 #include <string>
@@ -23,7 +24,11 @@ bool is_tracked_event_name(std::string_view event_name);
 
 class WorkspaceManager {
   public:
+    using DispatchExecutor = std::function<int(const std::string&)>;
+    using QueryExecutor = std::function<std::optional<std::string>(const std::string&)>;
+
     WorkspaceManager();
+    explicit WorkspaceManager(DispatchExecutor dispatch_executor, QueryExecutor query_executor = {});
     ~WorkspaceManager();
 
     WorkspaceManager(const WorkspaceManager&) = delete;
@@ -47,6 +52,19 @@ class WorkspaceManager {
     void process_event_for_tests(const std::string& line);
 
   private:
+    struct PolicySnapshot {
+        std::optional<int> follow_mouse;
+        std::optional<int> animations_enabled;
+        std::optional<int> focus_on_activate;
+    };
+
+    static std::optional<int> parse_int_field(std::string_view json, std::string_view key);
+    std::optional<int> query_option_int_locked(std::string_view option_name) const;
+    bool dispatch_keyword_locked(std::string_view key, std::string_view value) const;
+    void capture_policy_snapshot_locked();
+    void apply_managed_policy_locked();
+    void restore_policy_locked();
+
     void event_loop();
     void handle_line(const std::string& line);
     bool should_track(const std::string& event_name) const;
@@ -61,6 +79,10 @@ class WorkspaceManager {
     std::optional<WorkspaceId> managed_workspace_id_;
     std::optional<InputMode> input_mode_;
     bool controller_connected_ = false;
+    bool policy_applied_ = false;
+    PolicySnapshot policy_snapshot_;
+    DispatchExecutor dispatch_executor_;
+    QueryExecutor query_executor_;
 };
 
 }  // namespace hyprmacs
