@@ -6,6 +6,7 @@
 #include <cstdlib>
 #include <cstring>
 #include <iostream>
+#include <tuple>
 #include <string_view>
 #include <sys/socket.h>
 #include <sys/un.h>
@@ -92,8 +93,122 @@ bool parse_boolish(std::string_view value, bool* out) {
     return false;
 }
 
+std::optional<bool> parse_floating_value(const std::vector<std::string>& parts) {
+    for (size_t i = 1; i < parts.size(); ++i) {
+        bool floating = false;
+        if (parse_boolish(parts[i], &floating)) {
+            return floating;
+        }
+    }
+    return std::nullopt;
+}
+
 bool is_internal_hidden_workspace_target(std::string_view workspace_id) {
     return workspace_id == "-98" || workspace_id == "special:hyprmacs-hidden";
+}
+
+std::string normalize_client_id_for_query(std::string_view client_id) {
+    if (client_id.rfind("address:", 0) == 0) {
+        client_id = client_id.substr(8);
+    }
+    if (client_id.rfind("0x", 0) == 0) {
+        return std::string(client_id);
+    }
+    return "0x" + std::string(client_id);
+}
+
+size_t skip_json_ws(std::string_view json, size_t pos) {
+    while (pos < json.size() && std::isspace(static_cast<unsigned char>(json[pos])) != 0) {
+        ++pos;
+    }
+    return pos;
+}
+
+std::optional<std::string> parse_json_string_field(std::string_view json, std::string_view key) {
+    const std::string token = "\"" + std::string(key) + "\"";
+    const size_t key_pos = json.find(token);
+    if (key_pos == std::string_view::npos) {
+        return std::nullopt;
+    }
+    const size_t colon = json.find(':', key_pos + token.size());
+    if (colon == std::string_view::npos) {
+        return std::nullopt;
+    }
+    size_t pos = skip_json_ws(json, colon + 1);
+    if (pos >= json.size() || json[pos] != '"') {
+        return std::nullopt;
+    }
+    ++pos;
+    const size_t end = json.find('"', pos);
+    if (end == std::string_view::npos) {
+        return std::nullopt;
+    }
+    return std::string(json.substr(pos, end - pos));
+}
+
+std::optional<bool> parse_json_bool_field(std::string_view json, std::string_view key) {
+    const std::string token = "\"" + std::string(key) + "\"";
+    const size_t key_pos = json.find(token);
+    if (key_pos == std::string_view::npos) {
+        return std::nullopt;
+    }
+    const size_t colon = json.find(':', key_pos + token.size());
+    if (colon == std::string_view::npos) {
+        return std::nullopt;
+    }
+    const size_t pos = skip_json_ws(json, colon + 1);
+    if (pos >= json.size()) {
+        return std::nullopt;
+    }
+    if (json.compare(pos, 4, "true") == 0) {
+        return true;
+    }
+    if (json.compare(pos, 5, "false") == 0) {
+        return false;
+    }
+    return std::nullopt;
+}
+
+std::optional<std::string_view> find_client_object_json(std::string_view clients_json, std::string_view client_id) {
+    size_t search_from = 0;
+    while (search_from < clients_json.size()) {
+        const size_t address_key = clients_json.find("\"address\"", search_from);
+        if (address_key == std::string_view::npos) {
+            return std::nullopt;
+        }
+
+        const size_t object_start = clients_json.rfind('{', address_key);
+        if (object_start == std::string_view::npos) {
+            return std::nullopt;
+        }
+
+        int depth = 0;
+        size_t object_end = std::string_view::npos;
+        for (size_t i = object_start; i < clients_json.size(); ++i) {
+            if (clients_json[i] == '{') {
+                ++depth;
+            } else if (clients_json[i] == '}') {
+                --depth;
+                if (depth == 0) {
+                    object_end = i;
+                    break;
+                }
+            }
+        }
+        if (object_end == std::string_view::npos) {
+            return std::nullopt;
+        }
+
+        const auto object_json = clients_json.substr(object_start, object_end - object_start + 1);
+        const auto address = parse_json_string_field(object_json, "address");
+        if (address.has_value() && *address == client_id) {
+            return object_json;
+        }
+
+        search_from = object_end + 1;
+    }
+
+    return std::nullopt;
 }
 
 }  // namespace
@@ -250,6 +365,11 @@ std::optional<ClientId> WorkspaceManager::emacs_client(const WorkspaceId& worksp
     return std::nullopt;
 }
 
+void WorkspaceManager::set_client_transition_notifier(ClientTransitionNotifier notifier) {
+    std::scoped_lock lock(mutex_);
+    client_transition_notifier_ = std::move(notifier);
+}
+
 void WorkspaceManager::set_controller_connected(bool connected) {
     std::scoped_lock lock(mutex_);
     const bool transition_to_disconnected = controller_connected_ && !connected;
@@ -353,6 +473,25 @@ std::optional<int> WorkspaceManager::query_option_int_locked(std::string_view op
     return parse_int_field(*response, "int");
 }
 
+std::optional<bool> WorkspaceManager::query_client_floating_locked(std::string_view client_id) const {
+    if (!query_executor_) {
+        return std::nullopt;
+    }
+
+    auto response = query_executor_("j/clients");
+    if (!response.has_value()) {
+        return std::nullopt;
+    }
+
+    const std::string normalized_client_id = normalize_client_id_for_query(client_id);
+    const auto object_json = find_client_object_json(*response, normalized_client_id);
+    if (!object_json.has_value()) {
+        return std::nullopt;
+    }
+
+    return parse_json_bool_field(*object_json, "floating");
+}
+
 bool WorkspaceManager::dispatch_keyword_locked(std::string_view key, std::string_view value) const {
     if (!dispatch_executor_) {
         return false;
@@ -447,16 +586,69 @@ void WorkspaceManager::handle_line(const std::string& line) {
     }
 
     bool state_mutated = false;
+    bool transition_notify = false;
+    bool transition_floating = false;
+    WorkspaceId transition_workspace;
+    ClientId transition_client_id;
+    ClientTransitionNotifier transition_notifier;
 
     {
         std::scoped_lock lock(mutex_);
         event_counts_[frame->name] += 1;
+        auto maybe_set_transition = [&](std::string_view raw_client_id, bool floating_value) {
+            const auto after = client_registry_.find(std::string(raw_client_id));
+            if (after == nullptr || !managed_workspace_id_.has_value()) {
+                return;
+            }
+            const bool can_notify = controller_connected_ && client_transition_notifier_ != nullptr
+                                    && after->workspace_id == *managed_workspace_id_;
+            if (!can_notify) {
+                return;
+            }
+            if (floating_value && !transition_notify) {
+                transition_notify = true;
+                transition_floating = true;
+                transition_workspace = *managed_workspace_id_;
+                transition_client_id = after->client_id;
+                transition_notifier = client_transition_notifier_;
+            } else if (!floating_value && !transition_notify) {
+                transition_notify = true;
+                transition_floating = false;
+                transition_workspace = *managed_workspace_id_;
+                transition_client_id = after->client_id;
+                transition_notifier = client_transition_notifier_;
+            }
+        };
+        auto refresh_floating_from_query = [&](std::string_view raw_client_id) {
+            const auto before = client_registry_.find(std::string(raw_client_id));
+            if (before == nullptr) {
+                return;
+            }
+            const bool was_managed = before->managed;
+            const auto queried_floating = query_client_floating_locked(raw_client_id);
+            if (!queried_floating.has_value() || *queried_floating == before->floating) {
+                return;
+            }
+
+            client_registry_.set_floating(std::string(raw_client_id), *queried_floating);
+            client_registry_.reconcile_management(managed_workspace_id_);
+            state_mutated = true;
+
+            const auto after = client_registry_.find(std::string(raw_client_id));
+            const bool now_managed = after != nullptr && after->managed;
+            if (*queried_floating && was_managed && !now_managed) {
+                maybe_set_transition(raw_client_id, true);
+            } else if (!*queried_floating && !was_managed && now_managed) {
+                maybe_set_transition(raw_client_id, false);
+            }
+        };
 
         if (frame->name == "openwindow" || frame->name == "openwindowv2") {
             const auto parts = split_csv_limited(frame->payload, 4);
             if (parts.size() == 4) {
                 client_registry_.upsert_open(parts[0], parts[1], parts[2], parts[3]);
                 client_registry_.reconcile_management(managed_workspace_id_);
+                refresh_floating_from_query(parts[0]);
                 state_mutated = true;
             }
         } else if (frame->name == "closewindow") {
@@ -479,6 +671,7 @@ void WorkspaceManager::handle_line(const std::string& line) {
             const auto parts = split_csv_limited(frame->payload, 2);
             if (!parts.empty()) {
                 client_registry_.set_focus(parts[0]);
+                refresh_floating_from_query(parts[0]);
                 state_mutated = true;
             }
         } else if (frame->name == "windowtitlev2") {
@@ -486,17 +679,33 @@ void WorkspaceManager::handle_line(const std::string& line) {
             if (parts.size() == 2) {
                 client_registry_.update_title(parts[0], parts[1]);
                 client_registry_.reconcile_management(managed_workspace_id_);
+                refresh_floating_from_query(parts[0]);
                 state_mutated = true;
             }
         } else if (frame->name == "changefloatingmode" || frame->name == "changefloatingmodev2" ||
                    frame->name.find("floating") != std::string::npos) {
             const auto parts = split_csv_limited(frame->payload, 3);
             if (parts.size() >= 2) {
-                bool floating = false;
-                if (parse_boolish(parts[1], &floating)) {
-                    client_registry_.set_floating(parts[0], floating);
+                const auto before = client_registry_.find(parts[0]);
+                const bool was_managed = before != nullptr && before->managed;
+                const auto floating = parse_floating_value(parts);
+                if (floating.has_value()) {
+                    client_registry_.set_floating(parts[0], *floating);
                     client_registry_.reconcile_management(managed_workspace_id_);
                     state_mutated = true;
+
+                    const auto after = client_registry_.find(parts[0]);
+                    const bool now_managed = after != nullptr && after->managed;
+                    const bool can_notify = controller_connected_ && managed_workspace_id_.has_value() &&
+                                            client_transition_notifier_ != nullptr && after != nullptr &&
+                                            after->workspace_id == *managed_workspace_id_;
+                    if (can_notify) {
+                        if (*floating && was_managed && !now_managed) {
+                            maybe_set_transition(parts[0], true);
+                        } else if (!*floating && !was_managed && now_managed) {
+                            maybe_set_transition(parts[0], false);
+                        }
+                    }
                 }
             }
         }
@@ -510,6 +719,10 @@ void WorkspaceManager::handle_line(const std::string& line) {
         if (state_mutated) {
             log_state_dump_locked();
         }
+    }
+
+    if (transition_notify && transition_notifier != nullptr) {
+        transition_notifier(transition_workspace, transition_client_id, transition_floating);
     }
 }
 

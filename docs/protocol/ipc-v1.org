@@ -185,6 +185,36 @@ Payload:
 }
 #+end_src
 
+*** =client-became-floating=
+Purpose:
+- Notify Emacs that a previously managed client left managed membership due to floating transition.
+
+Payload:
+#+begin_src json
+{
+  "client_id": "0xabc123",
+  "floating": true
+}
+#+end_src
+
+Rules:
+- The plugin should send a fresh =state-dump= immediately after this event.
+
+*** =client-became-tiled=
+Purpose:
+- Notify Emacs that a previously floating client re-entered managed membership as tiled and eligible.
+
+Payload:
+#+begin_src json
+{
+  "client_id": "0xabc123",
+  "floating": false
+}
+#+end_src
+
+Rules:
+- The plugin should send a fresh =state-dump= immediately after this event.
+
 * Protocol Rules
 - Unknown protocol versions are rejected.
 - Unknown message types are protocol violations and may be logged and ignored in the prototype.

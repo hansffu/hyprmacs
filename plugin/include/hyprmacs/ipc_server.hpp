@@ -1,6 +1,7 @@
 #pragma once
 
 #include <atomic>
+#include <mutex>
 #include <optional>
 #include <string>
 #include <thread>
@@ -38,6 +39,7 @@ class IpcServer {
     void accept_loop();
     void serve_controller(int controller_fd);
     void send_message(int fd, const ProtocolMessage& message);
+    void on_client_transition(const WorkspaceId& workspace_id, const ClientId& client_id, bool floating);
 
     WorkspaceManager* workspace_manager_ = nullptr;
     LayoutApplier* layout_applier_ = nullptr;
@@ -46,7 +48,10 @@ class IpcServer {
 
     std::atomic<bool> running_ {false};
     int listen_fd_ = -1;
+    int controller_fd_ = -1;
     std::thread accept_thread_;
+    mutable std::mutex controller_mutex_;
+    mutable std::mutex send_mutex_;
 };
 
 }  // namespace hyprmacs

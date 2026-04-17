@@ -64,6 +64,42 @@ bool test_classifier_rules() {
     ok &= expect(hyprmacs::is_client_eligible(titled_emacs_but_not_emacs),
                  "non-emacs app should remain eligible even if title mentions emacs");
 
+    hyprmacs::ClientRecord chooser_dialog {
+        .client_id = "0x6",
+        .workspace_id = "1",
+        .title = "Open File Chooser",
+        .app_id = "xdg-desktop-portal-gtk",
+        .floating = false,
+    };
+    ok &= expect(!hyprmacs::is_client_eligible(chooser_dialog), "portal chooser dialog should be excluded");
+
+    hyprmacs::ClientRecord auth_prompt {
+        .client_id = "0x7",
+        .workspace_id = "1",
+        .title = "Authentication Required",
+        .app_id = "polkit-gnome-authentication-agent-1",
+        .floating = false,
+    };
+    ok &= expect(!hyprmacs::is_client_eligible(auth_prompt), "authentication prompt should be excluded");
+
+    hyprmacs::ClientRecord emacs_child_frame {
+        .client_id = "0x8",
+        .workspace_id = "1",
+        .title = " *Minibuf-1* - GNU Emacs at host",
+        .app_id = "org.gnu.emacs",
+        .floating = false,
+    };
+    ok &= expect(!hyprmacs::is_client_eligible(emacs_child_frame), "emacs child frames should be excluded");
+
+    hyprmacs::ClientRecord about_dialog {
+        .client_id = "0x9",
+        .workspace_id = "1",
+        .title = "About PCManFM",
+        .app_id = "pcmanfm",
+        .floating = false,
+    };
+    ok &= expect(!hyprmacs::is_client_eligible(about_dialog), "about dialogs should be excluded");
+
     return ok;
 }
 
@@ -136,6 +172,27 @@ bool test_registry_management_reconcile() {
     return ok;
 }
 
+bool test_registry_clears_selected_when_client_leaves_managed_set() {
+    bool ok = true;
+    hyprmacs::ClientRegistry registry;
+
+    registry.upsert_open("0x111", "1", "foot", "one");
+    registry.upsert_open("0x222", "1", "foot", "two");
+    registry.reconcile_management(std::make_optional<std::string>("1"));
+    registry.set_focus("0x111");
+
+    registry.set_floating("0x111", true);
+    registry.reconcile_management(std::make_optional<std::string>("1"));
+
+    const auto snapshot = registry.snapshot();
+    ok &= expect(!snapshot.selected_client.has_value(),
+                 "selected client should clear when it becomes floating and leaves managed set");
+    const auto* c1 = registry.find("0x111");
+    ok &= expect(c1 != nullptr && !c1->managed, "floating selected client should no longer be managed");
+
+    return ok;
+}
+
 bool test_registry_normalizes_client_ids() {
     bool ok = true;
     hyprmacs::ClientRegistry registry;
@@ -166,6 +223,7 @@ int main() {
     ok &= test_classifier_rules();
     ok &= test_registry_lifecycle();
     ok &= test_registry_management_reconcile();
+    ok &= test_registry_clears_selected_when_client_leaves_managed_set();
     ok &= test_registry_normalizes_client_ids();
     return ok ? 0 : 1;
 }

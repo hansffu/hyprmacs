@@ -4,6 +4,7 @@
 #include <iostream>
 #include <optional>
 #include <string>
+#include <array>
 #include <sys/socket.h>
 #include <sys/un.h>
 #include <unistd.h>
@@ -92,16 +93,22 @@ std::optional<std::string> send_hypr_command_via_socket(const std::string& comma
     }
     (void)::shutdown(fd, SHUT_WR);
 
-    char response[256] {};
-    const ssize_t read_bytes = ::recv(fd, response, sizeof(response) - 1, 0);
-    ::close(fd);
-    if (read_bytes < 0) {
-        std::cerr << "[hyprmacs] dispatch failed: recv() errno=" << errno << '\n';
-        return std::nullopt;
+    std::string response;
+    std::array<char, 4096> chunk {};
+    while (true) {
+        const ssize_t read_bytes = ::recv(fd, chunk.data(), chunk.size(), 0);
+        if (read_bytes < 0) {
+            std::cerr << "[hyprmacs] dispatch failed: recv() errno=" << errno << '\n';
+            ::close(fd);
+            return std::nullopt;
+        }
+        if (read_bytes == 0) {
+            break;
+        }
+        response.append(chunk.data(), static_cast<size_t>(read_bytes));
     }
-
-    response[read_bytes] = '\0';
-    return std::string(response);
+    ::close(fd);
+    return response;
 }
 
 int dispatch_hypr_command_via_socket(const std::string& command) {

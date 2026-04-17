@@ -75,6 +75,15 @@ std::string payload_for_mode_changed(std::string_view mode, bool ok) {
     return out.str();
 }
 
+std::string payload_for_client_transition(std::string_view client_id, bool floating) {
+    std::ostringstream out;
+    out << "{";
+    out << "\"client_id\":\"" << client_id << "\",";
+    out << "\"floating\":" << (floating ? "true" : "false");
+    out << "}";
+    return out.str();
+}
+
 ProtocolMessage make_message(std::string_view type, const WorkspaceId& workspace_id, std::string payload_json) {
     return ProtocolMessage {
         .version = 1,
@@ -596,9 +605,20 @@ std::vector<ProtocolMessage> route_command_for_tests(
 IpcServer::IpcServer(WorkspaceManager* workspace_manager, LayoutApplier* layout_applier, FocusController* focus_controller)
     : workspace_manager_(workspace_manager)
     , layout_applier_(layout_applier)
-    , focus_controller_(focus_controller) {}
+    , focus_controller_(focus_controller) {
+    if (workspace_manager_ != nullptr) {
+        workspace_manager_->set_client_transition_notifier(
+            [this](const WorkspaceId& workspace_id, const ClientId& client_id, bool floating) {
+                on_client_transition(workspace_id, client_id, floating);
+            }
+        );
+    }
+}
 
 IpcServer::~IpcServer() {
+    if (workspace_manager_ != nullptr) {
+        workspace_manager_->set_client_transition_notifier({});
+    }
     stop();
 }
 
@@ -676,6 +696,15 @@ void IpcServer::stop() {
         listen_fd_ = -1;
     }
 
+    {
+        std::scoped_lock lock(controller_mutex_);
+        if (controller_fd_ >= 0) {
+            ::shutdown(controller_fd_, SHUT_RDWR);
+            ::close(controller_fd_);
+            controller_fd_ = -1;
+        }
+    }
+
     if (accept_thread_.joinable()) {
         accept_thread_.join();
     }
@@ -706,11 +735,21 @@ void IpcServer::accept_loop() {
             break;
         }
 
+        {
+            std::scoped_lock lock(controller_mutex_);
+            controller_fd_ = controller_fd;
+        }
         workspace_manager_->set_controller_connected(true);
         std::cerr << "[hyprmacs] ipc controller connected\n";
         serve_controller(controller_fd);
-        ::shutdown(controller_fd, SHUT_RDWR);
-        ::close(controller_fd);
+        {
+            std::scoped_lock lock(controller_mutex_);
+            if (controller_fd_ == controller_fd) {
+                ::shutdown(controller_fd_, SHUT_RDWR);
+                ::close(controller_fd_);
+                controller_fd_ = -1;
+            }
+        }
         workspace_manager_->set_controller_connected(false);
         std::cerr << "[hyprmacs] ipc controller disconnected\n";
     }
@@ -757,6 +796,7 @@ void IpcServer::serve_controller(int controller_fd) {
 }
 
 void IpcServer::send_message(int fd, const ProtocolMessage& message) {
+    std::scoped_lock lock(send_mutex_);
     const std::string encoded = serialize_message(message) + "\n";
     const ssize_t sent = ::send(fd, encoded.data(), encoded.size(), 0);
     if (sent < 0) {
@@ -765,6 +805,21 @@ void IpcServer::send_message(int fd, const ProtocolMessage& message) {
     }
 
     std::cerr << "[hyprmacs] ipc send type=" << message.type << " workspace=" << message.workspace_id << '\n';
+}
+
+void IpcServer::on_client_transition(const WorkspaceId& workspace_id, const ClientId& client_id, bool floating) {
+    int fd = -1;
+    {
+        std::scoped_lock lock(controller_mutex_);
+        fd = controller_fd_;
+    }
+    if (!running_.load() || fd < 0 || workspace_manager_ == nullptr) {
+        return;
+    }
+
+    const char* type = floating ? "client-became-floating" : "client-became-tiled";
+    send_message(fd, make_message(type, workspace_id, payload_for_client_transition(client_id, floating)));
+    send_message(fd, make_message("state-dump", workspace_id, serialize_state_dump_payload(workspace_manager_->build_state_dump(workspace_id))));
 }
 
 }  // namespace hyprmacs

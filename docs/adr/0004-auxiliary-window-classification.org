@@ -1,0 +1,53 @@
+#+title: ADR 0004 - Auxiliary Window Classification and Float Transition Handling
+#+date: 2026-04-18
+
+* Status
+Accepted and implemented in Task 9.
+
+* Context
+hyprmacs-managed workspaces must avoid EXWM-style popup and transient failures. Two concrete risks remained:
+
+1. Popup or transient windows being adopted into the managed set.
+2. Managed clients changing float state without timely controller visibility, causing stale Emacs-side assumptions.
+
+The design requires floating/transient/popup surfaces and Emacs auxiliary UI to remain native Hyprland-managed windows.
+
+* Decision
+Adopt the following Task 9 policy decisions.
+
+1. Tighten client exclusion classification for popup/transient classes and titles.
+- Keep floating clients ineligible.
+- Expand popup/transient keyword matching for common dialog/auth/portal launcher patterns.
+
+2. Keep Emacs auxiliary windows native by explicit policy.
+- Emacs-owned auxiliary surfaces (child frames, minibuffer/posframe-like windows) are always ineligible for managed adoption.
+- Emacs process identity is not sufficient for management; Emacs UI surfaces stay native by design.
+
+3. Handle float-state transitions as authoritative membership changes.
+- If a managed client becomes floating, remove it from managed membership.
+- If that client becomes tiled again and remains otherwise eligible in a managed workspace, re-adopt it automatically.
+- Clear stale logical selection when the selected client leaves managed membership.
+
+4. Notify controller on float-state transitions.
+- Emit explicit transition events (=client-became-floating= / =client-became-tiled=) plus a fresh =state-dump= so Emacs can resync without waiting for manual polling.
+
+* Consequences
+Pros:
+- Reduced risk of managing dialogs/popups and Emacs auxiliary UI.
+- Better state coherence when clients toggle float mode.
+- Faster Emacs visibility into managed-set changes.
+
+Tradeoffs:
+- Classification remains heuristic and may need expansion for edge application classes.
+- Adds async event traffic over IPC and thread-safe send coordination in plugin server code.
+
+* Rejected Alternatives
+1. Keep only manual =request-state= polling for float transitions.
+- Rejected because transitions can happen between commands and produce stale Emacs state.
+
+2. Manage all Emacs windows except the primary frame based on process identity alone.
+- Rejected because child-frame/posframe/minibuffer UI must remain native and top-layer.
+
+* Follow-up
+- Validate with pinentry/dialog/auth prompts and toggling floating on managed clients.
+- Continue refining classification terms as real app traces are collected.

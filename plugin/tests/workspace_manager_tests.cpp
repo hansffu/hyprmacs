@@ -1,5 +1,6 @@
 #include "hyprmacs/workspace_manager.hpp"
 
+#include <algorithm>
 #include <iostream>
 #include <optional>
 #include <string>
@@ -169,6 +170,137 @@ bool test_workspace_policy_restored_on_controller_disconnect() {
     return ok;
 }
 
+bool test_float_state_transitions_update_managed_set_and_emit_notifications() {
+    bool ok = true;
+
+    hyprmacs::WorkspaceManager manager;
+    std::vector<std::string> notifications;
+
+    manager.set_client_transition_notifier(
+        [&notifications](const hyprmacs::WorkspaceId& workspace_id, const hyprmacs::ClientId& client_id, bool floating) {
+            notifications.push_back(
+                (floating ? "client-became-floating:" : "client-became-tiled:") + workspace_id + ":" + client_id
+            );
+        }
+    );
+
+    manager.set_controller_connected(true);
+    manager.process_event_for_tests("openwindowv2>>0xaaa,1,foot,foot-a");
+    manager.process_event_for_tests("openwindowv2>>0xbbb,1,foot,foot-b");
+    manager.manage_workspace("1");
+
+    auto before = manager.build_state_dump("1");
+    ok &= expect(before.managed_clients.size() == 2, "both clients should be managed before float transition");
+
+    manager.process_event_for_tests("changefloatingmodev2>>0xaaa,true");
+    auto after_floating = manager.build_state_dump("1");
+    ok &= expect(after_floating.managed_clients.size() == 1, "floating client should be removed from managed set");
+    ok &= expect(std::find(after_floating.managed_clients.begin(), after_floating.managed_clients.end(), "0xaaa")
+                     == after_floating.managed_clients.end(),
+                 "floating client should not stay in managed list");
+    ok &= expect(notifications.size() == 1, "floating transition should emit one notification");
+    if (notifications.size() >= 1) {
+        ok &= expect(notifications[0] == "client-became-floating:1:0xaaa",
+                     "floating transition should emit client-became-floating");
+    }
+
+    manager.process_event_for_tests("changefloatingmodev2>>0xaaa,false");
+    auto after_tiled = manager.build_state_dump("1");
+    ok &= expect(after_tiled.managed_clients.size() == 2, "client should re-enter managed set after tiling");
+    ok &= expect(std::find(after_tiled.managed_clients.begin(), after_tiled.managed_clients.end(), "0xaaa")
+                     != after_tiled.managed_clients.end(),
+                 "retiled client should re-enter managed list");
+    ok &= expect(notifications.size() == 2, "tiling transition should emit a second notification");
+    if (notifications.size() >= 2) {
+        ok &= expect(notifications[1] == "client-became-tiled:1:0xaaa",
+                     "tiling transition should emit client-became-tiled");
+    }
+
+    return ok;
+}
+
+bool test_openwindow_refreshes_floating_state_from_clients_query() {
+    bool ok = true;
+
+    std::string clients_json = R"([
+      {"address":"0xaaa","workspace":{"id":1},"class":"pcmanfm","title":"About PCManFM","floating":true}
+    ])";
+
+    hyprmacs::WorkspaceManager manager(
+        [](const std::string&) { return 0; },
+        [&clients_json](const std::string& command) -> std::optional<std::string> {
+            if (command == "j/clients") {
+                return clients_json;
+            }
+            return std::nullopt;
+        }
+    );
+
+    manager.manage_workspace("1");
+    manager.process_event_for_tests("openwindowv2>>0xaaa,1,pcmanfm,About PCManFM");
+    const auto state = manager.build_state_dump("1");
+
+    ok &= expect(state.managed_clients.empty(), "floating client discovered on open should not be managed");
+    ok &= expect(state.eligible_clients.empty(), "floating client discovered on open should not be eligible");
+    return ok;
+}
+
+bool test_refresh_based_float_transition_notifier_without_floating_event() {
+    bool ok = true;
+
+    std::vector<std::string> notifications;
+    std::string clients_json = R"([
+      {"address":"0xaaa","workspace":{"id":1},"class":"foot","title":"foot-a","floating":false}
+    ])";
+
+    hyprmacs::WorkspaceManager manager(
+        [](const std::string&) { return 0; },
+        [&clients_json](const std::string& command) -> std::optional<std::string> {
+            if (command == "j/clients") {
+                return clients_json;
+            }
+            return std::nullopt;
+        }
+    );
+
+    manager.set_client_transition_notifier(
+        [&notifications](const hyprmacs::WorkspaceId& workspace_id, const hyprmacs::ClientId& client_id, bool floating) {
+            notifications.push_back(
+                (floating ? "client-became-floating:" : "client-became-tiled:") + workspace_id + ":" + client_id
+            );
+        }
+    );
+    manager.set_controller_connected(true);
+    manager.manage_workspace("1");
+    manager.process_event_for_tests("openwindowv2>>0xaaa,1,foot,foot-a");
+    auto state = manager.build_state_dump("1");
+    ok &= expect(state.managed_clients.size() == 1, "client should start as managed when query reports tiled");
+
+    clients_json = R"([
+      {"address":"0xaaa","workspace":{"id":1},"class":"foot","title":"foot-a","floating":true}
+    ])";
+    manager.process_event_for_tests("activewindowv2>>0xaaa");
+    state = manager.build_state_dump("1");
+    ok &= expect(state.managed_clients.empty(), "client should leave managed set when query flips to floating");
+    ok &= expect(notifications.size() == 1, "floating transition from query refresh should notify once");
+    if (notifications.size() >= 1) {
+        ok &= expect(notifications[0] == "client-became-floating:1:0xaaa", "floating notification payload mismatch");
+    }
+
+    clients_json = R"([
+      {"address":"0xaaa","workspace":{"id":1},"class":"foot","title":"foot-a","floating":false}
+    ])";
+    manager.process_event_for_tests("activewindowv2>>0xaaa");
+    state = manager.build_state_dump("1");
+    ok &= expect(state.managed_clients.size() == 1, "client should re-enter managed set when query flips to tiled");
+    ok &= expect(notifications.size() == 2, "tiled transition from query refresh should notify again");
+    if (notifications.size() >= 2) {
+        ok &= expect(notifications[1] == "client-became-tiled:1:0xaaa", "tiled notification payload mismatch");
+    }
+
+    return ok;
+}
+
 }  // namespace
 
 int main() {
@@ -179,5 +311,8 @@ int main() {
     ok &= test_state_dump_excludes_non_managed_selected_client();
     ok &= test_workspace_policy_applied_and_restored_on_manage_unmanage();
     ok &= test_workspace_policy_restored_on_controller_disconnect();
+    ok &= test_float_state_transitions_update_managed_set_and_emit_notifications();
+    ok &= test_openwindow_refreshes_floating_state_from_clients_query();
+    ok &= test_refresh_based_float_transition_notifier_without_floating_event();
     return ok ? 0 : 1;
 }

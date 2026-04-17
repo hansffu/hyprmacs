@@ -665,30 +665,67 @@ Steps:
 - Current plugin dispatch/query helpers read =HYPRLAND_INSTANCE_SIGNATURE= at call time; in this runtime, that env var can be unavailable later even though startup succeeded.
 - Consequence: mode state may update in IPC/session state, but compositor focus handoff command can fail, leaving keyboard ownership on client surfaces.
 
-** NEXT Task 9: Harden popup, floating, and Emacs auxiliary-window behavior
+** DONE Task 9: Harden popup, floating, and Emacs auxiliary-window behavior
 Purpose:
 - Make sure the design avoids the EXWM failure modes it was created to avoid.
 
 Files:
-- Modify =plugin/src/client_classifier.cpp=
-- Modify =plugin/src/workspace_manager.cpp=
-- Modify =plugin/src/layout_applier.cpp=
-- Modify =emacs/hyprmacs-layout.el=
 - Create =docs/adr/0004-auxiliary-window-classification.org=
+- Modify =docs/protocol/ipc-v1.org=
 - Modify =docs/testing/manual-smoke-tests.org=
+- Modify =plugin/src/client_classifier.cpp=
+- Modify =plugin/src/client_registry.cpp=
+- Modify =plugin/src/workspace_manager.cpp=
+- Modify =plugin/src/ipc_server.cpp=
+- Modify =plugin/src/plugin_main.cpp=
+- Modify =plugin/include/hyprmacs/workspace_manager.hpp=
+- Modify =plugin/include/hyprmacs/ipc_server.hpp=
+- Modify =plugin/src/layout_applier.cpp=
+- Modify =plugin/tests/client_registry_tests.cpp=
+- Modify =plugin/tests/workspace_manager_tests.cpp=
+- Modify =emacs/hyprmacs-layout.el=
+- Modify =emacs/hyprmacs.el=
+- Modify =tests/emacs/protocol-tests.el=
 
 Steps:
-*** TODO Tighten client exclusion rules
+*** DONE Tighten client exclusion rules
 - Verify dialogs, transient windows, and true floating windows never enter the managed set.
-*** TODO Keep Emacs-owned auxiliary windows native
+*** DONE Keep Emacs-owned auxiliary windows native
 - Confirm child frames and posframes are excluded even when they share process identity with the main Emacs frame.
-*** TODO Validate internal Emacs layout changes
+*** DONE Validate internal Emacs layout changes
 - Trigger fresh =set-layout= updates for minibuffer growth, side windows, and ordinary Emacs UI panes that change safe client geometry.
-*** TODO Handle client float-state transitions
+*** DONE Handle client float-state transitions
 - If a managed client becomes floating, remove it from the managed set and notify Emacs.
 - If a native tiled client becomes eligible again, let normal adoption rules decide whether to re-manage it.
-*** WAIT Review task 9 with user
+*** DONE Review task 9 with user
 - Stop when popups stay usable and Emacs auxiliary windows still render above managed clients.
+
+*** DONE Session note: Task 9 classification and transition hardening (2026-04-18)
+- Expanded popup/transient classification heuristics in =client_classifier= for chooser/portal/auth/dialog-style clients while keeping true floating clients ineligible.
+- Added explicit regression coverage in =client_registry_tests= for portal chooser/auth prompt exclusion and Emacs auxiliary-window exclusion.
+- =ClientRegistry::reconcile_management= now clears stale selection when selected client leaves managed membership (for example via float transition).
+
+*** DONE Session note: Task 9 float-transition notification path (2026-04-18)
+- Added managed-set transition notifications from =WorkspaceManager= on float/tile transitions:
+  - =client-became-floating=
+  - =client-became-tiled=
+- =IpcServer= now subscribes to workspace-manager transition callbacks and emits transition frame + fresh =state-dump= to connected Emacs controller.
+- Added workspace-manager regression coverage ensuring:
+  - floating transition removes client from managed set and emits notify event
+  - tiling transition re-adopts client and emits notify event.
+
+*** DONE Session note: Task 9 generic Emacs layout-change trigger expansion (2026-04-18)
+- Added =window-buffer-change-functions= auto-sync trigger in =hyprmacs.el= to catch side-window and visible-buffer churn through generic Emacs hooks.
+- Extended Emacs protocol tests to assert hook registration/removal for the new generic trigger.
+
+*** DONE Session note: Task 9 floating dialog validation checkpoint (2026-04-18)
+- User reproduced the =About PCManFM= dialog path after restart and confirmed it remained native floating at the Task 9 review checkpoint.
+- Review checkpoint closed based on this validation.
+
+*** DONE Session note: Task 9 floating-state refresh robustness (2026-04-18)
+- Added a fallback floating-state refresh path using =hyprctl j/clients= on key lifecycle events (=openwindowv2=, =activewindowv2=, =windowtitlev2=) because some nested runs did not emit reliable floating-transition events on =.socket2.sock=.
+- Fixed Hyprland command-socket response handling to read full responses (not a fixed-size 256-byte buffer) so =j/clients= parsing is reliable for transition classification.
+- Added workspace-manager regression coverage for open-time floating discovery and refresh-driven transition notifications when explicit floating events are absent.
 
 Validation:
 - Test pinentry or a dialog, a floating utility window, a posframe-like child frame, and a client that toggles floating state.

@@ -26,6 +26,7 @@ class WorkspaceManager {
   public:
     using DispatchExecutor = std::function<int(const std::string&)>;
     using QueryExecutor = std::function<std::optional<std::string>(const std::string&)>;
+    using ClientTransitionNotifier = std::function<void(const WorkspaceId&, const ClientId&, bool)>;
 
     WorkspaceManager();
     explicit WorkspaceManager(DispatchExecutor dispatch_executor, QueryExecutor query_executor = {});
@@ -47,6 +48,7 @@ class WorkspaceManager {
                      const std::string& title, bool floating);
     std::optional<ClientId> selected_managed_client(const WorkspaceId& workspace_id) const;
     std::optional<ClientId> emacs_client(const WorkspaceId& workspace_id) const;
+    void set_client_transition_notifier(ClientTransitionNotifier notifier);
     void set_controller_connected(bool connected);
     StateDumpPayload build_state_dump(const WorkspaceId& workspace_id) const;
     void process_event_for_tests(const std::string& line);
@@ -60,6 +62,7 @@ class WorkspaceManager {
 
     static std::optional<int> parse_int_field(std::string_view json, std::string_view key);
     std::optional<int> query_option_int_locked(std::string_view option_name) const;
+    std::optional<bool> query_client_floating_locked(std::string_view client_id) const;
     bool dispatch_keyword_locked(std::string_view key, std::string_view value) const;
     void capture_policy_snapshot_locked();
     void apply_managed_policy_locked();
@@ -83,6 +86,7 @@ class WorkspaceManager {
     PolicySnapshot policy_snapshot_;
     DispatchExecutor dispatch_executor_;
     QueryExecutor query_executor_;
+    ClientTransitionNotifier client_transition_notifier_;
 };
 
 }  // namespace hyprmacs

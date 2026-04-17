@@ -261,6 +261,10 @@ Non-interactively accepts flexible forms:
   "Schedule automatic layout sync for generic window state changes."
   (hyprmacs--schedule-auto-sync-layout))
 
+(defun hyprmacs--auto-sync-layout-buffer-change (&rest _)
+  "Schedule automatic layout sync for buffer changes in visible windows."
+  (hyprmacs--schedule-auto-sync-layout))
+
 (defun hyprmacs-enable-layout-sync ()
   "Enable automatic set-layout snapshots from Emacs window changes."
   (interactive)
@@ -268,6 +272,7 @@ Non-interactively accepts flexible forms:
     (add-hook 'window-configuration-change-hook #'hyprmacs--schedule-auto-sync-layout)
     (add-hook 'window-size-change-functions #'hyprmacs--auto-sync-layout-size-change)
     (add-hook 'window-state-change-functions #'hyprmacs--auto-sync-layout-state-change)
+    (add-hook 'window-buffer-change-functions #'hyprmacs--auto-sync-layout-buffer-change)
     (setq hyprmacs-layout-sync-enabled t))
   (message "hyprmacs: automatic layout sync enabled"))
 
@@ -277,6 +282,7 @@ Non-interactively accepts flexible forms:
   (remove-hook 'window-configuration-change-hook #'hyprmacs--schedule-auto-sync-layout)
   (remove-hook 'window-size-change-functions #'hyprmacs--auto-sync-layout-size-change)
   (remove-hook 'window-state-change-functions #'hyprmacs--auto-sync-layout-state-change)
+  (remove-hook 'window-buffer-change-functions #'hyprmacs--auto-sync-layout-buffer-change)
   (when (timerp hyprmacs--layout-sync-timer)
     (cancel-timer hyprmacs--layout-sync-timer))
   (setq hyprmacs--layout-sync-timer nil)

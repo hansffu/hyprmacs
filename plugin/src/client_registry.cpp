@@ -80,6 +80,16 @@ void ClientRegistry::reconcile_management(const std::optional<std::string>& mana
     for (auto& [_, client] : clients_) {
         client.managed = managed_workspace_id.has_value() && client.workspace_id == *managed_workspace_id && client.eligible;
     }
+
+    if (selected_client_.has_value()) {
+        const auto selected_it = clients_.find(*selected_client_);
+        if (selected_it == clients_.end() || !selected_it->second.managed) {
+            selected_client_ = std::nullopt;
+            for (auto& [_, client] : clients_) {
+                client.selected = false;
+            }
+        }
+    }
 }
 
 const ClientRecord* ClientRegistry::find(const std::string& client_id) const {

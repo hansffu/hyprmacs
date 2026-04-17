@@ -78,6 +78,25 @@ Quick manual checks for each prototype checkpoint in the nested Hyprland environ
 - Validate after unmanage:
   - the three options above are restored to pre-manage values.
 
+* Task 9 Popup, Auxiliary, and Float-Transition Smoke
+- Start nested session with Emacs and at least two eligible app clients in one workspace.
+- In Emacs run:
+  - =M-x hyprmacs-manage-current-workspace=
+  - =M-x hyprmacs-request-state=
+- Validate popup/transient exclusion:
+  - open a dialog/auth/popup-like client (for example pinentry, chooser, or auth prompt)
+  - confirm it remains native (not in =managed-clients= in =*hyprmacs-state*=)
+- Validate Emacs auxiliary-window behavior:
+  - open minibuffer completion and/or a child-frame UI
+  - confirm auxiliary Emacs UI stays native and above managed clients
+- Validate float transition handling:
+  - toggle a managed client to floating
+  - confirm it leaves =managed-clients= after next state update
+  - toggle it back to tiled
+  - confirm it re-enters =managed-clients= automatically
+- Validate transition notification flow:
+  - check plugin logs for =client-became-floating= / =client-became-tiled= IPC sends followed by =state-dump=
+
 * Notes
 - Task 6 uses temporary debug commands and a special workspace (=special:hyprmacs-hidden=) for hide/restore.
 - This is a spike path and may change before layout integration.
