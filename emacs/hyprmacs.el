@@ -11,11 +11,30 @@
 ;;; Code:
 
 (require 'hyprmacs-session)
+(require 'hyprmacs-layout)
 (require 'json)
 (require 'subr-x)
 
 (defconst hyprmacs-version "0.1.0"
   "Current hyprmacs bootstrap version.")
+
+(defvar hyprmacs-layout-sync-enabled nil
+  "Whether automatic window-layout sync hooks are enabled.")
+
+(defvar hyprmacs--layout-sync-in-flight nil
+  "Guard flag to prevent recursive automatic layout sync.")
+
+(defvar hyprmacs--layout-sync-timer nil
+  "Debounce timer used for automatic layout sync.")
+
+(defvar hyprmacs-layout-sync-initial-delay 0.25
+  "Seconds to delay initial auto layout sync after manage-workspace.")
+
+(defvar hyprmacs-layout-sync-debounce 0.03
+  "Seconds to debounce automatic layout sync hooks.")
+
+(defvar hyprmacs-layout-debug-log-file nil
+  "Optional file path for appending set-layout debug snapshots.")
 
 (defun hyprmacs--detect-hyprland-instance-signature ()
   "Detect a Hyprland instance signature from runtime directories."
@@ -65,6 +84,7 @@
 (defun hyprmacs-connect (&optional socket-path)
   "Connect to hyprmacs plugin IPC at SOCKET-PATH."  
   (interactive)
+  (hyprmacs--ensure-hyprland-instance-signature)
   (condition-case err
       (progn
         (hyprmacs-session-connect socket-path)
@@ -83,6 +103,15 @@
   (interactive (list (read-string "Workspace ID: " (hyprmacs--default-workspace-id))))
   (hyprmacs-session-manage-workspace workspace-id)
   (hyprmacs--seed-existing-workspace-clients workspace-id)
+  (hyprmacs-request-state workspace-id)
+  (hyprmacs-enable-layout-sync)
+  (unless noninteractive
+    (run-at-time
+     hyprmacs-layout-sync-initial-delay
+     nil
+     (lambda (ws)
+       (hyprmacs-sync-layout ws t))
+     workspace-id))
   (message "hyprmacs: requested manage-workspace for %s" workspace-id))
 
 (defun hyprmacs-unmanage-workspace (workspace-id)
@@ -114,6 +143,93 @@
            (completing-read "Managed client: " managed nil t))))
   (hyprmacs-session-set-selected-client workspace-id client-id)
   (message "hyprmacs: requested selected managed client %s" client-id))
+
+(defun hyprmacs-sync-layout (workspace-id &optional silent)
+  "Publish a set-layout snapshot for WORKSPACE-ID from current Emacs windows."
+  (interactive (list (read-string "Workspace ID: " (hyprmacs--default-workspace-id))))
+  (condition-case err
+      (let* ((managed-clients (or (plist-get hyprmacs-session-state :managed-clients) '()))
+             (selected-client (plist-get hyprmacs-session-state :selected-client))
+             (input-mode (or (plist-get hyprmacs-session-state :input-mode) 'emacs-control))
+             (payload (hyprmacs-layout-build-payload managed-clients selected-client input-mode)))
+        (when (and hyprmacs-layout-debug-log-file
+                   (not (string-empty-p hyprmacs-layout-debug-log-file)))
+          (with-temp-buffer
+            (insert (format "ts=%s ws=%s payload=%S\n"
+                            (format-time-string "%Y-%m-%d %H:%M:%S" (current-time))
+                            workspace-id
+                            payload))
+            (append-to-file (point-min) (point-max) hyprmacs-layout-debug-log-file)))
+        (hyprmacs-session-set-layout workspace-id payload)
+        (unless silent
+          (message "hyprmacs: published layout snapshot for %s (%d visible)"
+                   workspace-id
+                   (length (alist-get 'visible_clients payload nil nil #'equal)))))
+    (error
+     (unless silent
+       (message "hyprmacs: sync-layout failed: %s" (error-message-string err))))))
+
+(defun hyprmacs--layout-sync-eligible-p ()
+  "Return non-nil when automatic layout sync should run."
+  (and hyprmacs-layout-sync-enabled
+       (not hyprmacs--layout-sync-in-flight)
+       (eq (plist-get hyprmacs-session-state :connection-status) 'connected)
+       (plist-get hyprmacs-session-state :managed)))
+
+(defun hyprmacs--run-auto-sync-layout ()
+  "Perform one automatic layout sync pass."
+  (setq hyprmacs--layout-sync-timer nil)
+  (when (and hyprmacs-layout-sync-enabled
+             (not hyprmacs--layout-sync-in-flight)
+             (eq (plist-get hyprmacs-session-state :connection-status) 'connected)
+             (plist-get hyprmacs-session-state :managed))
+    (let ((workspace-id (or (plist-get hyprmacs-session-state :workspace-id)
+                            (hyprmacs--default-workspace-id))))
+      (when workspace-id
+        (let ((hyprmacs--layout-sync-in-flight t))
+          (hyprmacs-sync-layout workspace-id t))))))
+
+(defun hyprmacs--schedule-auto-sync-layout (&rest _)
+  "Schedule a debounced automatic layout sync."
+  (when (hyprmacs--layout-sync-eligible-p)
+    (when (timerp hyprmacs--layout-sync-timer)
+      (cancel-timer hyprmacs--layout-sync-timer))
+    (setq hyprmacs--layout-sync-timer
+          (run-at-time hyprmacs-layout-sync-debounce nil #'hyprmacs--run-auto-sync-layout))))
+
+(defun hyprmacs--auto-sync-layout (&rest _)
+  "Compatibility wrapper that schedules automatic layout sync."
+  (hyprmacs--schedule-auto-sync-layout))
+
+(defun hyprmacs--auto-sync-layout-size-change (&rest _)
+  "Schedule automatic layout sync for frame size changes."
+  (hyprmacs--schedule-auto-sync-layout))
+
+(defun hyprmacs--auto-sync-layout-state-change (&rest _)
+  "Schedule automatic layout sync for generic window state changes."
+  (hyprmacs--schedule-auto-sync-layout))
+
+(defun hyprmacs-enable-layout-sync ()
+  "Enable automatic set-layout snapshots from Emacs window changes."
+  (interactive)
+  (unless hyprmacs-layout-sync-enabled
+    (add-hook 'window-configuration-change-hook #'hyprmacs--schedule-auto-sync-layout)
+    (add-hook 'window-size-change-functions #'hyprmacs--auto-sync-layout-size-change)
+    (add-hook 'window-state-change-functions #'hyprmacs--auto-sync-layout-state-change)
+    (setq hyprmacs-layout-sync-enabled t))
+  (message "hyprmacs: automatic layout sync enabled"))
+
+(defun hyprmacs-disable-layout-sync ()
+  "Disable automatic set-layout snapshots from Emacs window changes."
+  (interactive)
+  (remove-hook 'window-configuration-change-hook #'hyprmacs--schedule-auto-sync-layout)
+  (remove-hook 'window-size-change-functions #'hyprmacs--auto-sync-layout-size-change)
+  (remove-hook 'window-state-change-functions #'hyprmacs--auto-sync-layout-state-change)
+  (when (timerp hyprmacs--layout-sync-timer)
+    (cancel-timer hyprmacs--layout-sync-timer))
+  (setq hyprmacs--layout-sync-timer nil)
+  (setq hyprmacs-layout-sync-enabled nil)
+  (message "hyprmacs: automatic layout sync disabled"))
 
 (defun hyprmacs--seed-existing-workspace-clients (workspace-id)
   "Seed currently existing Hyprland clients for WORKSPACE-ID into plugin state."

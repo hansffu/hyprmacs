@@ -2,11 +2,11 @@
 #+date: 2026-04-15
 
 * Status
-This document defines the first wire contract between the Hyprland plugin and the Emacs package. It intentionally covers only coarse session and workspace-management messages.
+This document defines the active wire contract between the Hyprland plugin and the Emacs package for session control plus snapshot-style layout updates.
 
 * Transport
 - Unix domain socket owned by the plugin.
-- Socket location lives under =$XDG_RUNTIME_DIR=.
+- Socket location lives under =$XDG_RUNTIME_DIR/hypr/$HYPRLAND_INSTANCE_SIGNATURE/hyprmacs-v1.sock=.
 - Exactly one Emacs controller may be connected at a time.
 - Payload format is newline-delimited JSON.
 - Each line is one complete protocol frame.
@@ -75,6 +75,31 @@ Payload:
 Rules:
 - The plugin replies with =state-dump=.
 
+*** =set-layout=
+Purpose:
+- Publish Emacs layout intent as one canonical workspace snapshot.
+
+Payload:
+#+begin_src json
+{
+  "selected_client": "0xabc123",
+  "input_mode": "emacs-control",
+  "visible_clients": ["0xabc123", "0xdef456"],
+  "hidden_clients": ["0x999999"],
+  "rectangles": [
+    {"client_id": "0xabc123", "x": 0, "y": 0, "width": 960, "height": 540},
+    {"client_id": "0xdef456", "x": 960, "y": 0, "width": 960, "height": 540}
+  ],
+  "stacking_order": ["0xabc123", "0xdef456"]
+}
+#+end_src
+
+Rules:
+- =visible_clients=, =hidden_clients=, =rectangles=, and =stacking_order= are required.
+- Every visible client must have exactly one rectangle entry.
+- Overlapping visible rectangles are rejected in v1.
+- The plugin responds with =layout-applied= and then =state-dump=.
+
 ** Plugin -> Emacs
 *** =workspace-managed=
 Purpose:
@@ -131,23 +156,34 @@ Payload field rules:
 - =eligible_clients=: clients in the workspace that could be managed if adoption rules allow it.
 - =managed_clients=: currently managed clients. In the earliest prototype this may be empty even when eligible clients exist.
 - =selected_client=: current managed client ID or =null= when none is selected.
-- =input_mode=: =null= until focus-mode support exists. Later values are expected to be =emacs-control= or =client-control=.
+- =input_mode=: =null= until focus-mode support exists. Current values are =emacs-control= or =client-control=.
 
-* Reserved For Later Messages
-The following fields are reserved for later layout-oriented protocol work and are not part of the first coarse implementation:
-- =visible_clients=
-- =hidden_clients=
-- =rectangles=
-- =stacking_order=
+*** =layout-applied=
+Purpose:
+- Acknowledge the most recent =set-layout= attempt.
 
-The future =set-layout= payload is expected to carry:
-- workspace identity
-- selected managed client
-- current input mode
-- visible managed clients
-- hidden managed clients
-- exact rectangles for visible clients
-- stacking order within the managed layer
+Payload:
+#+begin_src json
+{
+  "selected_client": "0xabc123",
+  "ok": true
+}
+#+end_src
+
+Rules:
+- =ok=false= means the snapshot was rejected (for example overlap validation failure or malformed payload).
+
+*** =mode-changed=
+Purpose:
+- Acknowledge =set-input-mode= requests.
+
+Payload:
+#+begin_src json
+{
+  "mode": "client-control",
+  "ok": true
+}
+#+end_src
 
 * Protocol Rules
 - Unknown protocol versions are rejected.

@@ -276,7 +276,7 @@ StateDumpPayload WorkspaceManager::build_state_dump(const WorkspaceId& workspace
 
     if (snapshot.selected_client.has_value()) {
         const ClientRecord* selected = client_registry_.find(*snapshot.selected_client);
-        if (selected != nullptr && selected->workspace_id == workspace_id) {
+        if (selected != nullptr && selected->workspace_id == workspace_id && selected->managed) {
             out.selected_client = *snapshot.selected_client;
         }
     }

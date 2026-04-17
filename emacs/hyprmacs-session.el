@@ -227,6 +227,13 @@ When ADOPT-EXISTING is nil, defaults to true."
        workspace-id
        `((mode . ,wire))))))
 
+(defun hyprmacs-session-set-layout (workspace-id payload)
+  "Send set-layout snapshot PAYLOAD for WORKSPACE-ID."
+  (hyprmacs-session-send
+   "set-layout"
+   workspace-id
+   payload))
+
 (defun hyprmacs-session-seed-client (workspace-id client-id app-id title floating)
   "Send seed-client for WORKSPACE-ID with client metadata."
   (hyprmacs-session-send

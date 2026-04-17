@@ -65,6 +65,22 @@ bool test_internal_hidden_workspace_move_keeps_managed_membership() {
     return ok;
 }
 
+bool test_state_dump_excludes_non_managed_selected_client() {
+    bool ok = true;
+
+    hyprmacs::WorkspaceManager manager;
+    manager.process_event_for_tests("openwindowv2>>0xaaa,1,foot,foot-a");
+    manager.process_event_for_tests("openwindowv2>>0xeee,1,emacs,emacs-main");
+    manager.manage_workspace("1");
+    manager.process_event_for_tests("activewindowv2>>0xeee");
+
+    const auto state = manager.build_state_dump("1");
+    ok &= expect(!state.selected_client.has_value(),
+                 "state-dump should not expose selected_client when focused client is not managed");
+
+    return ok;
+}
+
 }  // namespace
 
 int main() {
@@ -72,5 +88,6 @@ int main() {
     ok &= test_parse_event_frame();
     ok &= test_tracked_event_names();
     ok &= test_internal_hidden_workspace_move_keeps_managed_membership();
+    ok &= test_state_dump_excludes_non_managed_selected_client();
     return ok ? 0 : 1;
 }

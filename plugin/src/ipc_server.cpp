@@ -1,6 +1,7 @@
 #include "hyprmacs/ipc_server.hpp"
 
 #include <array>
+#include <cctype>
 #include <cerrno>
 #include <chrono>
 #include <cstdio>
@@ -121,11 +122,16 @@ std::optional<std::string> parse_string_field_from_payload(std::string_view payl
         return std::nullopt;
     }
 
-    const size_t first_quote = payload_json.find('"', colon_pos + 1);
-    if (first_quote == std::string_view::npos) {
+    size_t value_start = colon_pos + 1;
+    while (value_start < payload_json.size() &&
+           std::isspace(static_cast<unsigned char>(payload_json[value_start])) != 0) {
+        ++value_start;
+    }
+    if (value_start >= payload_json.size() || payload_json[value_start] != '"') {
         return std::nullopt;
     }
 
+    const size_t first_quote = value_start;
     const size_t second_quote = payload_json.find('"', first_quote + 1);
     if (second_quote == std::string_view::npos) {
         return std::nullopt;
@@ -159,8 +165,193 @@ std::optional<bool> parse_bool_field_from_payload(std::string_view payload_json,
     return std::nullopt;
 }
 
-std::optional<InputMode> parse_input_mode_field_from_payload(std::string_view payload_json) {
-    const auto mode = parse_string_field_from_payload(payload_json, "mode");
+std::optional<int> parse_int_field_from_payload(std::string_view payload_json, std::string_view key) {
+    const std::string token = "\"" + std::string(key) + "\"";
+    const size_t key_pos = payload_json.find(token);
+    if (key_pos == std::string_view::npos) {
+        return std::nullopt;
+    }
+
+    const size_t colon_pos = payload_json.find(':', key_pos + token.size());
+    if (colon_pos == std::string_view::npos) {
+        return std::nullopt;
+    }
+
+    const size_t value_start = payload_json.find_first_not_of(" \t\r\n", colon_pos + 1);
+    if (value_start == std::string_view::npos) {
+        return std::nullopt;
+    }
+
+    size_t value_end = value_start;
+    if (payload_json[value_end] == '-') {
+        ++value_end;
+    }
+    while (value_end < payload_json.size() && std::isdigit(static_cast<unsigned char>(payload_json[value_end])) != 0) {
+        ++value_end;
+    }
+    if (value_end == value_start || (value_end == value_start + 1 && payload_json[value_start] == '-')) {
+        return std::nullopt;
+    }
+
+    try {
+        return std::stoi(std::string(payload_json.substr(value_start, value_end - value_start)));
+    } catch (...) {
+        return std::nullopt;
+    }
+}
+
+void skip_ws(std::string_view text, size_t* pos) {
+    while (*pos < text.size() && std::isspace(static_cast<unsigned char>(text[*pos])) != 0) {
+        ++(*pos);
+    }
+}
+
+std::optional<std::vector<std::string>> parse_string_array_field_from_payload(std::string_view payload_json, std::string_view key) {
+    const std::string token = "\"" + std::string(key) + "\"";
+    const size_t key_pos = payload_json.find(token);
+    if (key_pos == std::string_view::npos) {
+        return std::nullopt;
+    }
+
+    size_t pos = payload_json.find(':', key_pos + token.size());
+    if (pos == std::string_view::npos) {
+        return std::nullopt;
+    }
+    ++pos;
+    skip_ws(payload_json, &pos);
+    if (pos >= payload_json.size() || payload_json[pos] != '[') {
+        return std::nullopt;
+    }
+    ++pos;
+
+    std::vector<std::string> out;
+    while (true) {
+        skip_ws(payload_json, &pos);
+        if (pos >= payload_json.size()) {
+            return std::nullopt;
+        }
+        if (payload_json[pos] == ']') {
+            ++pos;
+            break;
+        }
+        if (payload_json[pos] != '"') {
+            return std::nullopt;
+        }
+        ++pos;
+        const size_t start = pos;
+        const size_t end = payload_json.find('"', start);
+        if (end == std::string_view::npos) {
+            return std::nullopt;
+        }
+        out.emplace_back(payload_json.substr(start, end - start));
+        pos = end + 1;
+
+        skip_ws(payload_json, &pos);
+        if (pos >= payload_json.size()) {
+            return std::nullopt;
+        }
+        if (payload_json[pos] == ',') {
+            ++pos;
+            continue;
+        }
+        if (payload_json[pos] == ']') {
+            ++pos;
+            break;
+        }
+        return std::nullopt;
+    }
+
+    return out;
+}
+
+std::optional<std::vector<LayoutRectangle>> parse_rectangles_field_from_payload(std::string_view payload_json, std::string_view key) {
+    const std::string token = "\"" + std::string(key) + "\"";
+    const size_t key_pos = payload_json.find(token);
+    if (key_pos == std::string_view::npos) {
+        return std::nullopt;
+    }
+
+    size_t pos = payload_json.find(':', key_pos + token.size());
+    if (pos == std::string_view::npos) {
+        return std::nullopt;
+    }
+    ++pos;
+    skip_ws(payload_json, &pos);
+    if (pos >= payload_json.size() || payload_json[pos] != '[') {
+        return std::nullopt;
+    }
+    ++pos;
+
+    std::vector<LayoutRectangle> out;
+    while (true) {
+        skip_ws(payload_json, &pos);
+        if (pos >= payload_json.size()) {
+            return std::nullopt;
+        }
+        if (payload_json[pos] == ']') {
+            ++pos;
+            break;
+        }
+        if (payload_json[pos] != '{') {
+            return std::nullopt;
+        }
+
+        const size_t object_start = pos;
+        int depth = 0;
+        while (pos < payload_json.size()) {
+            if (payload_json[pos] == '{') {
+                ++depth;
+            } else if (payload_json[pos] == '}') {
+                --depth;
+                if (depth == 0) {
+                    ++pos;
+                    break;
+                }
+            }
+            ++pos;
+        }
+        if (depth != 0) {
+            return std::nullopt;
+        }
+
+        const std::string object_json(payload_json.substr(object_start, pos - object_start));
+        const auto client_id = parse_string_field_from_payload(object_json, "client_id");
+        const auto x = parse_int_field_from_payload(object_json, "x");
+        const auto y = parse_int_field_from_payload(object_json, "y");
+        const auto width = parse_int_field_from_payload(object_json, "width");
+        const auto height = parse_int_field_from_payload(object_json, "height");
+        if (!client_id.has_value() || !x.has_value() || !y.has_value() || !width.has_value() || !height.has_value()) {
+            return std::nullopt;
+        }
+
+        out.push_back(LayoutRectangle {
+            .client_id = *client_id,
+            .x = *x,
+            .y = *y,
+            .width = *width,
+            .height = *height,
+        });
+
+        skip_ws(payload_json, &pos);
+        if (pos >= payload_json.size()) {
+            return std::nullopt;
+        }
+        if (payload_json[pos] == ',') {
+            ++pos;
+            continue;
+        }
+        if (payload_json[pos] == ']') {
+            ++pos;
+            break;
+        }
+        return std::nullopt;
+    }
+
+    return out;
+}
+
+std::optional<InputMode> parse_input_mode_field_from_payload(std::string_view payload_json, std::string_view key) {
+    const auto mode = parse_string_field_from_payload(payload_json, key);
     if (!mode.has_value()) {
         return std::nullopt;
     }
@@ -177,7 +368,8 @@ std::optional<InputMode> parse_input_mode_field_from_payload(std::string_view pa
 
 std::optional<std::string> default_ipc_socket_path() {
     const char* runtime_dir = std::getenv("XDG_RUNTIME_DIR");
-    if (runtime_dir == nullptr || *runtime_dir == '\0') {
+    const char* instance = std::getenv("HYPRLAND_INSTANCE_SIGNATURE");
+    if (runtime_dir == nullptr || *runtime_dir == '\0' || instance == nullptr || *instance == '\0') {
         return std::nullopt;
     }
 
@@ -185,7 +377,9 @@ std::optional<std::string> default_ipc_socket_path() {
     if (!path.empty() && path.back() != '/') {
         path.push_back('/');
     }
-    path += "hyprmacs-v1.sock";
+    path += "hypr/";
+    path += instance;
+    path += "/hyprmacs-v1.sock";
     return path;
 }
 
@@ -276,7 +470,7 @@ std::vector<ProtocolMessage> route_command_for_tests(
     }
 
     if (incoming.type == "set-input-mode") {
-        const auto mode = parse_input_mode_field_from_payload(incoming.payload_json);
+        const auto mode = parse_input_mode_field_from_payload(incoming.payload_json, "mode");
         bool ok = false;
         std::string wire_mode = "unknown";
         if (mode.has_value()) {
@@ -307,6 +501,77 @@ std::vector<ProtocolMessage> route_command_for_tests(
         out.push_back(make_message(
             "state-dump", incoming.workspace_id, serialize_state_dump_payload(workspace_manager.build_state_dump(incoming.workspace_id))
         ));
+        return out;
+    }
+
+    if (incoming.type == "set-layout") {
+        bool ok = true;
+        std::string error;
+
+        const auto selected_client = parse_string_field_from_payload(incoming.payload_json, "selected_client");
+        const auto input_mode = parse_input_mode_field_from_payload(incoming.payload_json, "input_mode");
+        const auto visible_clients_opt = parse_string_array_field_from_payload(incoming.payload_json, "visible_clients");
+        const auto hidden_clients_opt = parse_string_array_field_from_payload(incoming.payload_json, "hidden_clients");
+        const auto rectangles_opt = parse_rectangles_field_from_payload(incoming.payload_json, "rectangles");
+        const auto stacking_order_opt = parse_string_array_field_from_payload(incoming.payload_json, "stacking_order");
+
+        if (!visible_clients_opt.has_value() || !hidden_clients_opt.has_value() || !rectangles_opt.has_value() ||
+            !stacking_order_opt.has_value()) {
+            ok = false;
+            error = "set-layout missing required fields";
+        }
+
+        if (ok && selected_client.has_value() && !selected_client->empty()) {
+            const bool selected_ok = workspace_manager.set_selected_client(incoming.workspace_id, *selected_client);
+            if (!selected_ok) {
+                std::cerr << "[hyprmacs] set-layout ignored non-managed selected_client workspace=" << incoming.workspace_id
+                          << " client=" << *selected_client << '\n';
+            }
+        }
+
+        if (ok && input_mode.has_value()) {
+            ok = workspace_manager.set_input_mode(incoming.workspace_id, *input_mode);
+            if (!ok) {
+                error = "set-layout input_mode rejected";
+            }
+        }
+
+        if (ok) {
+            std::vector<LayoutRectangle> visible_rectangles;
+            visible_rectangles.reserve(visible_clients_opt->size());
+
+            for (const auto& visible_client : *visible_clients_opt) {
+                bool found = false;
+                for (const auto& rectangle : *rectangles_opt) {
+                    if (rectangle.client_id == visible_client) {
+                        visible_rectangles.push_back(rectangle);
+                        found = true;
+                        break;
+                    }
+                }
+
+                if (!found) {
+                    ok = false;
+                    error = "set-layout missing rectangle for visible client " + visible_client;
+                    break;
+                }
+            }
+
+            if (ok) {
+                ok = layout_applier.apply_snapshot(
+                    incoming.workspace_id, visible_rectangles, *hidden_clients_opt, *stacking_order_opt, &error
+                );
+            }
+        }
+
+        if (!ok && !error.empty()) {
+            std::cerr << "[hyprmacs] set-layout failed workspace=" << incoming.workspace_id << " reason=" << error << '\n';
+        }
+
+        const auto state = workspace_manager.build_state_dump(incoming.workspace_id);
+        const std::string selected_wire = state.selected_client.value_or("");
+        out.push_back(make_message("layout-applied", incoming.workspace_id, payload_for_layout_applied(selected_wire, ok)));
+        out.push_back(make_message("state-dump", incoming.workspace_id, serialize_state_dump_payload(state)));
         return out;
     }
 

@@ -470,7 +470,7 @@ Validation:
 - Switch managed buffers in Emacs and verify only the selected client is visible.
 - Toggle Emacs-control and client-control modes and confirm focus moves as expected.
 
-** NEXT Task 8: Implement rectangle-first layout updates and multi-client visibility
+** DONE Task 8: Implement rectangle-first layout updates and multi-client visibility
 Purpose:
 - Upgrade from a one-client prototype to the core design model.
 
@@ -484,20 +484,97 @@ Files:
 - Modify =plugin/tests/layout_applier_tests.cpp=
 
 Steps:
-*** NEXT Compute managed-client rectangles in Emacs
+*** DONE Compute managed-client rectangles in Emacs
 - Detect which managed buffers are visible in the current Emacs window tree.
 - Convert visible window geometry into plugin-facing rectangles relative to the Emacs frame.
-*** TODO Send snapshot-style =set-layout= messages
+*** DONE Send snapshot-style =set-layout= messages
 - Include workspace ID, selected client, input mode, visible clients, hidden clients, rectangles, and stacking order.
-*** TODO Apply snapshot layouts in the plugin
+*** DONE Apply snapshot layouts in the plugin
 - Show clients listed as visible.
 - Hide clients listed as hidden.
 - Move visible clients into the exact rectangles specified by Emacs.
-*** TODO Reject unsupported layouts explicitly
+*** DONE Reject unsupported layouts explicitly
 - Detect overlapping rectangles in Emacs before sending them.
 - Validate the same constraint in the plugin and log a protocol error if violated.
-*** WAIT Review task 8 with user
+*** DONE Review task 8 with user
 - Stop when simple Emacs splits map to two or more live managed clients.
+
+*** DONE Session note: Task 8 rectangle-first Emacs layout module
+- Added =emacs/hyprmacs-layout.el= with window-tree rectangle extraction for managed buffers, snapshot payload construction, and overlap/size validation before send.
+- Added =hyprmacs-sync-layout= plus automatic layout sync hooks from =window-configuration-change-hook= (enabled on manage-workspace).
+- Added =tests/emacs/layout-tests.el= covering rectangle extraction, payload construction, and overlap rejection.
+
+*** DONE Session note: Task 8 set-layout protocol and plugin application path
+- Added plugin =set-layout= command routing with payload parsing for =selected_client=, =input_mode=, =visible_clients=, =hidden_clients=, =rectangles=, and =stacking_order=.
+- Added snapshot application in =LayoutApplier=: idempotent show/hide, move/resize dispatches, and overlap rejection.
+- Added/extended plugin tests in =layout_applier_tests= and =ipc_server_tests= for success and overlap-failure behavior.
+
+*** DONE Session note: Task 8 geometry mode bootstrap for tiled clients
+- Manual validation showed pixel move/resize dispatches were accepted but tiled clients did not move.
+- Added a Task 8 prototype geometry mode step that toggles a managed client into geometry-addressable mode before pixel move/resize on first visible layout application.
+- This is an implementation bootstrap for Task 8 validation and will be refined in later tasks to preserve the desired managed-layer semantics separate from native floating behavior.
+
+*** DONE Session note: Task 8 developer-loop verification updates
+- Added Emacs layout tests to default test workflows (=Makefile test= and =just test=).
+- Hardened fallback plugin API compile gating to require both Hyprland plugin API headers and Hyprgraphics headers before enabling real-plugin compile path.
+
+*** DONE Session note: Task 8 live-debug findings and initial publish fix
+- Direct live IPC validation on a clean nested session confirms =set-layout= can return =layout-applied ok=true= and mutate client geometry (workspace, position, size) when payload fields are complete.
+- Added immediate =request-state= on =hyprmacs-manage-current-workspace= and scheduled an initial delayed =hyprmacs-sync-layout= (interactive sessions) to reduce timing gaps where managed buffers are visible but no initial layout snapshot has been published yet.
+- During debugging, multiple stale nested Hyprland instances and stale controller connections to the shared socket path created misleading no-op behavior; manual validation should prefer a clean single nested session for deterministic results.
+
+*** DONE Session note: Task 8 per-instance IPC socket path
+- Root-cause for repeated \"snapshot published but wrong windows moved\" behavior was cross-instance IPC path collision: multiple nested Hyprland instances were sharing =/run/user/$UID/hyprmacs-v1.sock=.
+- Updated plugin default socket bind path to instance-specific location =/run/user/$UID/hypr/$HYPRLAND_INSTANCE_SIGNATURE/hyprmacs-v1.sock=.
+- Updated Emacs default socket resolution to the same per-instance path and ensured =hyprmacs-connect= sets/refreshes =HYPRLAND_INSTANCE_SIGNATURE= before connecting.
+- Updated protocol transport docs to reflect per-instance socket location.
+
+*** DONE Session note: Task 8 selected-client validity hardening
+- Root-cause for layout no-op behavior: plugin =state-dump= could publish focused Emacs client IDs as =selected_client=, and later =set-layout= snapshots were rejected when that non-managed selection was echoed back.
+- Updated plugin =state-dump= to include =selected_client= only when the selected client is managed in the target workspace.
+- Updated =set-layout= handling to ignore (not reject) non-managed =selected_client= values so visibility/geometry updates still apply.
+- Updated Emacs layout payload builder to drop =selected_client= when it is not in the current managed-client set.
+
+*** DONE Session note: Task 8 rectangle coordinate space fix
+- Manual validation showed managed clients were being moved but aligned to monitor origin instead of the Emacs frame region.
+- Root-cause: Emacs was sending frame-local window rectangles while plugin geometry commands require global compositor coordinates.
+- Updated Emacs layout rectangle calculation to add the frame inner origin (=frame-geometry inner-position= fallback chain) to window pixel edges before publishing =set-layout=.
+- Added Emacs regression coverage to verify visible rectangle payloads include frame offset.
+
+*** DONE Session note: Task 8 Wayland frame-origin fallback
+- Further validation showed Emacs on Wayland can report frame position as =0,0=, which makes global rectangle conversion incorrect even after frame-origin offset wiring.
+- Updated Emacs layout origin resolution to consult =hyprctl -j clients= and select the largest non-floating Emacs client for the current Emacs PID/workspace as the primary origin source.
+- =frame-geometry= and =frame-position= remain fallback paths when Hyprland client lookup is unavailable.
+
+*** DONE Session note: Task 8 minibuffer and Vertico auto-sync hooks
+- Validation showed managed client geometry could overlap minibuffer/Vertico UI and remain stale until manual =hyprmacs-sync-layout=.
+- Expanded automatic layout sync triggers beyond =window-configuration-change-hook= to also include =window-size-change-functions=, =minibuffer-setup-hook=, and =minibuffer-exit-hook=.
+- Added a short debounce timer so clustered UI updates coalesce into one =set-layout= publish while still reacting quickly to minibuffer size transitions.
+
+*** DONE Session note: Task 8 generic resize/state hook alignment
+- User requested avoiding package-specific hooks and relying on generic resize-driven triggers.
+- Replaced minibuffer-specific auto-sync triggers with generic =window-state-change-functions= while keeping =window-configuration-change-hook= and =window-size-change-functions=.
+- Retained debounce scheduling, updated ERT coverage for hook registration/removal and schedule behavior via generic change hooks.
+
+*** DONE Session note: Task 8 live named-daemon reproduction and set-layout null-array fix
+- Reproduced in a clean nested Hyprland session using named Emacs daemon =hyprmacs-e2e= and GUI client bound to the active instance socket.
+- Root-cause from live plugin logs: =set-layout= frames were rejected as \"missing required fields\" because Emacs encoded empty list fields as JSON =null= instead of =[]= (notably =hidden_clients= and potentially other array fields).
+- Fixed Emacs payload builder to emit vectors for all array-like fields (=visible_clients=, =hidden_clients=, =rectangles=, =stacking_order=) so wire encoding always uses JSON arrays.
+- Fixed plugin JSON string-field parsing to require a quoted string token at the field value position, preventing null values from being misparsed from later quoted tokens.
+
+*** DONE Session note: Task 8 duplicate-rectangle guard and Emacs-side debug logging
+- Added Emacs-side rectangle de-duplication by =client_id= before overlap validation and payload construction; this prevents self-overlap protocol rejects when the same managed buffer appears in multiple windows.
+- Added optional per-snapshot debug logging via =hyprmacs-layout-debug-log-file= to capture emitted =set-layout= payloads during manual GUI bug hunts.
+
+*** DONE Session note: Task 8 post-resize re-anchor in plugin geometry apply
+- Live validation showed =resizewindowpixel= can shift floating managed clients vertically even when =movewindowpixel= was applied immediately before resize.
+- Updated layout application to enforce =move -> resize -> move= for visible clients so top-left anchoring remains stable across minibuffer-driven height changes.
+- Extended layout applier tests to assert the extra post-resize move command in snapshot application.
+
+*** DONE Session note: Task 8 full graphical round validation and remaining prototype caveat
+- Ran a full graphical validation round in nested Hyprland with named daemon workflow (=emacs --daemon=hyprmacs-e2e= + GUI client), including: frame resize changes, Vertico/minibuffer open-close cycles, selection switches, hide/restore, input-mode toggles, and managed-client close handling.
+- Verified the reported minibuffer/Vertico drift path after the re-anchor fix: layout payloads and plugin commands kept =y= stable while height shrank/restored (=1368 -> 1188 -> 1368=), and managed client top-left anchors remained at expected coordinates.
+- Observed a known Task 8 prototype caveat during long runs: clients moved into temporary geometry mode are marked floating and can later be reclassified as ineligible on state refresh. This is consistent with the existing Task 8 bootstrap note and remains a refinement item for later tasks.
 
 Validation:
 - Split the Emacs frame, show two managed buffers, and verify both clients become visible in matching rectangles.

@@ -42,6 +42,24 @@ Quick manual checks for each prototype checkpoint in the nested Hyprland environ
   - Switch away and back to workspace while hidden.
   - Close a client while hidden and ensure no plugin crash.
 
+* Task 8 Multi-Client Layout Smoke
+- Start at least two managed clients (for example two =foot= windows).
+- In Emacs run:
+  - =M-x hyprmacs-connect=
+  - =M-x hyprmacs-manage-current-workspace=
+  - =M-x hyprmacs-request-state=
+  - =M-x hyprmacs-dump-state=
+- Display two managed buffers in two Emacs windows:
+  - split Emacs window
+  - switch each pane to a different =*hyprmacs:...*= buffer
+- Trigger a layout publish:
+  - automatic: enabled by =hyprmacs-manage-current-workspace=
+  - manual fallback: =M-x hyprmacs-sync-layout=
+- Validate:
+  - both visible managed clients are on workspace 1 and moved to matching rectangles
+  - non-visible managed clients move to =special:hyprmacs-hidden=
+  - overlapping Emacs panes are rejected with a layout error (no partial mutation)
+
 * Notes
 - Task 6 uses temporary debug commands and a special workspace (=special:hyprmacs-hidden=) for hide/restore.
 - This is a spike path and may change before layout integration.

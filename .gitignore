@@ -1,3 +1,4 @@
 .codex
 *.elc
 build/
+/logs.txt

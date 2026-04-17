@@ -12,7 +12,7 @@
 #include "hyprmacs/layout_applier.hpp"
 #include "hyprmacs/workspace_manager.hpp"
 
-#if __has_include(<hyprland/src/plugins/PluginAPI.hpp>)
+#if __has_include(<hyprland/src/plugins/PluginAPI.hpp>) && __has_include(<hyprgraphics/color/Color.hpp>)
 #define HYPRMACS_HAS_REAL_PLUGIN_API 1
 #include <hyprland/src/plugins/PluginAPI.hpp>
 #else
@@ -109,8 +109,8 @@ int dispatch_hypr_command_via_socket(const std::string& command) {
 }
 
 hyprmacs::WorkspaceManager g_workspace_manager;
-hyprmacs::LayoutApplier g_layout_applier([](const std::string& dispatch_arg) {
-    return dispatch_hypr_command_via_socket("dispatch movetoworkspacesilent " + dispatch_arg);
+hyprmacs::LayoutApplier g_layout_applier([](const std::string& command) {
+    return dispatch_hypr_command_via_socket(command);
 });
 hyprmacs::FocusController g_focus_controller([](const std::string& command) {
     return dispatch_hypr_command_via_socket(command);

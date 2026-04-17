@@ -21,7 +21,11 @@
   (let ((runtime-dir (getenv "XDG_RUNTIME_DIR")))
     (unless (and runtime-dir (not (string-empty-p runtime-dir)))
       (error "XDG_RUNTIME_DIR is not set"))
-    (expand-file-name "hyprmacs-v1.sock" runtime-dir)))
+    (let ((instance (getenv "HYPRLAND_INSTANCE_SIGNATURE")))
+      (if (and instance (not (string-empty-p instance)))
+          (expand-file-name (format "hypr/%s/hyprmacs-v1.sock" instance) runtime-dir)
+        ;; Fallback for environments where signature is unavailable.
+        (expand-file-name "hyprmacs-v1.sock" runtime-dir)))))
 
 (defun hyprmacs-ipc--rfc3339-now ()
   "Return current UTC time in RFC3339 format."  
