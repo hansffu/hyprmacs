@@ -56,6 +56,9 @@ Quick manual checks for each prototype checkpoint in the nested Hyprland environ
 - Trigger a layout publish:
   - automatic: enabled by =hyprmacs-manage-current-workspace=
   - manual fallback: =M-x hyprmacs-sync-layout=
+- Input mode helpers:
+  - =M-x hyprmacs-set-input-mode= enters =client-control=
+  - =M-x hyprmacs-set-emacs-control-mode= returns to =emacs-control=
 - Validate:
   - both visible managed clients are on workspace 1 and moved to matching rectangles
   - non-visible managed clients move to =special:hyprmacs-hidden=

@@ -631,6 +631,11 @@ Steps:
 - =hyprmacs-manage-current-workspace= now auto-connects to plugin IPC when disconnected, so explicit =hyprmacs-connect= is optional for the common flow.
 - Manual smoke-test docs updated to reflect the new flow.
 
+*** DONE Session note: input-mode command UX simplification (2026-04-17)
+- =M-x hyprmacs-set-input-mode= now defaults to one-shot =client-control= without prompting for mode.
+- Added explicit =M-x hyprmacs-set-emacs-control-mode= command for forcing =emacs-control= from Emacs when needed.
+- Kept backward-compatible non-interactive argument forms for automation/tests.
+
 ** TODO Task 9: Harden popup, floating, and Emacs auxiliary-window behavior
 Purpose:
 - Make sure the design avoids the EXWM failure modes it was created to avoid.

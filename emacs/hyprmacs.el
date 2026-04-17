@@ -138,13 +138,53 @@
   (hyprmacs-session-request-state workspace-id)
   (message "hyprmacs: requested state for %s" workspace-id))
 
-(defun hyprmacs-set-input-mode (mode &optional workspace-id)
-  "Set hyprmacs input MODE for WORKSPACE-ID."
-  (interactive
-   (list (intern (completing-read "Mode: " '("emacs-control" "client-control") nil t nil nil "emacs-control"))))
-  (setq workspace-id (or workspace-id (hyprmacs--default-workspace-id)))
+(defun hyprmacs--send-input-mode (mode workspace-id)
+  "Send input MODE for WORKSPACE-ID."
   (hyprmacs-session-set-input-mode workspace-id mode)
   (message "hyprmacs: requested input mode %s for %s" mode workspace-id))
+
+(defun hyprmacs--resolve-input-mode-args (arg1 arg2 default-mode)
+  "Resolve workspace and mode from ARG1/ARG2, defaulting MODE to DEFAULT-MODE.
+Accepted forms:
+- (MODE WORKSPACE-ID)
+- (WORKSPACE-ID MODE)
+- (WORKSPACE-ID)
+- nil (interactive default)."
+  (let (workspace-id mode)
+    (cond
+     ((and (symbolp arg1) (or (null arg2) (stringp arg2)))
+      (setq mode arg1
+            workspace-id arg2))
+     ((and (stringp arg1) (or (null arg2) (symbolp arg2)))
+      (setq workspace-id arg1
+            mode arg2))
+     ((null arg1)
+      (setq mode default-mode))
+     (t
+      (user-error "hyprmacs: invalid input-mode arguments")))
+    (setq workspace-id (or workspace-id (hyprmacs--default-workspace-id)))
+    (setq mode (or mode default-mode))
+    (unless (memq mode '(emacs-control client-control))
+      (user-error "hyprmacs: unsupported input mode %s" mode))
+    (cons workspace-id mode)))
+
+(defun hyprmacs-set-input-mode (&optional arg1 arg2)
+  "Switch to client-control mode for the active workspace.
+Non-interactively accepts flexible forms:
+- (MODE WORKSPACE-ID)
+- (WORKSPACE-ID MODE)
+- (WORKSPACE-ID)"
+  (interactive)
+  (let* ((resolved (hyprmacs--resolve-input-mode-args arg1 arg2 'client-control))
+         (workspace-id (car resolved))
+         (mode (cdr resolved)))
+    (hyprmacs--send-input-mode mode workspace-id)))
+
+(defun hyprmacs-set-emacs-control-mode (&optional workspace-id)
+  "Switch to emacs-control mode for WORKSPACE-ID (or active workspace)."
+  (interactive)
+  (hyprmacs--send-input-mode 'emacs-control
+                             (or workspace-id (hyprmacs--default-workspace-id))))
 
 (defun hyprmacs-select-managed-client (client-id &optional workspace-id)
   "Select managed CLIENT-ID in WORKSPACE-ID and make it visible."
