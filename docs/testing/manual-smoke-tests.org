@@ -20,10 +20,12 @@ Quick manual checks for each prototype checkpoint in the nested Hyprland environ
 
 * Task 5 IPC Smoke
 - In Emacs run:
-  - =M-x hyprmacs-connect=
   - =M-x hyprmacs-manage-current-workspace=
   - =M-x hyprmacs-request-state=
   - =M-x hyprmacs-dump-state=
+- Notes:
+  - =hyprmacs-manage-current-workspace= auto-connects if needed.
+  - Interactive workspace commands infer current workspace from Hyprland active workspace.
 - Verify plugin logs include =ipc recv= and =ipc send= entries.
 - Verify =*hyprmacs-state*= updates with live workspace state.
 
@@ -45,7 +47,6 @@ Quick manual checks for each prototype checkpoint in the nested Hyprland environ
 * Task 8 Multi-Client Layout Smoke
 - Start at least two managed clients (for example two =foot= windows).
 - In Emacs run:
-  - =M-x hyprmacs-connect=
   - =M-x hyprmacs-manage-current-workspace=
   - =M-x hyprmacs-request-state=
   - =M-x hyprmacs-dump-state=

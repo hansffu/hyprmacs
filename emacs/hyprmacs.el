@@ -66,9 +66,16 @@
 
 (defun hyprmacs--default-workspace-id ()
   "Return preferred workspace id for interactive commands."
-  (or (plist-get hyprmacs-session-state :workspace-id)
-      (hyprmacs--active-workspace-id)
+  (or (hyprmacs--active-workspace-id)
+      (plist-get hyprmacs-session-state :workspace-id)
       "1"))
+
+(defun hyprmacs--ensure-connected-for-manage ()
+  "Ensure hyprmacs session is connected before manage-workspace commands."
+  (if (eq (plist-get hyprmacs-session-state :connection-status) 'connected)
+      t
+    (hyprmacs-connect)
+    (eq (plist-get hyprmacs-session-state :connection-status) 'connected)))
 
 (defun hyprmacs--json-bool (value)
   "Normalize JSON VALUE to a strict Emacs boolean."
@@ -98,9 +105,12 @@
   (hyprmacs-session-disconnect)
   (message "hyprmacs: disconnected"))
 
-(defun hyprmacs-manage-current-workspace (workspace-id)
+(defun hyprmacs-manage-current-workspace (&optional workspace-id)
   "Mark WORKSPACE-ID as managed in session state."  
-  (interactive (list (read-string "Workspace ID: " (hyprmacs--default-workspace-id))))
+  (interactive)
+  (let ((workspace-id (or workspace-id (hyprmacs--default-workspace-id))))
+    (unless (hyprmacs--ensure-connected-for-manage)
+      (user-error "hyprmacs: unable to connect to plugin IPC"))
   (hyprmacs-session-manage-workspace workspace-id)
   (hyprmacs--seed-existing-workspace-clients workspace-id)
   (hyprmacs-request-state workspace-id)
@@ -112,41 +122,43 @@
      (lambda (ws)
        (hyprmacs-sync-layout ws t))
      workspace-id))
-  (message "hyprmacs: requested manage-workspace for %s" workspace-id))
+  (message "hyprmacs: requested manage-workspace for %s" workspace-id)))
 
-(defun hyprmacs-unmanage-workspace (workspace-id)
+(defun hyprmacs-unmanage-workspace (&optional workspace-id)
   "Mark WORKSPACE-ID as unmanaged in session state."  
-  (interactive (list (read-string "Workspace ID: " (hyprmacs--default-workspace-id))))
+  (interactive)
+  (setq workspace-id (or workspace-id (hyprmacs--default-workspace-id)))
   (hyprmacs-session-unmanage-workspace workspace-id "user-request")
   (message "hyprmacs: requested unmanage-workspace for %s" workspace-id))
 
-(defun hyprmacs-request-state (workspace-id)
+(defun hyprmacs-request-state (&optional workspace-id)
   "Request state dump for WORKSPACE-ID."  
-  (interactive (list (read-string "Workspace ID: " (hyprmacs--default-workspace-id))))
+  (interactive)
+  (setq workspace-id (or workspace-id (hyprmacs--default-workspace-id)))
   (hyprmacs-session-request-state workspace-id)
   (message "hyprmacs: requested state for %s" workspace-id))
 
-(defun hyprmacs-set-input-mode (workspace-id mode)
+(defun hyprmacs-set-input-mode (mode &optional workspace-id)
   "Set hyprmacs input MODE for WORKSPACE-ID."
   (interactive
-   (list (read-string "Workspace ID: " (hyprmacs--default-workspace-id))
-         (intern (completing-read "Mode: " '("emacs-control" "client-control") nil t nil nil "emacs-control"))))
+   (list (intern (completing-read "Mode: " '("emacs-control" "client-control") nil t nil nil "emacs-control"))))
+  (setq workspace-id (or workspace-id (hyprmacs--default-workspace-id)))
   (hyprmacs-session-set-input-mode workspace-id mode)
   (message "hyprmacs: requested input mode %s for %s" mode workspace-id))
 
-(defun hyprmacs-select-managed-client (workspace-id client-id)
+(defun hyprmacs-select-managed-client (client-id &optional workspace-id)
   "Select managed CLIENT-ID in WORKSPACE-ID and make it visible."
   (interactive
-   (let* ((workspace (read-string "Workspace ID: " (hyprmacs--default-workspace-id)))
-          (managed (or (plist-get hyprmacs-session-state :managed-clients) '())))
-     (list workspace
-           (completing-read "Managed client: " managed nil t))))
+   (let ((managed (or (plist-get hyprmacs-session-state :managed-clients) '())))
+     (list (completing-read "Managed client: " managed nil t))))
+  (setq workspace-id (or workspace-id (hyprmacs--default-workspace-id)))
   (hyprmacs-session-set-selected-client workspace-id client-id)
   (message "hyprmacs: requested selected managed client %s" client-id))
 
-(defun hyprmacs-sync-layout (workspace-id &optional silent)
+(defun hyprmacs-sync-layout (&optional workspace-id silent)
   "Publish a set-layout snapshot for WORKSPACE-ID from current Emacs windows."
-  (interactive (list (read-string "Workspace ID: " (hyprmacs--default-workspace-id))))
+  (interactive)
+  (setq workspace-id (or workspace-id (hyprmacs--default-workspace-id)))
   (condition-case err
       (let* ((managed-clients (or (plist-get hyprmacs-session-state :managed-clients) '()))
              (selected-client (plist-get hyprmacs-session-state :selected-client))
@@ -311,9 +323,9 @@ switch modes, and collect state plus `hyprctl clients` output."
                                  (nth 1 managed)
                                (car managed))))
           (append-to-file (format "selection-target: %s\n" target-client) nil path)
-          (hyprmacs-select-managed-client workspace-id target-client))
+          (hyprmacs-select-managed-client target-client workspace-id))
         (hyprmacs--wait-seconds 0.25)
-        (hyprmacs-set-input-mode workspace-id 'client-control)
+        (hyprmacs-set-input-mode 'client-control workspace-id)
         (hyprmacs--wait-seconds 0.20)
         (hyprmacs-request-state workspace-id)
         (hyprmacs--wait-seconds 0.25)
@@ -321,7 +333,7 @@ switch modes, and collect state plus `hyprctl clients` output."
         (append-to-file (hyprmacs--format-state-lines) nil path)
         (hyprmacs--append-command-output path "hyprctl activewindow" "hyprctl activewindow")
 
-        (hyprmacs-set-input-mode workspace-id 'emacs-control)
+        (hyprmacs-set-input-mode 'emacs-control workspace-id)
         (hyprmacs--wait-seconds 0.20)
         (hyprmacs-request-state workspace-id)
         (hyprmacs--wait-seconds 0.30)
@@ -366,19 +378,19 @@ switch modes, and collect state plus `hyprctl clients` output."
 
     (let ((managed (or (plist-get hyprmacs-session-state :managed-clients) '())))
       (when managed
-        (hyprmacs-select-managed-client workspace-id (car managed))
+        (hyprmacs-select-managed-client (car managed) workspace-id)
         (hyprmacs--wait-seconds 0.30)
         (append-to-file "\nafter-select:\n" nil path)
         (append-to-file (hyprmacs--format-state-lines) nil path)
         (hyprmacs--append-command-output path "hyprctl activewindow" "hyprctl activewindow")
 
-        (hyprmacs-set-input-mode workspace-id 'client-control)
+        (hyprmacs-set-input-mode 'client-control workspace-id)
         (hyprmacs--wait-seconds 0.30)
         (append-to-file "\nafter-client-control:\n" nil path)
         (append-to-file (hyprmacs--format-state-lines) nil path)
         (hyprmacs--append-command-output path "hyprctl activewindow" "hyprctl activewindow")
 
-        (hyprmacs-set-input-mode workspace-id 'emacs-control)
+        (hyprmacs-set-input-mode 'emacs-control workspace-id)
         (hyprmacs--wait-seconds 0.30)
         (hyprmacs-request-state workspace-id)
         (hyprmacs--wait-seconds 0.30)
@@ -389,19 +401,17 @@ switch modes, and collect state plus `hyprctl clients` output."
     (hyprmacs--append-command-output path "hyprctl clients" "hyprctl clients")
     (message "hyprmacs: GUI smoke test complete, wrote %s" path)))
 
-(defun hyprmacs-debug-hide-client (workspace-id client-id)
+(defun hyprmacs-debug-hide-client (client-id &optional workspace-id)
   "Task 6 temporary command to hide CLIENT-ID in WORKSPACE-ID."  
-  (interactive (list (read-string "Workspace ID: "
-                                  (or (plist-get hyprmacs-session-state :workspace-id) "1"))
-                     (read-string "Client ID (e.g. 0xabc): ")))
+  (interactive (list (read-string "Client ID (e.g. 0xabc): ")))
+  (setq workspace-id (or workspace-id (hyprmacs--default-workspace-id)))
   (hyprmacs-session-send "debug-hide-client" workspace-id `((client_id . ,client-id)))
   (message "hyprmacs: requested debug hide for %s" client-id))
 
-(defun hyprmacs-debug-show-client (workspace-id client-id)
+(defun hyprmacs-debug-show-client (client-id &optional workspace-id)
   "Task 6 temporary command to restore CLIENT-ID in WORKSPACE-ID."  
-  (interactive (list (read-string "Workspace ID: "
-                                  (or (plist-get hyprmacs-session-state :workspace-id) "1"))
-                     (read-string "Client ID (e.g. 0xabc): ")))
+  (interactive (list (read-string "Client ID (e.g. 0xabc): ")))
+  (setq workspace-id (or workspace-id (hyprmacs--default-workspace-id)))
   (hyprmacs-session-send "debug-show-client" workspace-id `((client_id . ,client-id)))
   (message "hyprmacs: requested debug show for %s" client-id))
 

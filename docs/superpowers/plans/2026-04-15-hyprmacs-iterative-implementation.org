@@ -617,6 +617,20 @@ Steps:
   - managed-client geometry and visibility remain authoritative from Emacs snapshots, not native tiling mutations
   - policy state should be restored cleanly when workspace is unmanaged or controller disconnects
 
+*** DONE Session note: nested-Hyprland QoL input-mode test binds (2026-04-17)
+- Updated flake nested Hyprland config to disable pointer focus stealing during manual input-mode validation:
+  - =input.follow_mouse = 0=
+- Updated flake nested Hyprland config to disable window animations for deterministic managed geometry tests:
+  - =animations.enabled = false=
+- Added nested keybind for returning keyboard focus to Emacs quickly from client-control testing:
+  - =ALT+E -> focuswindow class:^(emacs)$= (native Hyprland dispatcher bind)
+- Note: this keybind currently performs compositor focus handoff only; plugin-native =hyprctl dispatch hyprmacs ...= mode commands are not implemented yet and remain future work.
+
+*** DONE Session note: Emacs command UX defaults for workspace and connection (2026-04-17)
+- Interactive workspace-scoped commands now infer workspace from active Hyprland workspace by default (instead of prompting for workspace ID each invocation).
+- =hyprmacs-manage-current-workspace= now auto-connects to plugin IPC when disconnected, so explicit =hyprmacs-connect= is optional for the common flow.
+- Manual smoke-test docs updated to reflect the new flow.
+
 ** TODO Task 9: Harden popup, floating, and Emacs auxiliary-window behavior
 Purpose:
 - Make sure the design avoids the EXWM failure modes it was created to avoid.

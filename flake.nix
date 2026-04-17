@@ -97,6 +97,11 @@
 
           input {
             kb_layout = no
+            follow_mouse = 0
+          }
+
+          animations {
+            enabled = false
           }
 
           misc {
@@ -109,6 +114,7 @@
 
           # Nested debug-friendly binds using ALT instead of SUPER
           bind = ALT, Return, exec, ${pkgs.foot}/bin/foot
+          bind = ALT, E, focuswindow, class:^(emacs)$
           bind = ALT, Q, killactive,
           bind = ALT_SHIFT, E, exit,
           bind = ALT, H, movefocus, l
