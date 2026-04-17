@@ -33,6 +33,7 @@ Hyprland remains the compositor and input authority. The plugin owns workspace p
 - IPC payloads are newline-delimited JSON with an explicit protocol version field.
 - Overlapping managed rectangles are rejected in v1 instead of guessed.
 - No resize animations in v1.
+- Managed workspaces use a dedicated =hyprmacs= workspace policy profile so compositor behaviors that fight Emacs layout ownership can be explicitly constrained and restored on unmanage.
 - If Emacs disconnects, the plugin unmanages the workspace and returns clients to native Hyprland behavior.
 - Floating windows, dialogs, popups, child frames, and posframes remain native Hyprland surfaces.
 
@@ -580,6 +581,42 @@ Validation:
 - Split the Emacs frame, show two managed buffers, and verify both clients become visible in matching rectangles.
 - Delete one split and verify the corresponding client becomes hidden but remains alive.
 
+** NEXT Task 8A: Introduce the dedicated hyprmacs workspace policy profile
+Purpose:
+- Add a workspace-local policy mode that protects Emacs-directed layout semantics from conflicting Hyprland behaviors.
+
+Files:
+- Create =docs/adr/0003-hyprmacs-workspace-policy.org=
+- Modify =plugin/src/workspace_manager.cpp=
+- Modify =plugin/src/focus_controller.cpp=
+- Modify =plugin/src/layout_applier.cpp=
+- Modify =docs/testing/manual-smoke-tests.org=
+
+Steps:
+*** DONE Capture architecture and policy rules in ADR
+- Document dedicated =hyprmacs= policy profile lifecycle (=manage -> enforce, unmanage/disconnect -> restore=).
+- Document required baseline constraints:
+  - focus-follows-mouse disabled for managed workspaces
+  - window animations disabled for managed geometry transitions
+*** TODO Implement workspace policy enforcement and restore
+- Apply the =hyprmacs= policy profile when a workspace becomes managed.
+- Snapshot and restore previous workspace policy on unmanage/disconnect.
+*** TODO Add additional safeguards for layout ownership
+- Prevent native focus/layout heuristics from overriding Emacs layout intent in managed mode.
+- Keep managed-layer stacking and non-overlap guarantees intact.
+*** WAIT Review task 8A with user
+- Stop when policy constraints are active and restored correctly across manage/unmanage.
+
+*** DONE Session note: post-Task-8 architecture agreement (2026-04-17)
+- User approved introducing a dedicated =hyprmacs= workspace layout/policy mode instead of relying on existing Hyprland layout defaults.
+- Initial mandatory constraints for this mode:
+  - =focus-follows-mouse= must be off
+  - window animations for managed geometry transitions must be off
+- Additional constraints to implement in the same policy profile:
+  - =focus_on_activate= should be constrained so managed clients do not steal keyboard ownership from Emacs-control mode
+  - managed-client geometry and visibility remain authoritative from Emacs snapshots, not native tiling mutations
+  - policy state should be restored cleanly when workspace is unmanaged or controller disconnects
+
 ** TODO Task 9: Harden popup, floating, and Emacs auxiliary-window behavior
 Purpose:
 - Make sure the design avoids the EXWM failure modes it was created to avoid.
@@ -589,7 +626,7 @@ Files:
 - Modify =plugin/src/workspace_manager.cpp=
 - Modify =plugin/src/layout_applier.cpp=
 - Modify =emacs/hyprmacs-layout.el=
-- Create =docs/adr/0003-auxiliary-window-classification.org=
+- Create =docs/adr/0004-auxiliary-window-classification.org=
 - Modify =docs/testing/manual-smoke-tests.org=
 
 Steps:
@@ -619,7 +656,7 @@ Files:
 - Modify =emacs/hyprmacs-ipc.el=
 - Modify =emacs/hyprmacs-session.el=
 - Create =tests/emacs/reconnect-tests.el=
-- Create =docs/adr/0004-disconnect-recovery.org=
+- Create =docs/adr/0005-disconnect-recovery.org=
 
 Steps:
 *** TODO Define the authoritative cleanup path

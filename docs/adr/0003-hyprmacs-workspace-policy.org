@@ -1,0 +1,56 @@
+#+title: ADR 0003 - Dedicated hyprmacs Workspace Policy Profile
+#+date: 2026-04-17
+
+* Status
+Accepted (pre-implementation), to be delivered in Task 8A.
+
+* Context
+hyprmacs now supports Emacs-driven rectangle snapshots, but managed workspace behavior still inherits normal Hyprland defaults unless explicitly constrained.
+
+That creates avoidable conflicts with Emacs-directed control, especially around:
+- pointer-driven focus changes
+- compositor animations during frequent geometry updates
+- activation and focus heuristics that can steal keyboard ownership from Emacs-control mode
+
+The user requested a dedicated workspace layout/policy mode named =hyprmacs= to make this behavior explicit and predictable.
+
+* Decision
+Introduce a dedicated managed-workspace policy profile, conceptually named =hyprmacs=, with explicit lifecycle:
+
+- on =manage-workspace=: capture relevant prior workspace policy and enforce =hyprmacs= constraints
+- on =unmanage-workspace= or controller disconnect: restore previous workspace policy
+
+Baseline required constraints:
+1. Focus-follows-mouse must be disabled for managed workspaces.
+2. Window animations that affect managed geometry transitions must be disabled.
+
+Additional constraints accepted for this profile:
+1. Activation/focus heuristics (for example =focus_on_activate= style behavior) must not override Emacs-control ownership.
+2. Managed-client geometry and visibility remain authoritative from Emacs layout snapshots, not native tiling-tree mutations.
+3. Existing non-overlap and managed-layer stacking guarantees remain enforced.
+4. Native floating/transient/popup surfaces remain outside hyprmacs-managed control.
+
+* Consequences
+Pros:
+- Makes workspace behavior deterministic and easier to reason about.
+- Reduces layout drift and focus churn under frequent Emacs layout updates.
+- Keeps policy changes localized to managed lifecycle boundaries.
+
+Tradeoffs:
+- Requires additional plugin-side policy bookkeeping and restore logic.
+- Must be implemented carefully to avoid leaking policy changes after unmanage/disconnect.
+- Tightens coupling between workspace lifecycle and compositor policy controls.
+
+* Rejected Alternatives
+1. Continue using default Hyprland workspace behavior without dedicated profile.
+- Rejected because it leaves policy collisions implicit and harder to debug.
+
+2. Rely only on Emacs-side hooks and timing to mask compositor policy conflicts.
+- Rejected because it treats symptoms rather than enforcing workspace-level rules.
+
+* Follow-up
+- Implement in Task 8A before Task 9.
+- Extend manual smoke tests to validate:
+  - policy enforcement on manage
+  - stable behavior during minibuffer/Vertico-driven geometry churn
+  - policy restoration on unmanage and disconnect.
