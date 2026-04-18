@@ -954,7 +954,66 @@ Steps:
   - targeted ERT protocol suite passes
   - full =just e2e= passes (artifact bundle: =artifacts/e2e/20260418-232545/=).
 
-** TODO Task 12: Package the prototype, document usage, and freeze the first demo flow
+** TODO Task 12: Introduce dedicated managed-client major mode
+Purpose:
+- Add a focused Emacs major mode for managed client buffers before broader packaging/documentation work.
+
+Files:
+- Modify =emacs/hyprmacs-buffers.el=
+- Modify =emacs/hyprmacs.el=
+- Modify =tests/emacs/buffer-tests.el=
+- Modify =docs/testing/manual-smoke-tests.org=
+
+Steps:
+*** TODO Add =hyprmacs-window-mode=
+- Define a dedicated major mode for managed client buffers.
+- Keep it minimal for prototype scope (identity + predictable mode map scaffold).
+*** TODO Attach mode during buffer association lifecycle
+- Ensure managed buffers created/recreated by client association always enter =hyprmacs-window-mode=.
+*** TODO Add regression tests
+- Verify managed buffers use =hyprmacs-window-mode= on create and recreate paths.
+*** TODO Validate in nested runtime
+- Run =just e2e= and confirm managed buffer behavior remains stable with mode enabled.
+*** WAIT Review task 12 with user
+- Use this checkpoint to validate mode behavior before packaging/demo polish.
+
+Validation:
+- In nested session, managed buffers report =major-mode= as =hyprmacs-window-mode=.
+- Existing buffer lifecycle and E2E tests remain green.
+
+** TODO Task 13: Add custom Hyprland dispatchers for plugin control
+Purpose:
+- Provide compositor-native commands (for example =Alt+E=) that can control hyprmacs even when Emacs does not own keyboard input.
+- Establish the dispatcher path that future hyprmacs actions can reuse.
+
+Files:
+- Modify =plugin/src/plugin_main.cpp=
+- Modify =plugin/src/ipc_server.cpp= (if routing helpers are needed)
+- Modify =plugin/tests/ipc_server_tests.cpp=
+- Modify =flake.nix= (nested config keybind wiring)
+- Modify =docs/testing/manual-smoke-tests.org=
+- Modify =docs/superpowers/plans/2026-04-15-hyprmacs-iterative-implementation.org=
+
+Steps:
+*** TODO Add dispatcher registration in plugin
+- Register one or more hyprmacs dispatchers via Hyprland plugin API.
+- Implement at minimum =hyprmacs:set-emacs-control-mode=.
+*** TODO Bridge dispatcher to existing workspace control path
+- Resolve target workspace from active compositor context when possible.
+- Route dispatcher action into existing input-mode handling (=set-input-mode emacs-control= equivalent behavior).
+*** TODO Wire nested config keybind
+- Bind =ALT+E= in nested Hyprland config to call the new dispatcher.
+*** TODO Add regression tests
+- Validate dispatcher command updates mode and focuses managing Emacs frame.
+- Keep current IPC command-path tests green.
+*** WAIT Review task 13 with user
+- Validate real interactive handoff: client-control -> =ALT+E= -> emacs-control focus return.
+
+Validation:
+- In nested runtime, =ALT+E= returns control to managing Emacs frame while workspace is managed.
+- Plugin tests cover dispatcher behavior and existing mode-switch contracts.
+
+** TODO Task 14: Package the prototype, document usage, and freeze the first demo flow
 Purpose:
 - Make the prototype repeatable and easy to evaluate.
 
@@ -967,13 +1026,11 @@ Files:
 Steps:
 *** TODO Add a reliable demo entrypoint
 - Provide one command that builds the plugin and launches nested Hyprland with the plugin loaded.
-*** TODO Add dedicated managed-client major mode
-- Introduce =hyprmacs-window-mode= for managed-client buffers and document expected buffer-local behavior/keys for window-backed buffers.
 *** TODO Document the user workflow
 - Explain how to start the demo, load the Emacs package, connect, manage a workspace, and switch modes.
 *** TODO Freeze a smoke-test checklist
 - Record the exact scenarios that must pass before any future refactor is considered safe.
-*** WAIT Review task 12 with user
+*** WAIT Review task 14 with user
 - Use this checkpoint to decide whether to continue toward polish work or pause after the first usable prototype.
 
 Validation:
