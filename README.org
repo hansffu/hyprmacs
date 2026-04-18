@@ -5,6 +5,16 @@
 
 This repository currently targets a nested demo workflow.
 
+* NixOS Real Hyprland Installation (Not Nested)
+For a real login session (your normal Hyprland), follow:
+- ~docs/setup/nixos-real-hyprland.org~
+
+This includes:
+- flake input wiring
+- Home Manager Hyprland plugin setup
+- plain ~hyprland.conf~ plugin path setup
+- validation steps in a real compositor session
+
 * Quick Start
 ** 1. Launch the nested demo compositor
 From repo root:
@@ -68,4 +78,3 @@ Automated nested regression:
 #+begin_src sh
 just e2e
 #+end_src
-

@@ -1149,6 +1149,12 @@ Validation:
 - Froze prototype gate checklist in:
   - =docs/testing/manual-smoke-tests.org= under =Prototype Gate Checklist=.
 
+*** DONE Session note: Task 14 review-feedback docs update for real NixOS Hyprland (2026-04-19)
+- Added first-class documentation for non-nested install/runtime on NixOS:
+  - =docs/setup/nixos-real-hyprland.org=
+- Added README pointer so real-session instructions are discoverable from top-level docs.
+- Scope of this update is documentation only (no compositor/runtime behavior change).
+
 * Execution Order
 - Start with task 0 and task 1 only.
 - Do not start task 2 until the repo builds cleanly.

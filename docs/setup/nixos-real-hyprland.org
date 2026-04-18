@@ -1,0 +1,119 @@
+#+title: hyprmacs on NixOS (Real Hyprland Session)
+
+* Goal
+Install and run hyprmacs in your normal (non-nested) Hyprland session on NixOS.
+
+* 1. Add hyprmacs as a flake input
+In your system/home flake:
+
+#+begin_src nix
+{
+  inputs.hyprmacs.url = "github:hansfredrikf/hyprmacs"; # or local path
+}
+#+end_src
+
+For local development:
+
+#+begin_src nix
+inputs.hyprmacs.url = "path:/home/<you>/code/hyprmacs";
+#+end_src
+
+* 2. Build the plugin package
+From hyprmacs repo:
+
+#+begin_src sh
+nix build .#hyprmacs-plugin
+#+end_src
+
+The plugin shared object is:
+- ~result/lib/hyprmacs.so~
+
+* 3A. Recommended: Home Manager Hyprland configuration
+Use Hyprland module plugin loading:
+
+#+begin_src nix
+{ inputs, pkgs, ... }:
+{
+  wayland.windowManager.hyprland = {
+    enable = true;
+    plugins = [
+      inputs.hyprmacs.packages.${pkgs.system}.hyprmacs-plugin
+    ];
+
+    extraConfig = ''
+      # hyprmacs dispatcher (pick your preferred key)
+      bind = SUPER, E, hyprmacs:set-emacs-control-mode
+    '';
+  };
+}
+#+end_src
+
+Apply:
+
+#+begin_src sh
+home-manager switch --flake .#<your-profile>
+#+end_src
+
+* 3B. Alternative: plain hyprland.conf plugin line
+If you manage ~hyprland.conf~ directly:
+
+1. Build plugin:
+
+#+begin_src sh
+nix build /path/to/hyprmacs#hyprmacs-plugin
+#+end_src
+
+2. Resolve store path:
+
+#+begin_src sh
+readlink -f ./result/lib/hyprmacs.so
+#+end_src
+
+3. Add to ~hyprland.conf~:
+
+#+begin_src conf
+plugin = /nix/store/<hash>-hyprmacs-0.1.0/lib/hyprmacs.so
+bind = SUPER, E, hyprmacs:set-emacs-control-mode
+#+end_src
+
+4. Reload Hyprland:
+
+#+begin_src sh
+hyprctl reload
+#+end_src
+
+* 4. Load Emacs package
+Add hyprmacs elisp path in your Emacs config:
+
+#+begin_src elisp
+(add-to-list 'load-path "/path/to/hyprmacs/emacs")
+(require 'hyprmacs)
+#+end_src
+
+* 5. Real-session workflow
+In your normal Hyprland session:
+
+1. Open Emacs and at least one non-Emacs app window in the target workspace.
+2. In Emacs:
+   - ~M-x hyprmacs-manage-current-workspace~
+   - ~M-x hyprmacs-request-state~
+   - ~M-x hyprmacs-open-state-buffer~
+3. Enter client-control from managed buffer:
+   - ~C-c C-c~
+4. Return to emacs-control:
+   - ~SUPER+E~ (or your configured dispatcher key)
+
+* 6. Verify plugin is loaded
+Check:
+
+#+begin_src sh
+hyprctl plugins
+#+end_src
+
+You should see ~hyprmacs~ in the loaded plugin list.
+
+* Notes
+- If plugin build/load fails, ensure Hyprland and plugin ABI are compatible.
+- Keep the same Hyprland package source for your compositor and plugin builds.
+- Nested demo workflow remains available via ~nix run .#demo~ in this repository.
+
