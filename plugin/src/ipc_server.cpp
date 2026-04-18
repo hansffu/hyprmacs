@@ -84,6 +84,18 @@ std::string payload_for_client_transition(std::string_view client_id, bool float
     return out.str();
 }
 
+std::string payload_for_protocol_error(std::string_view code, std::string_view message, std::string_view detail = "") {
+    std::ostringstream out;
+    out << "{";
+    out << "\"code\":\"" << code << "\",";
+    out << "\"message\":\"" << message << "\"";
+    if (!detail.empty()) {
+        out << ",\"detail\":\"" << detail << "\"";
+    }
+    out << "}";
+    return out.str();
+}
+
 ProtocolMessage make_message(std::string_view type, const WorkspaceId& workspace_id, std::string payload_json) {
     return ProtocolMessage {
         .version = 1,
@@ -599,6 +611,11 @@ std::vector<ProtocolMessage> route_command_for_tests(
         return out;
     }
 
+    out.push_back(make_message(
+        "protocol-error",
+        incoming.workspace_id,
+        payload_for_protocol_error("unknown-type", "unsupported message type", incoming.type)
+    ));
     return out;
 }
 
@@ -714,6 +731,7 @@ void IpcServer::stop() {
     }
 
     if (workspace_manager_ != nullptr) {
+        restore_workspace_on_disconnect();
         workspace_manager_->set_controller_connected(false);
     }
 }
@@ -750,6 +768,7 @@ void IpcServer::accept_loop() {
                 controller_fd_ = -1;
             }
         }
+        restore_workspace_on_disconnect();
         workspace_manager_->set_controller_connected(false);
         std::cerr << "[hyprmacs] ipc controller disconnected\n";
     }
@@ -779,8 +798,26 @@ void IpcServer::serve_controller(int controller_fd) {
                 const auto incoming = parse_message(frame);
                 if (!incoming.has_value()) {
                     std::cerr << "[hyprmacs] ipc invalid frame dropped\n";
+                    send_message(
+                        controller_fd,
+                        make_message(
+                            "protocol-error",
+                            "",
+                            payload_for_protocol_error("invalid-frame", "malformed JSON envelope")
+                        )
+                    );
                 } else if (incoming->version != 1) {
                     std::cerr << "[hyprmacs] ipc unsupported version: " << incoming->version << '\n';
+                    send_message(
+                        controller_fd,
+                        make_message(
+                            "protocol-error",
+                            incoming->workspace_id,
+                            payload_for_protocol_error(
+                                "unsupported-version", "unsupported protocol version", std::to_string(incoming->version)
+                            )
+                        )
+                    );
                 } else {
                     std::cerr << "[hyprmacs] ipc recv type=" << incoming->type << " workspace=" << incoming->workspace_id << '\n';
                     const auto responses = route_command_for_tests(*incoming, *workspace_manager_, *layout_applier_, focus_controller_);
@@ -792,6 +829,23 @@ void IpcServer::serve_controller(int controller_fd) {
 
             newline = pending.find('\n');
         }
+    }
+}
+
+void IpcServer::restore_workspace_on_disconnect() {
+    if (workspace_manager_ == nullptr || layout_applier_ == nullptr) {
+        return;
+    }
+
+    const auto workspace_id = workspace_manager_->managed_workspace();
+    if (!workspace_id.has_value()) {
+        return;
+    }
+
+    const auto state = workspace_manager_->build_state_dump(*workspace_id);
+    const bool ok = layout_applier_->restore_workspace_to_native(*workspace_id, state.managed_clients);
+    if (!ok) {
+        std::cerr << "[hyprmacs] disconnect cleanup had partial restore failures workspace=" << *workspace_id << '\n';
     }
 }
 

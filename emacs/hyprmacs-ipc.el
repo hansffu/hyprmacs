@@ -27,6 +27,14 @@
         ;; Fallback for environments where signature is unavailable.
         (expand-file-name "hyprmacs-v1.sock" runtime-dir)))))
 
+(defun hyprmacs-ipc-resolve-socket-path (&optional socket-path)
+  "Return SOCKET-PATH or a validated default path for hyprmacs IPC.
+Raises a user-facing error when the resolved socket path does not exist."
+  (let ((path (or socket-path (hyprmacs-ipc-default-socket-path))))
+    (unless (file-exists-p path)
+      (error "hyprmacs socket not found: %s (stale HYPRLAND_INSTANCE_SIGNATURE or plugin not loaded)" path))
+    path))
+
 (defun hyprmacs-ipc--rfc3339-now ()
   "Return current UTC time in RFC3339 format."  
   (format-time-string "%Y-%m-%dT%H:%M:%SZ" (current-time) t))

@@ -97,6 +97,27 @@ Quick manual checks for each prototype checkpoint in the nested Hyprland environ
 - Validate transition notification flow:
   - check plugin logs for =client-became-floating= / =client-became-tiled= IPC sends followed by =state-dump=
 
+* Task 10 Disconnect and Resync Smoke
+- Start nested session with Emacs and at least two managed clients.
+- In Emacs run:
+  - =M-x hyprmacs-manage-current-workspace=
+  - =M-x hyprmacs-sync-layout=
+- Force one client hidden (for example by selecting another managed buffer) so hidden-client state exists.
+- Kill Emacs abruptly while workspace is managed (both from emacs-control and client-control should be tested).
+- Validate plugin cleanup:
+  - hidden clients return to visible native workspace placement
+  - temporary positioning mode does not remain sticky across reconnect
+  - managed policy options are restored to pre-manage values
+- Restart Emacs and reconnect:
+  - =M-x hyprmacs-connect=
+  - =M-x hyprmacs-request-state=
+- Validate resync:
+  - =*hyprmacs-state*= reflects plugin truth after reconnect
+  - managed buffers rebuild from fresh =state-dump=
+- Protocol error sanity checks:
+  - send an unsupported command frame and confirm plugin emits =protocol-error=
+  - verify Emacs session records =:last-error= after receiving a protocol-error frame
+
 * Notes
 - Task 6 uses temporary debug commands and a special workspace (=special:hyprmacs-hidden=) for hide/restore.
 - This is a spike path and may change before layout integration.

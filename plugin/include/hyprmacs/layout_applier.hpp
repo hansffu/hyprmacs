@@ -27,6 +27,7 @@ class LayoutApplier {
     bool hide_client(const std::string& client_id, const std::string& workspace_id);
     bool show_client(const std::string& client_id);
     bool is_hidden(const std::string& client_id) const;
+    bool restore_workspace_to_native(const WorkspaceId& workspace_id, const std::vector<ClientId>& managed_clients);
     bool apply_snapshot(const WorkspaceId& workspace_id, const std::vector<LayoutRectangle>& visible_rectangles,
                         const std::vector<ClientId>& hidden_clients, const std::vector<ClientId>& stacking_order,
                         std::string* error_out = nullptr);
@@ -37,6 +38,7 @@ class LayoutApplier {
     static std::string normalize_client_id(const std::string& client_id);
     static bool rectangles_overlap(const LayoutRectangle& lhs, const LayoutRectangle& rhs);
     bool ensure_positioning_mode(const std::string& normalized_client_id);
+    bool disable_positioning_mode(const std::string& normalized_client_id);
     bool move_resize_client(const LayoutRectangle& rectangle);
 
     CommandExecutor executor_;

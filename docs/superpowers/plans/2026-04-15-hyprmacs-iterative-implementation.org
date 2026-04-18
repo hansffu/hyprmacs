@@ -730,7 +730,7 @@ Steps:
 Validation:
 - Test pinentry or a dialog, a floating utility window, a posframe-like child frame, and a client that toggles floating state.
 
-** TODO Task 10: Add disconnect recovery, resync, and failure handling
+** DONE Task 10: Add disconnect recovery, resync, and failure handling
 Purpose:
 - Make the system survivable when either side lags, restarts, or disappears.
 - Eliminate runtime dispatch fragility caused by environment-dependent socket resolution after startup.
@@ -738,34 +738,89 @@ Purpose:
 Files:
 - Modify =plugin/src/ipc_server.cpp=
 - Modify =plugin/src/workspace_manager.cpp=
-- Modify =plugin/src/focus_controller.cpp=
+- Modify =plugin/src/layout_applier.cpp=
 - Modify =plugin/src/plugin_main.cpp=
+- Modify =plugin/include/hyprmacs/ipc_server.hpp=
+- Modify =plugin/include/hyprmacs/workspace_manager.hpp=
+- Modify =plugin/include/hyprmacs/layout_applier.hpp=
 - Modify =emacs/hyprmacs-ipc.el=
 - Modify =emacs/hyprmacs-session.el=
+- Modify =docs/protocol/ipc-v1.org=
+- Modify =docs/testing/manual-smoke-tests.org=
+- Modify =plugin/tests/ipc_server_tests.cpp=
+- Modify =plugin/tests/layout_applier_tests.cpp=
+- Modify =tests/emacs/session-tests.el=
 - Create =tests/emacs/reconnect-tests.el=
 - Create =docs/adr/0005-disconnect-recovery.org=
+- Modify =Makefile=
+- Modify =justfile=
 
 Steps:
-*** TODO Define the authoritative cleanup path
+*** DONE Define the authoritative cleanup path
 - On Emacs disconnect, unmanage the workspace, restore managed clients to native behavior, and clear plugin-side session state.
-*** TODO Add explicit resync support
+*** DONE Add explicit resync support
 - Let Emacs reconnect, request a state dump, and rebuild its session state from plugin truth.
-*** TODO Harden message processing
+*** DONE Harden message processing
 - Handle malformed messages, unsupported versions, and stale socket paths with clear errors.
-*** TODO Harden plugin dispatch/query runtime dependencies
+*** DONE Harden plugin dispatch/query runtime dependencies
 - Remove per-call dependency on process environment for Hyprland command-socket resolution after plugin startup.
 - Ensure focus handoff and policy dispatches remain functional even if =HYPRLAND_INSTANCE_SIGNATURE= is unavailable at call time.
 - Add regression coverage for this path where feasible (unit tests for resolver logic and/or deterministic integration check in nested session).
-*** TODO Document recovery behavior
+*** DONE Document recovery behavior
 - Write the ADR and add manual tests for restart scenarios.
-*** WAIT Review task 10 with user
+*** DONE Review task 10 with user
 - Stop when killing or restarting Emacs does not leave the workspace in a broken intermediate state.
+
+*** DONE Session note: Task 10 disconnect cleanup path (2026-04-18)
+- Added disconnect-time workspace restore in =IpcServer=: before controller state is cleared, plugin now calls layout cleanup to restore hidden clients and unwind temporary geometry mode for managed clients.
+- Added =LayoutApplier::restore_workspace_to_native= and regression coverage to ensure hidden-client/show state and positioning-mode state do not leak across controller restarts.
+
+*** DONE Session note: Task 10 reconnect and stale-state handling (2026-04-18)
+- Emacs transport drop now clears managed snapshot fields and associated managed buffers via =hyprmacs-session--handle-transport-drop=.
+- Added =hyprmacs-session-reconnect-and-resync= helper and ERT coverage in =tests/emacs/reconnect-tests.el=.
+- Added stale socket path validation in =hyprmacs-ipc-resolve-socket-path= with explicit error text when the resolved socket does not exist.
+
+*** DONE Session note: Task 10 protocol and runtime hardening (2026-04-18)
+- Added explicit =protocol-error= IPC response path for malformed frames, unsupported protocol versions, and unknown command types; updated protocol docs accordingly.
+- Plugin command-socket resolution now initializes and caches socket path at plugin startup, removing per-call env dependency for dispatch/query operations.
+- Added regression coverage for unknown-command protocol errors and integrated reconnect tests into default =make test= / =just test= workflows.
 
 Validation:
 - Kill Emacs during both input modes, reconnect, and verify the workspace is usable and re-manageable.
 - Validate mode switch handoff and policy dispatch continue working in a long-lived session where runtime env vars may be absent from plugin process environment.
 
-** TODO Task 11: Package the prototype, document usage, and freeze the first demo flow
+** NEXT Task 11: Implement explicit hyprmacs layout mode
+Purpose:
+- Replace dependency on native =dwindle= tiling semantics in managed workspaces with an explicit Hyprland layout mode named =hyprmacs=.
+
+Files:
+- Modify =plugin/src/workspace_manager.cpp=
+- Modify =plugin/src/layout_applier.cpp=
+- Modify =plugin/src/plugin_main.cpp=
+- Modify =docs/adr/0003-hyprmacs-workspace-policy.org=
+- Modify =docs/superpowers/plans/2026-04-15-hyprmacs-iterative-implementation.org=
+- Modify =docs/testing/manual-smoke-tests.org=
+
+Steps:
+*** TODO Define the runtime contract for layout mode ownership
+- Specify when managed workspaces should expose =tiledLayout= as =hyprmacs=.
+- Define how layout mode is restored on unmanage/disconnect.
+*** TODO Implement layout mode switching in managed lifecycle
+- On =manage-workspace=, set layout mode to =hyprmacs= for that workspace.
+- On =unmanage-workspace= and disconnect cleanup, restore previous layout mode.
+*** TODO Guard managed geometry flow against native tiling fallback
+- Ensure managed clients are not laid out by dwindle/master rules while managed.
+- Keep native floating/transient behavior unchanged.
+*** TODO Add verification coverage
+- Add/extend tests and manual smoke scenarios that assert managed workspace layout mode transitions.
+*** WAIT Review task 11 with user
+- Stop when managed workspace reports =tiledLayout: hyprmacs= and restores cleanly on unmanage/disconnect.
+
+Validation:
+- Manage workspace and verify =hyprctl -j activeworkspace= reports =tiledLayout= as =hyprmacs=.
+- Unmanage/disconnect and verify prior layout mode is restored.
+
+** TODO Task 12: Package the prototype, document usage, and freeze the first demo flow
 Purpose:
 - Make the prototype repeatable and easy to evaluate.
 
@@ -782,7 +837,7 @@ Steps:
 - Explain how to start the demo, load the Emacs package, connect, manage a workspace, and switch modes.
 *** TODO Freeze a smoke-test checklist
 - Record the exact scenarios that must pass before any future refactor is considered safe.
-*** WAIT Review task 11 with user
+*** WAIT Review task 12 with user
 - Use this checkpoint to decide whether to continue toward polish work or pause after the first usable prototype.
 
 Validation:

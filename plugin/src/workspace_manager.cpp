@@ -334,6 +334,11 @@ void WorkspaceManager::seed_client(
     client_registry_.reconcile_management(managed_workspace_id_);
 }
 
+std::optional<WorkspaceId> WorkspaceManager::managed_workspace() const {
+    std::scoped_lock lock(mutex_);
+    return managed_workspace_id_;
+}
+
 std::optional<ClientId> WorkspaceManager::selected_managed_client(const WorkspaceId& workspace_id) const {
     std::scoped_lock lock(mutex_);
     const auto snapshot = client_registry_.snapshot();

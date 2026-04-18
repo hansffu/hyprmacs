@@ -46,6 +46,7 @@ class WorkspaceManager {
     bool set_input_mode(const WorkspaceId& workspace_id, InputMode mode);
     void seed_client(const ClientId& client_id, const WorkspaceId& workspace_id, const std::string& app_id,
                      const std::string& title, bool floating);
+    std::optional<WorkspaceId> managed_workspace() const;
     std::optional<ClientId> selected_managed_client(const WorkspaceId& workspace_id) const;
     std::optional<ClientId> emacs_client(const WorkspaceId& workspace_id) const;
     void set_client_transition_notifier(ClientTransitionNotifier notifier);

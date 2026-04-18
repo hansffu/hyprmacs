@@ -10,8 +10,8 @@
 
 (ert-deftest hyprmacs-session-connect-disconnect-transitions ()
   (hyprmacs-session-reset)
-  (cl-letf (((symbol-function 'hyprmacs-ipc-default-socket-path)
-             (lambda () "/tmp/hyprmacs-test.sock"))
+  (cl-letf (((symbol-function 'hyprmacs-ipc-resolve-socket-path)
+             (lambda (&optional _socket-path) "/tmp/hyprmacs-test.sock"))
             ((symbol-function 'make-network-process)
              (lambda (&rest _args) 'hyprmacs-test-process))
             ((symbol-function 'process-live-p)

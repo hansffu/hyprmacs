@@ -5,6 +5,7 @@
 #include <optional>
 #include <string>
 #include <array>
+#include <string_view>
 #include <sys/socket.h>
 #include <sys/un.h>
 #include <unistd.h>
@@ -47,21 +48,66 @@ constexpr auto kPluginDescription =
 constexpr auto kPluginAuthor = "Hans Fredrik Furholt";
 constexpr auto kPluginVersion = "0.1.0";
 
-std::optional<std::string> send_hypr_command_via_socket(const std::string& command) {
-    const char* runtime_dir = std::getenv("XDG_RUNTIME_DIR");
-    const char* instance = std::getenv("HYPRLAND_INSTANCE_SIGNATURE");
-    if (runtime_dir == nullptr || instance == nullptr || *runtime_dir == '\0' || *instance == '\0') {
-        std::cerr << "[hyprmacs] dispatch failed: missing runtime env\n";
+std::optional<std::string>& cached_command_socket_path() {
+    static std::optional<std::string> path;
+    return path;
+}
+
+std::optional<std::string> build_command_socket_path(std::string_view runtime_dir, std::string_view instance) {
+    if (runtime_dir.empty() || instance.empty()) {
         return std::nullopt;
     }
 
-    std::string socket_path = runtime_dir;
+    std::string socket_path(runtime_dir);
     if (!socket_path.empty() && socket_path.back() != '/') {
         socket_path.push_back('/');
     }
     socket_path += "hypr/";
-    socket_path += instance;
+    socket_path += std::string(instance);
     socket_path += "/.socket.sock";
+    return socket_path;
+}
+
+std::optional<std::string> detect_command_socket_path_from_env() {
+    const char* runtime_dir = std::getenv("XDG_RUNTIME_DIR");
+    const char* instance = std::getenv("HYPRLAND_INSTANCE_SIGNATURE");
+    if (runtime_dir == nullptr || instance == nullptr || *runtime_dir == '\0' || *instance == '\0') {
+        return std::nullopt;
+    }
+
+    return build_command_socket_path(runtime_dir, instance);
+}
+
+std::optional<std::string> resolve_command_socket_path() {
+    auto& cached = cached_command_socket_path();
+    if (cached.has_value()) {
+        return cached;
+    }
+
+    cached = detect_command_socket_path_from_env();
+    return cached;
+}
+
+void initialize_command_socket_path_from_env() {
+    auto& cached = cached_command_socket_path();
+    if (cached.has_value()) {
+        return;
+    }
+    cached = detect_command_socket_path_from_env();
+    if (!cached.has_value()) {
+        std::cerr << "[hyprmacs] command socket bootstrap failed: missing runtime env at plugin init\n";
+        return;
+    }
+    std::cerr << "[hyprmacs] command socket path initialized: " << *cached << '\n';
+}
+
+std::optional<std::string> send_hypr_command_via_socket(const std::string& command) {
+    const auto socket_path_opt = resolve_command_socket_path();
+    if (!socket_path_opt.has_value()) {
+        std::cerr << "[hyprmacs] dispatch failed: missing runtime env\n";
+        return std::nullopt;
+    }
+    const std::string& socket_path = *socket_path_opt;
 
     const int fd = ::socket(AF_UNIX, SOCK_STREAM, 0);
     if (fd < 0) {
@@ -151,6 +197,7 @@ APICALL EXPORT std::string PLUGIN_API_VERSION() {
 
 APICALL EXPORT PLUGIN_DESCRIPTION_INFO PLUGIN_INIT(HANDLE handle) {
     PHANDLE = handle;
+    initialize_command_socket_path_from_env();
 
     const std::string compositor_hash = __hyprland_api_get_hash();
     const std::string client_hash = __hyprland_api_get_client_hash();
@@ -189,6 +236,7 @@ APICALL EXPORT std::string PLUGIN_API_VERSION() {
 }
 
 APICALL EXPORT PLUGIN_DESCRIPTION_INFO PLUGIN_INIT(HANDLE) {
+    initialize_command_socket_path_from_env();
     g_workspace_manager.start_event_tap();
     g_ipc_server.start();
     return {

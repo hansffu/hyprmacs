@@ -157,6 +157,54 @@ bool test_apply_snapshot_hides_shows_and_moves() {
     return ok;
 }
 
+bool test_restore_workspace_to_native_shows_hidden_and_resets_positioning_mode() {
+    std::vector<std::string> commands;
+    hyprmacs::LayoutApplier applier([&commands](const std::string& command) {
+        commands.push_back(command);
+        return 0;
+    });
+
+    bool ok = true;
+    ok &= expect(applier.apply_snapshot(
+                     "1",
+                     {{.client_id = "0xaaa", .x = 10, .y = 20, .width = 300, .height = 400}},
+                     {"0xbbb"},
+                     {"0xaaa"},
+                     nullptr
+                 ),
+                 "snapshot should apply before restore");
+
+    const size_t before_restore = commands.size();
+    ok &= expect(applier.restore_workspace_to_native("1", {"0xaaa", "0xbbb"}),
+                 "restore_workspace_to_native should succeed");
+    ok &= expect(commands.size() == before_restore + 2,
+                 "restore should show hidden client and disable positioning mode for visible managed client");
+    if (commands.size() >= before_restore + 2) {
+        ok &= expect(commands[before_restore].find("dispatch movetoworkspacesilent 1,address:0xbbb") != std::string::npos,
+                     "restore should show hidden client in original workspace");
+        ok &= expect(commands[before_restore + 1].find("dispatch togglefloating address:0xaaa") != std::string::npos,
+                     "restore should disable temporary positioning mode");
+    }
+
+    const size_t before_reapply = commands.size();
+    ok &= expect(applier.apply_snapshot(
+                     "1",
+                     {{.client_id = "0xaaa", .x = 1, .y = 2, .width = 200, .height = 210}},
+                     {},
+                     {"0xaaa"},
+                     nullptr
+                 ),
+                 "snapshot should apply after restore");
+    ok &= expect(commands.size() == before_reapply + 4,
+                 "reapply should toggle positioning mode again after restore cleanup");
+    if (commands.size() >= before_reapply + 1) {
+        ok &= expect(commands[before_reapply].find("dispatch togglefloating address:0xaaa") != std::string::npos,
+                     "first reapply command should re-enable positioning mode");
+    }
+
+    return ok;
+}
+
 }  // namespace
 
 int main() {
@@ -167,5 +215,6 @@ int main() {
     ok &= test_id_normalization_across_hide_show();
     ok &= test_apply_snapshot_rejects_overlapping_rectangles();
     ok &= test_apply_snapshot_hides_shows_and_moves();
+    ok &= test_restore_workspace_to_native_shows_hidden_and_resets_positioning_mode();
     return ok ? 0 : 1;
 }

@@ -356,6 +356,31 @@ bool test_route_set_layout_with_null_selected_client_does_not_pick_visible_clien
     return ok;
 }
 
+bool test_route_unknown_type_returns_protocol_error() {
+    hyprmacs::WorkspaceManager manager;
+    auto applier = make_noop_applier();
+
+    const hyprmacs::ProtocolMessage unknown {
+        .version = 1,
+        .type = "totally-unknown-command",
+        .workspace_id = "1",
+        .timestamp = "2026-04-18T00:00:00Z",
+        .payload_json = "{}",
+    };
+
+    const auto responses = hyprmacs::route_command_for_tests(unknown, manager, applier);
+    bool ok = true;
+    ok &= expect(responses.size() == 1, "unknown command should produce one protocol-error response");
+    if (responses.size() == 1) {
+        ok &= expect(responses[0].type == "protocol-error", "unknown command should respond with protocol-error");
+        ok &= expect(responses[0].payload_json.find("\"code\":\"unknown-type\"") != std::string::npos,
+                     "protocol-error should include unknown-type code");
+        ok &= expect(responses[0].payload_json.find("totally-unknown-command") != std::string::npos,
+                     "protocol-error should include unknown command detail");
+    }
+    return ok;
+}
+
 }  // namespace
 
 int main() {
@@ -371,5 +396,6 @@ int main() {
     ok &= test_route_set_layout_rejects_overlapping_rectangles();
     ok &= test_route_set_layout_ignores_non_managed_selected_client();
     ok &= test_route_set_layout_with_null_selected_client_does_not_pick_visible_client();
+    ok &= test_route_unknown_type_returns_protocol_error();
     return ok ? 0 : 1;
 }

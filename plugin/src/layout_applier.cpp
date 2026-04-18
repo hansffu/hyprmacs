@@ -96,6 +96,38 @@ bool LayoutApplier::is_hidden(const std::string& client_id) const {
     return hidden_workspace_by_client_.find(normalize_client_id(client_id)) != hidden_workspace_by_client_.end();
 }
 
+bool LayoutApplier::restore_workspace_to_native(const WorkspaceId& workspace_id,
+                                                const std::vector<ClientId>& managed_clients) {
+    bool ok = true;
+    std::vector<std::string> hidden_in_workspace;
+    hidden_in_workspace.reserve(hidden_workspace_by_client_.size());
+    for (const auto& [client_id, hidden_workspace] : hidden_workspace_by_client_) {
+        if (hidden_workspace == workspace_id) {
+            hidden_in_workspace.push_back(client_id);
+        }
+    }
+
+    for (const auto& client_id : hidden_in_workspace) {
+        const std::string normalized_client_id = normalize_client_id(client_id);
+        if (!show_client(normalized_client_id)) {
+            // Best-effort cleanup: drop stale hidden mapping so future sessions do not inherit it.
+            hidden_workspace_by_client_.erase(normalized_client_id);
+            ok = false;
+        }
+    }
+
+    for (const auto& client_id : managed_clients) {
+        const std::string normalized_client_id = normalize_client_id(client_id);
+        if (!disable_positioning_mode(normalized_client_id)) {
+            // Best-effort cleanup: forget stale positioning entry even if dispatch failed.
+            positioning_mode_clients_.erase(normalized_client_id);
+            ok = false;
+        }
+    }
+
+    return ok;
+}
+
 bool LayoutApplier::rectangles_overlap(const LayoutRectangle& lhs, const LayoutRectangle& rhs) {
     const int lhs_right = lhs.x + lhs.width;
     const int lhs_bottom = lhs.y + lhs.height;
@@ -185,6 +217,26 @@ bool LayoutApplier::ensure_positioning_mode(const std::string& normalized_client
     }
 
     positioning_mode_clients_.insert(normalized_client_id);
+    return true;
+}
+
+bool LayoutApplier::disable_positioning_mode(const std::string& normalized_client_id) {
+    const auto it = positioning_mode_clients_.find(normalized_client_id);
+    if (it == positioning_mode_clients_.end()) {
+        return true;
+    }
+
+    const std::string command = "dispatch togglefloating address:" + normalized_client_id;
+    const int rc = executor_(command);
+    append_layout_debug_log(
+        "positioning-mode-disable command rc=" + std::to_string(rc) + " client=" + normalized_client_id
+        + " command=" + command
+    );
+    if (rc != 0) {
+        return false;
+    }
+
+    positioning_mode_clients_.erase(it);
     return true;
 }
 

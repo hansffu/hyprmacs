@@ -215,12 +215,30 @@ Payload:
 Rules:
 - The plugin should send a fresh =state-dump= immediately after this event.
 
+*** =protocol-error=
+Purpose:
+- Report malformed frames, unsupported protocol versions, or unsupported command types with machine-readable context.
+
+Payload:
+#+begin_src json
+{
+  "code": "unknown-type",
+  "message": "unsupported message type",
+  "detail": "totally-unknown-command"
+}
+#+end_src
+
+Rules:
+- =code= is a short category value such as =invalid-frame=, =unsupported-version=, or =unknown-type=.
+- =message= is a human-readable summary.
+- =detail= is optional and may include the offending type or version.
+
 * Protocol Rules
 - Unknown protocol versions are rejected.
-- Unknown message types are protocol violations and may be logged and ignored in the prototype.
+- Unknown message types are protocol violations and should return =protocol-error=.
 - Messages are processed in receive order.
 - The latest =state-dump= is authoritative when Emacs needs to resynchronize.
-- This version does not define a dedicated =error= frame. Command rejection is handled by state-preserving no-op behavior plus logging until a richer error path is added.
+- Invalid or malformed frames should return =protocol-error= when possible.
 
 * Task 6 Temporary Debug Commands
 These commands are temporary spike controls for validating hidden-client behavior before layout integration.

@@ -13,6 +13,7 @@ test:
   emacs -Q --batch -L emacs -L tests/emacs -l session-tests.el -f ert-run-tests-batch-and-exit
   emacs -Q --batch -L emacs -L tests/emacs -l protocol-tests.el -f ert-run-tests-batch-and-exit
   emacs -Q --batch -L emacs -L tests/emacs -l layout-tests.el -f ert-run-tests-batch-and-exit
+  emacs -Q --batch -L emacs -L tests/emacs -l reconnect-tests.el -f ert-run-tests-batch-and-exit
 
 run:
   nix run .#default

@@ -42,6 +42,7 @@
           :managed-clients nil
           :selected-client nil
           :input-mode nil
+          :last-error nil
           :last-message-type nil)))
 
 (defun hyprmacs-session--set-connection-status (status)
@@ -49,11 +50,42 @@
   (setq hyprmacs-session-state
         (plist-put hyprmacs-session-state :connection-status status)))
 
+(defun hyprmacs-session--set-last-error (message)
+  "Set session last error MESSAGE."
+  (setq hyprmacs-session-state
+        (plist-put hyprmacs-session-state :last-error message)))
+
+(defun hyprmacs-session--handle-transport-drop (&optional reason)
+  "Handle transport drop with optional REASON."
+  (setq hyprmacs-session--process nil)
+  (setq hyprmacs-session--partial-frame "")
+  (setq hyprmacs-session--transport-send #'ignore)
+  (hyprmacs-session--set-connection-status 'disconnected)
+  (setq hyprmacs-session-state
+        (plist-put hyprmacs-session-state :managed nil))
+  (setq hyprmacs-session-state
+        (plist-put hyprmacs-session-state :controller-connected nil))
+  (setq hyprmacs-session-state
+        (plist-put hyprmacs-session-state :known-clients nil))
+  (setq hyprmacs-session-state
+        (plist-put hyprmacs-session-state :associated-buffers nil))
+  (setq hyprmacs-session-state
+        (plist-put hyprmacs-session-state :eligible-clients nil))
+  (setq hyprmacs-session-state
+        (plist-put hyprmacs-session-state :managed-clients nil))
+  (setq hyprmacs-session-state
+        (plist-put hyprmacs-session-state :selected-client nil))
+  (setq hyprmacs-session-state
+        (plist-put hyprmacs-session-state :input-mode nil))
+  (when reason
+    (hyprmacs-session--set-last-error reason))
+  (hyprmacs-buffer-reset))
+
 (defun hyprmacs-session-connect (&optional socket-path)
   "Connect to plugin socket at SOCKET-PATH or default path.
 Any existing connection is closed first."  
   (hyprmacs-session-disconnect)
-  (let* ((path (or socket-path (hyprmacs-ipc-default-socket-path)))
+  (let* ((path (hyprmacs-ipc-resolve-socket-path socket-path))
          (process (make-network-process :name "hyprmacs-ipc"
                                         :family 'local
                                         :service path
@@ -68,6 +100,7 @@ Any existing connection is closed first."
             (when (process-live-p hyprmacs-session--process)
               (process-send-string hyprmacs-session--process frame))))
     (hyprmacs-session--set-connection-status 'connected)
+    (hyprmacs-session--set-last-error nil)
     hyprmacs-session-state))
 
 (defun hyprmacs-session-disconnect ()
@@ -135,6 +168,10 @@ Any existing connection is closed first."
              (plist-put hyprmacs-session-state :input-mode
                         (hyprmacs-ipc-mode-from-wire
                          (alist-get 'mode payload nil nil #'equal)))))
+      ("protocol-error"
+       (hyprmacs-session--set-last-error
+        (or (alist-get 'message payload nil nil #'equal)
+            "unknown protocol error")))
       ("state-dump"
        (let ((eligible-clients (alist-get 'eligible_clients payload nil nil #'equal))
              (managed-clients (alist-get 'managed_clients payload nil nil #'equal)))
@@ -174,10 +211,7 @@ Any existing connection is closed first."
 (defun hyprmacs-session--process-sentinel (_process event)
   "Handle process lifecycle EVENT."  
   (when (string-match-p "closed\\|deleted\\|failed" event)
-    (setq hyprmacs-session--process nil)
-    (setq hyprmacs-session--partial-frame "")
-    (setq hyprmacs-session--transport-send #'ignore)
-    (hyprmacs-session--set-connection-status 'disconnected)))
+    (hyprmacs-session--handle-transport-drop (string-trim event))))
 
 (defun hyprmacs-session-fake-receive (frame)
   "Feed FRAME into the fake transport receive path."
@@ -193,6 +227,11 @@ TYPE is the message type, WORKSPACE-ID is a string, PAYLOAD is an alist."
 (defun hyprmacs-session-request-state (workspace-id)
   "Send a request-state message for WORKSPACE-ID."
   (hyprmacs-session-send "request-state" workspace-id '()))
+
+(defun hyprmacs-session-reconnect-and-resync (workspace-id &optional socket-path)
+  "Reconnect to SOCKET-PATH and request state for WORKSPACE-ID."
+  (hyprmacs-session-connect socket-path)
+  (hyprmacs-session-request-state workspace-id))
 
 (defun hyprmacs-session-manage-workspace (workspace-id &optional adopt-existing)
   "Send manage-workspace for WORKSPACE-ID.
