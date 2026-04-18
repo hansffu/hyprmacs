@@ -888,6 +888,72 @@ Validation:
 - Manage workspace and verify =hyprctl -j activeworkspace= reports =tiledLayout= as =hyprmacs=.
 - Unmanage/disconnect and verify prior layout mode is restored.
 
+** DONE Task 11B: Automate full nested E2E regression flow
+Purpose:
+- Replace manual-only nested validation with a repeatable script that exercises implemented behavior across Tasks 1-11.
+
+Files:
+- Create =scripts/hyprmacs-e2e-nested.sh=
+- Modify =emacs/hyprmacs.el=
+- Modify =justfile=
+- Modify =docs/testing/manual-smoke-tests.org=
+- Modify =docs/superpowers/plans/2026-04-15-hyprmacs-iterative-implementation.org=
+
+Steps:
+*** DONE Define E2E harness contract
+- Run static/unit coverage first (=make test=) before launching nested runtime checks.
+- Launch a fresh nested Hyprland instance and auto-detect the active instance signature.
+- Run scripted Emacs-driven workflow assertions for manage/state/layout/mode/unmanage behavior.
+*** DONE Implement nested orchestration script
+- Start nested compositor, spawn test windows, launch controllable Emacs daemon/client, and run E2E Lisp entrypoint.
+- Collect deterministic logs/artifacts for failures.
+- Ensure cleanup (nested compositor + daemon) on success and failure.
+*** DONE Add runtime assertions that map to Tasks 1-11
+- Validate plugin event tap and IPC message flow.
+- Validate managed workspace layout mode transitions and policy values.
+- Validate managed client discovery, selection/mode switching, and cleanup on unmanage.
+*** DONE Add developer entrypoint
+- Add a =just= recipe that runs the full nested E2E harness.
+*** DONE Review task 11B with user
+- Stop after the automated harness succeeds locally and provide generated artifact paths for user validation.
+
+*** DONE Session note: Task 11B automated harness implementation (2026-04-18)
+- Added =scripts/hyprmacs-e2e-nested.sh= as a full automated nested regression harness.
+- Added =M-x hyprmacs-run-full-e2e-test= with fail-fast assertions for runtime manage/layout/policy/mode/unmanage flow.
+- Added =just e2e= developer entrypoint (runs harness under =nix develop=).
+- Added manual smoke doc section describing the automated harness and artifact locations.
+
+*** DONE Session note: Task 11B local verification evidence (2026-04-18)
+- Ran =just e2e= successfully in nested mode.
+- Harness completed with:
+  - all plugin + Emacs unit suites passing
+  - nested runtime assertions passing
+  - plugin runtime signal checks (event tap + IPC command flow) passing
+- Example artifact bundle:
+  - =artifacts/e2e/20260418-211500/summary.log=
+  - =artifacts/e2e/20260418-211500/session-e2e.log=
+
+*** DONE Session note: Task 11B use-case coverage expansion (2026-04-18)
+- Expanded runtime E2E assertions based on user-requested lifecycle scenarios:
+  - managed-buffer window visibility roundtrip (show -> hide -> show) with compositor workspace verification
+  - command-path buffer close (=kill-current-buffer=) followed by automatic recreation from inbound state
+  - explicit retention of same-title distinct-client coverage, float/tile toggling, close-window command cleanup, and multi-frame focus handoff.
+- Updated =docs/testing/manual-smoke-tests.org= automated harness section to list the expanded scenario set.
+
+*** DONE Session note: Task 11B regression fix for client-control selection source (2026-04-18)
+- User-reported behavior: =M-x hyprmacs-set-input-mode= could focus the wrong managed client (observed as first client order fallback) instead of the client associated with the current managed buffer.
+- Root cause:
+  - Emacs command path only sent =set-input-mode(client-control)=.
+  - Plugin behavior when no selected client exists falls back to first managed client for focus.
+- Added failing test first:
+  - =tests/emacs/protocol-tests.el::hyprmacs-set-input-mode-selects-client-for-current-managed-buffer=
+  - verifies command emits =set-selected-client= for the current managed buffer before =set-input-mode=.
+- Implemented fix:
+  - =emacs/hyprmacs.el=: on client-control mode switch, derive current buffer client ID when it is managed and send =set-selected-client= first (when changed), then send mode switch.
+- Verification:
+  - targeted ERT protocol suite passes
+  - full =just e2e= passes (artifact bundle: =artifacts/e2e/20260418-232545/=).
+
 ** TODO Task 12: Package the prototype, document usage, and freeze the first demo flow
 Purpose:
 - Make the prototype repeatable and easy to evaluate.

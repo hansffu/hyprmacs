@@ -168,6 +168,14 @@ Accepted forms:
       (user-error "hyprmacs: unsupported input mode %s" mode))
     (cons workspace-id mode)))
 
+(defun hyprmacs--current-managed-buffer-client-id ()
+  "Return managed client ID for current buffer when available."
+  (let ((client-id (and (boundp 'hyprmacs-client-id) hyprmacs-client-id))
+        (managed (or (plist-get hyprmacs-session-state :managed-clients) '())))
+    (when (and (stringp client-id)
+               (member client-id managed))
+      client-id)))
+
 (defun hyprmacs-set-input-mode (&optional arg1 arg2)
   "Switch to client-control mode for the active workspace.
 Non-interactively accepts flexible forms:
@@ -178,6 +186,11 @@ Non-interactively accepts flexible forms:
   (let* ((resolved (hyprmacs--resolve-input-mode-args arg1 arg2 'client-control))
          (workspace-id (car resolved))
          (mode (cdr resolved)))
+    (when (eq mode 'client-control)
+      (let ((target-client (hyprmacs--current-managed-buffer-client-id)))
+        (when (and target-client
+                   (not (equal target-client (plist-get hyprmacs-session-state :selected-client))))
+          (hyprmacs-session-set-selected-client workspace-id target-client))))
     (hyprmacs--send-input-mode mode workspace-id)))
 
 (defun hyprmacs-set-emacs-control-mode (&optional workspace-id)
@@ -393,8 +406,347 @@ switch modes, and collect state plus `hyprctl clients` output."
 (defun hyprmacs--append-command-output (path title command)
   "Append COMMAND output with TITLE heading to PATH."
   (hyprmacs--ensure-hyprland-instance-signature)
-  (append-to-file (format "\n%s\n" title) nil path)
-  (append-to-file (shell-command-to-string command) nil path))
+  (pcase-let ((`(:exit ,exit :out ,out) (hyprmacs--run-command command)))
+    (append-to-file (format "\n%s (exit=%s)\n" title exit) nil path)
+    (append-to-file out nil path)))
+
+(defun hyprmacs--run-command (command)
+  "Run shell COMMAND and return plist with :exit and :out."
+  (hyprmacs--ensure-hyprland-instance-signature)
+  (with-temp-buffer
+    (let ((exit-code (call-process-shell-command command nil (current-buffer) t)))
+      (list :exit exit-code :out (buffer-string)))))
+
+(defun hyprmacs--hyprctl-json (request)
+  "Return decoded JSON for `hyprctl -j REQUEST`, or nil on parse failure."
+  (condition-case nil
+      (json-parse-string
+       (shell-command-to-string (format "hyprctl -j %s" request))
+       :object-type 'alist
+       :array-type 'list)
+    (error nil)))
+
+(defun hyprmacs--hyprctl-clients ()
+  "Return `hyprctl -j clients` as alist list."
+  (or (hyprmacs--hyprctl-json "clients") '()))
+
+(defun hyprmacs--hyprctl-activewindow ()
+  "Return `hyprctl -j activewindow` as an alist."
+  (hyprmacs--hyprctl-json "activewindow"))
+
+(defun hyprmacs--find-client-record (client-id)
+  "Return decoded client record for CLIENT-ID, if present."
+  (let ((target (downcase client-id)))
+    (cl-find-if
+     (lambda (entry)
+       (string= (downcase (format "%s" (alist-get 'address entry nil nil #'equal))) target))
+     (hyprmacs--hyprctl-clients))))
+
+(defun hyprmacs--client-workspace-name (client-id)
+  "Return workspace name for CLIENT-ID, or nil if not found."
+  (let* ((record (hyprmacs--find-client-record client-id))
+         (workspace (alist-get 'workspace record nil nil #'equal))
+         (name (alist-get 'name workspace nil nil #'equal)))
+    (when name
+      (format "%s" name))))
+
+(defun hyprmacs--wait-until (predicate timeout-seconds &optional interval-seconds)
+  "Poll PREDICATE until true or TIMEOUT-SECONDS elapses."
+  (let* ((deadline (+ (float-time) timeout-seconds))
+         (sleep-seconds (or interval-seconds 0.10))
+         (ok nil))
+    (while (and (not ok) (< (float-time) deadline))
+      (setq ok (ignore-errors (funcall predicate)))
+      (unless ok
+        (accept-process-output nil sleep-seconds)))
+    ok))
+
+(defun hyprmacs--hyprctl-option-int (option)
+  "Return integer value from `hyprctl getoption` for OPTION.
+Returns nil when the value cannot be parsed."
+  (hyprmacs--ensure-hyprland-instance-signature)
+  (let ((out (shell-command-to-string (format "hyprctl getoption %s" option))))
+    (when (string-match "int:[[:space:]]*\\(-?[0-9]+\\)" out)
+      (string-to-number (match-string 1 out)))))
+
+(defun hyprmacs--activeworkspace-layout ()
+  "Return the active workspace tiled layout name."
+  (hyprmacs--ensure-hyprland-instance-signature)
+  (condition-case nil
+      (let* ((obj (json-parse-string
+                   (shell-command-to-string "hyprctl -j activeworkspace")
+                   :object-type 'alist))
+             (layout (or (alist-get 'tiledLayout obj nil nil #'equal)
+                         (alist-get 'tiledlayout obj nil nil #'equal))))
+        (when layout
+          (format "%s" layout)))
+    (error nil)))
+
+(defun hyprmacs--e2e-assert (condition path fmt &rest args)
+  "Assert CONDITION, write status to PATH, and raise on failure.
+FMT and ARGS describe the assertion."
+  (let ((message (apply #'format fmt args)))
+    (append-to-file
+     (format "%s: %s\n" (if condition "ok" "fail") message)
+     nil path)
+    (unless condition
+      (error "hyprmacs e2e assertion failed: %s" message))))
+
+(defun hyprmacs-run-full-e2e-test (&optional log-path)
+  "Run full scripted nested E2E validation and write log to LOG-PATH.
+This covers the implemented runtime contract through Task 11."
+  (interactive)
+  (let* ((path (or log-path "logs-e2e.txt"))
+         (workspace-id (hyprmacs--default-workspace-id))
+         (layout-before (or (hyprmacs--activeworkspace-layout) "")))
+    (hyprmacs--ensure-hyprland-instance-signature)
+    (with-temp-file path
+      (insert "hyprmacs nested e2e\n"))
+    (append-to-file (format "workspace-id: %s\n" workspace-id) nil path)
+    (append-to-file (format "layout-before: %s\n" layout-before) nil path)
+
+    (hyprmacs-connect)
+    (hyprmacs--wait-seconds 0.25)
+    (hyprmacs--e2e-assert
+     (eq (plist-get hyprmacs-session-state :connection-status) 'connected)
+     path "session connected")
+
+    ;; Name the primary frame explicitly and spawn duplicate-title clients.
+    (set-frame-name "hyprmacs-e2e-main")
+    (dotimes (idx 2)
+      (pcase-let ((`(:exit ,exit :out ,out)
+                   (hyprmacs--run-command "hyprctl dispatch exec \"foot -T hyprmacs-dup\"")))
+        (append-to-file (format "spawn-dup-%d-exit: %s\n" idx exit) nil path)
+        (append-to-file out nil path)
+        (hyprmacs--e2e-assert (zerop exit) path "spawn duplicate-title client %d succeeded" idx)))
+    (hyprmacs--wait-seconds 1.0)
+
+    (hyprmacs-manage-current-workspace workspace-id)
+    (hyprmacs--wait-seconds 0.80)
+    (hyprmacs-request-state workspace-id)
+    (hyprmacs--wait-seconds 0.50)
+    (hyprmacs--e2e-assert (plist-get hyprmacs-session-state :managed) path "workspace marked managed")
+    (hyprmacs--e2e-assert (plist-get hyprmacs-session-state :controller-connected) path "controller connected true")
+    (hyprmacs--e2e-assert
+     (equal (hyprmacs--activeworkspace-layout) "hyprmacs")
+     path "active workspace layout switched to hyprmacs")
+    (hyprmacs--e2e-assert
+     (= (or (hyprmacs--hyprctl-option-int "animations:enabled") -1) 0)
+     path "animations:enabled forced to 0 while managed")
+    (hyprmacs--e2e-assert
+     (= (or (hyprmacs--hyprctl-option-int "misc:focus_on_activate") -1) 0)
+     path "misc:focus_on_activate forced to 0 while managed")
+
+    (let* ((active (hyprmacs--hyprctl-activewindow))
+           (managing-emacs-address (format "%s" (alist-get 'address active nil nil #'equal)))
+           (managing-class (format "%s" (alist-get 'class active nil nil #'equal))))
+      (hyprmacs--e2e-assert (string= managing-class "emacs") path "manage captured emacs as active class")
+      (append-to-file (format "managing-emacs-address: %s\n" managing-emacs-address) nil path)
+
+      ;; Multi-frame scenario.
+      (ignore-errors (make-frame '((name . "hyprmacs-e2e-secondary"))))
+      (hyprmacs--e2e-assert
+       (hyprmacs--wait-until
+        (lambda ()
+          (>= (length (cl-remove-if-not
+                       (lambda (entry)
+                         (string= (format "%s" (alist-get 'class entry nil nil #'equal)) "emacs"))
+                       (hyprmacs--hyprctl-clients)))
+              2))
+        5.0 0.15)
+       path "multiple emacs frames observed in compositor")
+
+      (cl-labels
+          ((refresh-state ()
+             (hyprmacs-request-state workspace-id)
+             (hyprmacs--wait-seconds 0.25))
+           (managed-ids ()
+             (or (plist-get hyprmacs-session-state :managed-clients) '()))
+           (eligible-clients ()
+             (or (plist-get hyprmacs-session-state :eligible-clients) '()))
+           (wait-managed-membership (client-id expected)
+             (hyprmacs--wait-until
+              (lambda ()
+                (refresh-state)
+                (if expected
+                    (member client-id (managed-ids))
+                  (not (member client-id (managed-ids)))))
+              5.0 0.20)))
+        (let ((managed (managed-ids)))
+      (when (< (length managed) 1)
+        (hyprmacs--seed-existing-workspace-clients workspace-id)
+        (hyprmacs--wait-seconds 0.25)
+        (refresh-state)
+        (setq managed (managed-ids)))
+          (hyprmacs--e2e-assert (>= (length managed) 2) path "at least two managed clients discovered")
+
+          ;; Duplicate-title scenario (same title, different client IDs).
+          (let ((title-map (make-hash-table :test #'equal))
+                (has-duplicates nil))
+            (dolist (entry (eligible-clients))
+              (let* ((title (format "%s" (alist-get 'title entry nil nil #'equal)))
+                     (client-id (format "%s" (alist-get 'client_id entry nil nil #'equal)))
+                     (existing (gethash title title-map)))
+                (puthash title (cons client-id existing) title-map)))
+            (maphash
+             (lambda (_title ids)
+               (when (>= (length (delete-dups ids)) 2)
+                 (setq has-duplicates t)))
+             title-map)
+            (hyprmacs--e2e-assert has-duplicates
+                                  path "multiple clients with same title are tracked as distinct ids"))
+
+          (let* ((target-client (car managed))
+                 (close-client (cadr managed)))
+        (append-to-file (format "target-client: %s\n" target-client) nil path)
+        (append-to-file (format "close-client: %s\n" close-client) nil path)
+        (hyprmacs-select-managed-client target-client workspace-id)
+        (hyprmacs--wait-seconds 0.30)
+        (hyprmacs-set-input-mode 'client-control workspace-id)
+        (hyprmacs--wait-seconds 0.25)
+            (refresh-state)
+        (hyprmacs--e2e-assert
+         (eq (plist-get hyprmacs-session-state :input-mode) 'client-control)
+         path "input mode switched to client-control")
+
+        (hyprmacs-sync-layout workspace-id t)
+        (hyprmacs--wait-seconds 0.35)
+        (hyprmacs--e2e-assert
+         (equal (plist-get hyprmacs-session-state :last-message-type) "state-dump")
+         path "state-dump observed after layout publication")
+
+            ;; Buffer visibility lifecycle + command kill/recreate scenario.
+            (let ((buffer (hyprmacs-buffer-for-client target-client)))
+              (hyprmacs--e2e-assert (buffer-live-p buffer) path "managed buffer exists for target client")
+              (delete-other-windows)
+              (switch-to-buffer buffer)
+              (hyprmacs-sync-layout workspace-id t)
+              (hyprmacs--wait-seconds 0.25)
+              (hyprmacs--e2e-assert
+               (hyprmacs--wait-until
+                (lambda ()
+                  (let ((workspace-name (hyprmacs--client-workspace-name target-client)))
+                    (and workspace-name
+                         (not (string= workspace-name "special:hyprmacs-hidden")))))
+                5.0 0.20)
+               path "managed client is visible when managed buffer is shown")
+              (switch-to-buffer (get-buffer-create "*hyprmacs-e2e-scratch*"))
+              (hyprmacs-sync-layout workspace-id t)
+              (hyprmacs--wait-seconds 0.25)
+              (hyprmacs--e2e-assert
+               (hyprmacs--wait-until
+                (lambda ()
+                  (string=
+                   (or (hyprmacs--client-workspace-name target-client) "")
+                   "special:hyprmacs-hidden"))
+                5.0 0.20)
+               path "managed client is hidden when managed buffer window is closed")
+              (switch-to-buffer buffer)
+              (hyprmacs-sync-layout workspace-id t)
+              (hyprmacs--wait-seconds 0.25)
+              (hyprmacs--e2e-assert
+               (hyprmacs--wait-until
+                (lambda ()
+                  (let ((workspace-name (hyprmacs--client-workspace-name target-client)))
+                    (and workspace-name
+                         (not (string= workspace-name "special:hyprmacs-hidden")))))
+                5.0 0.20)
+               path "managed client is restored visible after reopening managed buffer")
+              (call-interactively #'kill-current-buffer)
+              (hyprmacs--e2e-assert (not (buffer-live-p buffer)) path "managed buffer can be killed explicitly")
+              (refresh-state)
+              (hyprmacs--e2e-assert
+               (buffer-live-p (hyprmacs-buffer-for-client target-client))
+               path "managed buffer is recreated from state after kill command"))
+
+        ;; Task 6 debug hide/show round-trip.
+        (hyprmacs-debug-hide-client target-client workspace-id)
+        (hyprmacs--wait-seconds 0.25)
+        (hyprmacs-debug-show-client target-client workspace-id)
+        (hyprmacs--wait-seconds 0.25)
+
+            ;; Managed -> floating -> managed transition scenario.
+            (let ((transition-client (or close-client target-client)))
+              (append-to-file (format "transition-client: %s\n" transition-client) nil path)
+              (pcase-let ((`(:exit ,float-exit :out ,float-out)
+                           (hyprmacs--run-command
+                            (format "hyprctl dispatch togglefloating address:%s" transition-client))))
+                (append-to-file (format "togglefloating-out-1:\n%s\n" float-out) nil path)
+                (hyprmacs--e2e-assert
+                 (zerop float-exit)
+                 path "togglefloating to floating succeeded for %s" transition-client))
+              (hyprmacs--wait-seconds 0.20)
+              (hyprmacs--e2e-assert
+               (let ((record (hyprmacs--find-client-record transition-client)))
+                 (and record (hyprmacs--json-bool (alist-get 'floating record nil nil #'equal))))
+               path "compositor marks transition client floating after toggle")
+              (pcase-let ((`(:exit ,tile-exit :out ,tile-out)
+                           (hyprmacs--run-command
+                            (format "hyprctl dispatch togglefloating address:%s" transition-client))))
+                (append-to-file (format "togglefloating-out-2:\n%s\n" tile-out) nil path)
+                (hyprmacs--e2e-assert
+                 (zerop tile-exit)
+                 path "togglefloating back to tiled succeeded for %s" transition-client))
+              (hyprmacs--wait-seconds 0.20)
+              (hyprmacs--e2e-assert
+               (let ((record (hyprmacs--find-client-record transition-client)))
+                 (and record (not (hyprmacs--json-bool (alist-get 'floating record nil nil #'equal)))))
+               path "compositor marks transition client tiled after second toggle")
+              (refresh-state))
+
+            ;; Close-by-command scenario.
+            (let* ((current-managed (managed-ids))
+                   (close-target (or close-client
+                                     (car (cl-remove-if (lambda (id) (string= id target-client)) current-managed)))))
+              (hyprmacs--e2e-assert close-target path "close target client selected")
+              (pcase-let ((`(:exit ,close-exit :out ,close-out)
+                           (hyprmacs--run-command
+                            (format "hyprctl dispatch closewindow address:%s" close-target))))
+                (append-to-file (format "closewindow-out:\n%s\n" close-out) nil path)
+                (hyprmacs--e2e-assert (zerop close-exit) path "closewindow command succeeded for %s" close-target))
+              (hyprmacs--e2e-assert
+               (wait-managed-membership close-target nil)
+               path "closed client removed from managed set"))
+
+        (hyprmacs-set-emacs-control-mode workspace-id)
+        (hyprmacs--wait-seconds 0.25)
+            (refresh-state)
+        (hyprmacs--e2e-assert
+         (eq (plist-get hyprmacs-session-state :input-mode) 'emacs-control)
+         path "input mode switched back to emacs-control")
+            (hyprmacs--e2e-assert
+             (hyprmacs--wait-until
+              (lambda ()
+                (let ((aw (hyprmacs--hyprctl-activewindow)))
+                  (and aw
+                       (string= (format "%s" (alist-get 'class aw nil nil #'equal)) "emacs")
+                       (string= (format "%s" (alist-get 'address aw nil nil #'equal))
+                                managing-emacs-address))))
+              4.0 0.10)
+             path "emacs-control focuses the managing emacs frame")))))
+
+    (hyprmacs-unmanage-workspace workspace-id)
+    (hyprmacs--wait-seconds 0.50)
+    (hyprmacs-request-state workspace-id)
+    (hyprmacs--wait-seconds 0.30)
+    (let ((layout-after (or (hyprmacs--activeworkspace-layout) "")))
+      (append-to-file (format "layout-after-unmanage: %s\n" layout-after) nil path)
+      (hyprmacs--e2e-assert
+       (not (equal layout-after "hyprmacs"))
+       path "workspace layout no longer hyprmacs after unmanage")
+      (when (not (string-empty-p layout-before))
+        (hyprmacs--e2e-assert
+         (equal layout-after layout-before)
+         path "workspace layout restored to pre-manage value")))
+    (hyprmacs--e2e-assert
+     (not (plist-get hyprmacs-session-state :managed))
+     path "workspace unmanaged state cleared")
+
+    (hyprmacs--append-command-output path "hyprctl activeworkspace" "hyprctl activeworkspace")
+    (hyprmacs--append-command-output path "hyprctl clients" "hyprctl clients")
+    (hyprmacs-disconnect)
+    (append-to-file "result: PASS\n" nil path)
+    (message "hyprmacs: full nested e2e complete, wrote %s" path)))
 
 (defun hyprmacs-run-gui-smoke-test (&optional log-path)
   "Run a GUI-oriented smoke flow and write rich debug output to LOG-PATH."

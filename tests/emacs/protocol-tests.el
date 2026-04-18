@@ -132,6 +132,34 @@
     (should (equal (alist-get 'workspace_id frame nil nil #'equal) "7"))
     (should (equal (alist-get 'mode (alist-get 'payload frame) nil nil #'equal) "client-control"))))
 
+(ert-deftest hyprmacs-set-input-mode-selects-client-for-current-managed-buffer ()
+  (hyprmacs-session-reset)
+  (hyprmacs-buffer-reset)
+  (hyprmacs-session-use-fake-transport)
+  (let ((buffer-a (hyprmacs-buffer-ensure-for-client "0xaaa" "foot"))
+        (buffer-b (hyprmacs-buffer-ensure-for-client "0xbbb" "foot")))
+    (unwind-protect
+        (progn
+          (setq hyprmacs-session-state
+                (plist-put hyprmacs-session-state :managed-clients '("0xaaa" "0xbbb")))
+          (setq hyprmacs-session-state
+                (plist-put hyprmacs-session-state :selected-client "0xaaa"))
+          (switch-to-buffer buffer-b)
+          (hyprmacs-set-input-mode "1")
+          (let* ((frames (hyprmacs-session-fake-outbox))
+                 (first (hyprmacs-test--decode (nth 0 frames)))
+                 (second (hyprmacs-test--decode (nth 1 frames))))
+            (should (equal (length frames) 2))
+            (should (equal (alist-get 'type first nil nil #'equal) "set-selected-client"))
+            (should (equal (alist-get 'client_id (alist-get 'payload first) nil nil #'equal) "0xbbb"))
+            (should (equal (alist-get 'type second nil nil #'equal) "set-input-mode"))
+            (should (equal (alist-get 'mode (alist-get 'payload second) nil nil #'equal) "client-control"))))
+      (when (buffer-live-p buffer-a)
+        (kill-buffer buffer-a))
+      (when (buffer-live-p buffer-b)
+        (kill-buffer buffer-b))
+      (hyprmacs-buffer-reset))))
+
 (ert-deftest hyprmacs-command-set-emacs-control-mode-sends-emacs-control ()
   (hyprmacs-session-reset)
   (hyprmacs-session-use-fake-transport)

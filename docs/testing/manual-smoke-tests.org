@@ -4,6 +4,24 @@
 * Purpose
 Quick manual checks for each prototype checkpoint in the nested Hyprland environment.
 
+* Automated Harness
+- Run =just e2e= for the scripted nested regression flow (Tasks 1-11 coverage).
+- Artifacts are written under =artifacts/e2e/<timestamp>/=:
+  - compositor/plugin runtime log
+  - Emacs daemon/eval logs
+  - scripted session assertion log
+- The harness runs unit suites first, then launches a fresh nested Hyprland session and executes runtime assertions.
+- Runtime assertions include:
+  - manage/unmanage lifecycle and layout transition checks
+  - input-mode roundtrip and focus handoff to managing Emacs frame
+  - client-control mode targets the client bound to the current managed buffer (not arbitrary registry order)
+  - duplicate-title clients tracked by distinct client IDs
+  - managed-buffer visibility lifecycle (open in window, hide by closing window, restore visibility)
+  - managed-buffer kill-current-buffer and automatic recreate-on-state flow
+  - close-window by command and state cleanup
+  - floating-toggle lifecycle at compositor state level
+  - multi-frame Emacs scenario with managing-frame focus return validation
+
 * Prerequisites
 - Run nested Hyprland with =just run=.
 - Load plugin with =just load=.

@@ -27,13 +27,15 @@
 
 (defun hyprmacs-buffer-ensure-for-client (client-id app-id)
   "Create or return the managed buffer for CLIENT-ID and APP-ID."  
-  (or (gethash client-id hyprmacs-buffer-table)
+  (let ((existing (gethash client-id hyprmacs-buffer-table)))
+    (if (buffer-live-p existing)
+        existing
       (let ((buffer (generate-new-buffer (hyprmacs-buffer--name client-id app-id))))
         (with-current-buffer buffer
           (setq-local hyprmacs-client-id client-id)
           (setq-local hyprmacs-client-app-id app-id))
         (puthash client-id buffer hyprmacs-buffer-table)
-        buffer)))
+        buffer))))
 
 (defun hyprmacs-buffer-for-client (client-id)
   "Return managed buffer for CLIENT-ID, if present."  

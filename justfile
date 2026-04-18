@@ -21,6 +21,9 @@ run:
 load:
   nix run .#hyprmacs-load
 
+e2e:
+  nix develop -c bash scripts/hyprmacs-e2e-nested.sh
+
 emacs:
   find emacs -type f -name '*.elc' -delete
   emacs -L emacs --eval "(setq load-prefer-newer t)" --eval "(require 'hyprmacs)"

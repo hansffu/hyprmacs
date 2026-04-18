@@ -21,3 +21,11 @@
     (hyprmacs-buffer-remove-client "0xdef")
     (should-not (hyprmacs-buffer-for-client "0xdef"))
     (should-not (buffer-live-p buffer))))
+
+(ert-deftest hyprmacs-buffer-recreate-after-kill ()
+  (let ((buffer (hyprmacs-buffer-ensure-for-client "0x123" "foot")))
+    (kill-buffer buffer)
+    (should-not (buffer-live-p buffer))
+    (let ((recreated (hyprmacs-buffer-ensure-for-client "0x123" "foot")))
+      (should (buffer-live-p recreated))
+      (should-not (eq recreated buffer)))))
