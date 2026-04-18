@@ -29,7 +29,7 @@ Build a prototype where one Hyprland workspace can be managed as an Emacs-direct
   - Emacs child frames and posframes
 - Rectangle-first layout semantics for managed clients.
 - Explicit rejection of overlapping managed rectangles in v1.
-- A dedicated managed-workspace policy profile that constrains compositor behaviors conflicting with Emacs layout ownership (including focus-follows-mouse off and managed-geometry animations off while managed).
+- A dedicated managed-workspace policy profile that constrains compositor behaviors conflicting with Emacs layout ownership (including managed-geometry animations off while managed).
 - Disconnect recovery that returns the workspace to native Hyprland behavior.
 
 * Out Of Scope

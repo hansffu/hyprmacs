@@ -70,13 +70,12 @@ Quick manual checks for each prototype checkpoint in the nested Hyprland environ
   - =M-x hyprmacs-manage-current-workspace=
 - Validate while managed:
   - workspace policy applies:
-    - =hyprctl getoption input:follow_mouse= shows =0=
     - =hyprctl getoption animations:enabled= shows =0=
     - =hyprctl getoption misc:focus_on_activate= shows =0=
 - In Emacs run:
   - =M-x hyprmacs-unmanage-workspace=
 - Validate after unmanage:
-  - the three options above are restored to pre-manage values.
+  - the two options above are restored to pre-manage values.
 
 * Task 9 Popup, Auxiliary, and Float-Transition Smoke
 - Start nested session with Emacs and at least two eligible app clients in one workspace.
@@ -117,6 +116,29 @@ Quick manual checks for each prototype checkpoint in the nested Hyprland environ
 - Protocol error sanity checks:
   - send an unsupported command frame and confirm plugin emits =protocol-error=
   - verify Emacs session records =:last-error= after receiving a protocol-error frame
+
+* Task 11 Explicit hyprmacs Layout Mode Smoke
+- Start nested session with at least one eligible tiled client and Emacs available.
+- Capture baseline layout:
+  - =hyprctl -j activeworkspace | jq .tiledLayout=
+  - record expected pre-manage layout (typically =dwindle= or =master=)
+- In Emacs run:
+  - =M-x hyprmacs-manage-current-workspace=
+- Validate while managed:
+  - =hyprctl -j activeworkspace | jq .tiledLayout= reports =hyprmacs=
+  - existing eligible tiled clients are hidden to =special:hyprmacs-hidden= until Emacs publishes layout visibility
+- With workspace still managed, open a new eligible tiled client (for example =hyprctl dispatch exec foot=):
+  - verify the new client is hidden immediately to =special:hyprmacs-hidden= before any explicit layout publish
+- Open an additional Emacs frame/window in the same workspace while managed:
+  - verify Emacs-control handoff still returns focus to the original managing Emacs frame
+  - verify non-managed tiled windows are no longer forced into overlapping full-screen geometry by layout recalc
+- With managed clients visible, click-focus a different client and close one using the client UI close button:
+  - verify Emacs session state updates automatically (no manual =hyprmacs-request-state= required)
+  - verify =managed-clients= and =selected-client= in =*hyprmacs-state*= reflect the compositor event
+- Trigger disconnect cleanup (close Emacs controller, or let batch controller exit):
+  - =hyprctl -j activeworkspace | jq .tiledLayout= restores the pre-manage value
+  - hidden clients return to the normal workspace
+  - global policy values from Task 8A remain restored after cleanup
 
 * Notes
 - Task 6 uses temporary debug commands and a special workspace (=special:hyprmacs-hidden=) for hide/restore.

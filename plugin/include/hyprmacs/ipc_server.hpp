@@ -41,6 +41,7 @@ class IpcServer {
     void send_message(int fd, const ProtocolMessage& message);
     void restore_workspace_on_disconnect();
     void on_client_transition(const WorkspaceId& workspace_id, const ClientId& client_id, bool floating);
+    void on_workspace_state_changed(const WorkspaceId& workspace_id);
 
     WorkspaceManager* workspace_manager_ = nullptr;
     LayoutApplier* layout_applier_ = nullptr;

@@ -2,7 +2,7 @@
 #+date: 2026-04-17
 
 * Status
-Accepted (pre-implementation), to be delivered in Task 8A.
+Accepted and implemented (Task 8A + Task 11 follow-up).
 
 * Context
 hyprmacs now supports Emacs-driven rectangle snapshots, but managed workspace behavior still inherits normal Hyprland defaults unless explicitly constrained.
@@ -15,26 +15,37 @@ That creates avoidable conflicts with Emacs-directed control, especially around:
 The user requested a dedicated workspace layout/policy mode named =hyprmacs= to make this behavior explicit and predictable.
 
 * Decision
-Introduce a dedicated managed-workspace policy profile, conceptually named =hyprmacs=, with explicit lifecycle:
+Introduce a dedicated managed-workspace policy profile tied to an explicit managed layout mode =hyprmacs=, with lifecycle:
 
-- on =manage-workspace=: capture relevant prior workspace policy and enforce =hyprmacs= constraints
-- on =unmanage-workspace= or controller disconnect: restore previous workspace policy
+- on =manage-workspace=:
+  - capture relevant prior workspace policy and enforce =hyprmacs= constraints
+  - switch workspace tiled layout to =hyprmacs=
+- on =unmanage-workspace= or controller disconnect:
+  - restore previous workspace tiled layout
+  - restore prior policy values
 
 Baseline required constraints:
-1. Focus-follows-mouse must be disabled for managed workspaces.
-2. Window animations that affect managed geometry transitions must be disabled.
+1. Window animations that affect managed geometry transitions must be disabled.
 
 Additional constraints accepted for this profile:
 1. Activation/focus heuristics (for example =focus_on_activate= style behavior) must not override Emacs-control ownership.
-2. Managed-client geometry and visibility remain authoritative from Emacs layout snapshots, not native tiling-tree mutations.
+2. Managed-client geometry and visibility remain authoritative from Emacs layout snapshots, not native tiling-tree mutations or fallback tiling behavior.
 3. Existing non-overlap and managed-layer stacking guarantees remain enforced.
 4. Native floating/transient/popup surfaces remain outside hyprmacs-managed control.
+5. Newly managed eligible clients are hidden immediately until Emacs publishes visibility through =set-layout=.
+
+Follow-up adjustment (Task 11 review):
+- Plugin-side management of =input:follow_mouse= is disabled for now; this setting is user-managed in Hyprland config due runtime mode ambiguity (=move-only= vs boolean off) and to avoid policy churn.
+
+Policy application uses lease semantics to remain compatible with future multi-workspace support:
+- acquire on first managed workspace
+- release and restore only when the final managed workspace is released
 
 * Consequences
 Pros:
 - Makes workspace behavior deterministic and easier to reason about.
 - Reduces layout drift and focus churn under frequent Emacs layout updates.
-- Keeps policy changes localized to managed lifecycle boundaries.
+- Keeps policy changes localized to managed lifecycle boundaries while preserving future multi-workspace compatibility.
 
 Tradeoffs:
 - Requires additional plugin-side policy bookkeeping and restore logic.
@@ -49,8 +60,9 @@ Tradeoffs:
 - Rejected because it treats symptoms rather than enforcing workspace-level rules.
 
 * Follow-up
-- Implement in Task 8A before Task 9.
 - Extend manual smoke tests to validate:
   - policy enforcement on manage
+  - tiled layout transition to =hyprmacs= while managed and restoration on unmanage/disconnect
+  - immediate hide-before-layout behavior for newly managed clients
   - stable behavior during minibuffer/Vertico-driven geometry churn
   - policy restoration on unmanage and disconnect.

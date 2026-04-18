@@ -596,11 +596,9 @@ Steps:
 *** DONE Capture architecture and policy rules in ADR
 - Document dedicated =hyprmacs= policy profile lifecycle (=manage -> enforce, unmanage/disconnect -> restore=).
 - Document required baseline constraints:
-  - focus-follows-mouse disabled for managed workspaces
   - window animations disabled for managed geometry transitions
 *** DONE Implement workspace policy enforcement and restore
 - Workspace manager now applies managed policy keywords on =manage-workspace=:
-  - =input:follow_mouse = 0=
   - =animations:enabled = 0=
   - =misc:focus_on_activate = 0=
 - Workspace manager snapshots prior option values using Hyprland =j/getoption= queries before applying policy.
@@ -620,7 +618,6 @@ Steps:
 *** DONE Session note: post-Task-8 architecture agreement (2026-04-17)
 - User approved introducing a dedicated =hyprmacs= workspace layout/policy mode instead of relying on existing Hyprland layout defaults.
 - Initial mandatory constraints for this mode:
-  - =focus-follows-mouse= must be off
   - window animations for managed geometry transitions must be off
 - Additional constraints to implement in the same policy profile:
   - =focus_on_activate= should be constrained so managed clients do not steal keyboard ownership from Emacs-control mode
@@ -629,7 +626,7 @@ Steps:
 
 *** DONE Session note: nested-Hyprland QoL input-mode test binds (2026-04-17)
 - Updated flake nested Hyprland config to disable pointer focus stealing during manual input-mode validation:
-  - =input.follow_mouse = 0=
+  - =input.follow_mouse = 2=
 - Updated flake nested Hyprland config to disable window animations for deterministic managed geometry tests:
   - =animations.enabled = false=
 - Added nested keybind for returning keyboard focus to Emacs quickly from client-control testing:
@@ -789,7 +786,7 @@ Validation:
 - Kill Emacs during both input modes, reconnect, and verify the workspace is usable and re-manageable.
 - Validate mode switch handoff and policy dispatch continue working in a long-lived session where runtime env vars may be absent from plugin process environment.
 
-** NEXT Task 11: Implement explicit hyprmacs layout mode
+** DONE Task 11: Implement explicit hyprmacs layout mode
 Purpose:
 - Replace dependency on native =dwindle= tiling semantics in managed workspaces with an explicit Hyprland layout mode named =hyprmacs=.
 
@@ -802,19 +799,90 @@ Files:
 - Modify =docs/testing/manual-smoke-tests.org=
 
 Steps:
-*** TODO Define the runtime contract for layout mode ownership
+*** DONE Define the runtime contract for layout mode ownership
 - Specify when managed workspaces should expose =tiledLayout= as =hyprmacs=.
 - Define how layout mode is restored on unmanage/disconnect.
-*** TODO Implement layout mode switching in managed lifecycle
+*** DONE Implement layout mode switching in managed lifecycle
 - On =manage-workspace=, set layout mode to =hyprmacs= for that workspace.
 - On =unmanage-workspace= and disconnect cleanup, restore previous layout mode.
-*** TODO Guard managed geometry flow against native tiling fallback
+*** DONE Guard managed geometry flow against native tiling fallback
 - Ensure managed clients are not laid out by dwindle/master rules while managed.
 - Keep native floating/transient behavior unchanged.
-*** TODO Add verification coverage
+*** DONE Add verification coverage
 - Add/extend tests and manual smoke scenarios that assert managed workspace layout mode transitions.
-*** WAIT Review task 11 with user
+*** DONE Run full self-validation before user review
+- Run full automated regression coverage (=make test=) and include new Task 11 tests.
+- Run end-to-end manual validation in the agent's own nested Hyprland instance for both:
+  - regression scenarios from completed tasks
+  - new Task 11 layout-mode behavior (=tiledLayout= transition, strict Emacs ownership, immediate hide-before-layout, restore on unmanage/disconnect)
+- Fix discovered bugs and update tests/docs before requesting the user review checkpoint.
+*** DONE Review task 11 with user
 - Stop when managed workspace reports =tiledLayout: hyprmacs= and restores cleanly on unmanage/disconnect.
+
+*** DONE Session note: Task 11 design constraints locked with user (2026-04-18)
+- Layout ownership model is strict: managed workspaces use explicit =hyprmacs= layout mode and do not allow native fallback tiling for managed clients.
+- New eligible clients must be hidden immediately until Emacs publishes visibility/geometry via =set-layout=.
+- 8A policy constraints are tied to managed-layout ownership, but implementation must remain future-compatible with multi-workspace support:
+  - use a global policy lease manager semantics (acquire on first managed workspace, restore on last release)
+  - avoid per-workspace restore assumptions for global Hyprland options.
+
+*** DONE Session note: Task 11 implementation details (2026-04-18)
+- Workspace manager now snapshots and restores per-workspace tiled layout via =j/workspaces= (fallback =general:layout=) and dispatches:
+  - =keyword workspace <id>,layout:hyprmacs= on manage
+  - =keyword workspace <id>,layout:<previous>= on unmanage/disconnect.
+- Managed policy enforcement moved to lease semantics for future multi-workspace compatibility:
+  - acquire policy snapshot/enforcement on first lease
+  - restore snapshot on final lease release.
+- Plugin now hides managed clients immediately on:
+  - =manage-workspace= (existing managed clients)
+  - transition to managed/tiled state (newly eligible clients while managed).
+- Plugin registers a Hyprland tiled algorithm named =hyprmacs= during plugin init and removes it on plugin exit.
+
+*** DONE Session note: Task 11 verification evidence (2026-04-18)
+- Automated verification:
+  - =just test= (Emacs suites) passed.
+  - =nix develop -c bash -lc 'cd /home/hansffu/code/hyprmacs && make test'= passed (C++ + Emacs suites).
+- Manual nested validation in agent-controlled session:
+  - During active managed controller: =hyprctl -j activeworkspace | jq .tiledLayout= returned =hyprmacs=.
+  - After controller disconnect: same command returned restored layout (=dwindle= in test session).
+  - Existing eligible client moved to =special:hyprmacs-hidden= immediately on manage before layout publication.
+  - Newly opened eligible client while managed was also moved immediately to =special:hyprmacs-hidden=.
+  - On disconnect cleanup, hidden clients returned to workspace =1=.
+
+*** DONE Session note: Task 11 review-feedback fixes (2026-04-18)
+- User reported runtime regressions during Task 11 review:
+  - Emacs-control handoff could target the wrong Emacs frame when multiple Emacs windows existed in the workspace.
+  - Non-managed tiled windows (for example Brave/extra Emacs windows) could overlap and produce confusing render/input behavior under =layout:hyprmacs=.
+- Implemented fixes:
+  - Added tracking for the workspace's managing Emacs frame in =WorkspaceManager= and prioritized it for Emacs-control focus handoff.
+  - Managing Emacs frame selection now remains stable across incidental focus changes and falls back safely if the managing frame closes.
+  - Changed the registered =hyprmacs= tiled algorithm to non-intrusive recalc behavior so compositor layout mode no longer force-overwrites tiled target geometry.
+- Added regression coverage:
+  - workspace-manager test for stable managing-Emacs-frame selection and fallback on close.
+  - IPC route test asserting =set-input-mode(emacs-control)= focuses the tracked managing Emacs frame.
+
+*** DONE Session note: Task 11 additional review-feedback fix (2026-04-18)
+- User reported Emacs state not updating when compositor focus/close changes happened outside Emacs commands (for example click-to-focus and in-app close button).
+- Added workspace-state change notifier path from =WorkspaceManager= to =IpcServer= so managed-workspace state mutations now push =state-dump= to Emacs controller without manual =request-state=.
+- Added regression coverage for focus-change and closewindow event-driven state notifications.
+- Added Emacs-side selected-client activation on inbound =state-dump= / =layout-applied= so when compositor focus changes managed client selection, the corresponding managed buffer window becomes the active Emacs window.
+
+*** DONE Session note: Task 11 follow-mouse policy rollback by user request (2026-04-18)
+- User requested disabling plugin-side =follow_mouse= handling because runtime behavior under =move-only= was inconsistent and they prefer explicit user-owned config.
+- Updated managed workspace policy lease scope:
+  - keep plugin-managed constraints on =animations:enabled= and =misc:focus_on_activate=
+  - stop snapshot/apply/restore of =input:follow_mouse= in plugin lifecycle.
+- Updated workspace-manager regression coverage and manual smoke docs to match this narrowed policy contract.
+
+*** DONE Session note: nested runtime follow-mouse default tuned after live repro (2026-04-18)
+- Live reproduction with logs showed compositor focus flips on mouse movement while a managed client was in positioning mode.
+- In nested debug config, set =input.follow_mouse= to =2= as the default runtime behavior.
+- Reason: with this setting in the reproduced session, hover focus stopped while click-to-focus still worked as expected.
+- Additional live finding: =input.float_switch_override_focus= caused unwanted focus steals in a user instance even with follow-mouse tuned.
+- Nested debug config now also sets:
+  - =input.mouse_refocus = false=
+  - =input.float_switch_override_focus = 0=
+- Plugin still does not manage this option; user config remains the source of truth.
 
 Validation:
 - Manage workspace and verify =hyprctl -j activeworkspace= reports =tiledLayout= as =hyprmacs=.
@@ -833,6 +901,8 @@ Files:
 Steps:
 *** TODO Add a reliable demo entrypoint
 - Provide one command that builds the plugin and launches nested Hyprland with the plugin loaded.
+*** TODO Add dedicated managed-client major mode
+- Introduce =hyprmacs-window-mode= for managed-client buffers and document expected buffer-local behavior/keys for window-backed buffers.
 *** TODO Document the user workflow
 - Explain how to start the demo, load the Emacs package, connect, manage a workspace, and switch modes.
 *** TODO Freeze a smoke-test checklist

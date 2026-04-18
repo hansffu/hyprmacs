@@ -48,3 +48,23 @@
     (should (string-match-p "workspace-id: 1" (buffer-string)))
     (should (string-match-p "managed: t" (buffer-string)))
     (should (string-match-p "associated-buffers:" (buffer-string)))))
+
+(ert-deftest hyprmacs-session-state-dump-selects-window-for-selected-client-buffer ()
+  (hyprmacs-session-reset)
+  (hyprmacs-buffer-reset)
+  (delete-other-windows)
+  (unwind-protect
+      (progn
+        (hyprmacs-session-fake-receive
+         "{\"version\":1,\"type\":\"state-dump\",\"workspace_id\":\"1\",\"timestamp\":\"2026-04-18T12:00:00Z\",\"payload\":{\"managed\":true,\"controller_connected\":true,\"eligible_clients\":[{\"client_id\":\"0xaaa\",\"title\":\"foot-a\",\"app_id\":\"foot\",\"floating\":false},{\"client_id\":\"0xbbb\",\"title\":\"foot-b\",\"app_id\":\"foot\",\"floating\":false}],\"managed_clients\":[\"0xaaa\",\"0xbbb\"],\"selected_client\":\"0xaaa\",\"input_mode\":\"client-control\"}}\n")
+        (let ((left (selected-window))
+              (right (split-window-right)))
+          (set-window-buffer left (hyprmacs-buffer-for-client "0xaaa"))
+          (set-window-buffer right (hyprmacs-buffer-for-client "0xbbb"))
+          (select-window left)
+          (hyprmacs-session-fake-receive
+           "{\"version\":1,\"type\":\"state-dump\",\"workspace_id\":\"1\",\"timestamp\":\"2026-04-18T12:00:01Z\",\"payload\":{\"managed\":true,\"controller_connected\":true,\"eligible_clients\":[{\"client_id\":\"0xaaa\",\"title\":\"foot-a\",\"app_id\":\"foot\",\"floating\":false},{\"client_id\":\"0xbbb\",\"title\":\"foot-b\",\"app_id\":\"foot\",\"floating\":false}],\"managed_clients\":[\"0xaaa\",\"0xbbb\"],\"selected_client\":\"0xbbb\",\"input_mode\":\"client-control\"}}\n")
+          (should (eq (window-buffer (selected-window))
+                      (hyprmacs-buffer-for-client "0xbbb")))))
+    (delete-other-windows)
+    (hyprmacs-buffer-reset)))

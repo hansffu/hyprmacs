@@ -136,6 +136,18 @@ Any existing connection is closed first."
   (setq hyprmacs-session-state
         (plist-put hyprmacs-session-state :last-message-type type)))
 
+(defun hyprmacs-session--activate-selected-client-buffer ()
+  "Focus the Emacs window showing the currently selected managed client buffer.
+If the selected client buffer is visible in any window, select that window.
+If the buffer exists but is not visible, leave window selection unchanged."
+  (let* ((selected-client (plist-get hyprmacs-session-state :selected-client))
+         (buffer (and selected-client
+                      (hyprmacs-buffer-for-client selected-client))))
+    (when (buffer-live-p buffer)
+      (let ((target-window (get-buffer-window buffer t)))
+        (when (window-live-p target-window)
+          (select-window target-window))))))
+
 (defun hyprmacs-session-handle-frame (frame)
   "Handle one inbound protocol FRAME and update session state."  
   (let* ((message (hyprmacs-ipc-decode-message frame))
@@ -162,7 +174,8 @@ Any existing connection is closed first."
       ("layout-applied"
        (setq hyprmacs-session-state
              (plist-put hyprmacs-session-state :selected-client
-                        (alist-get 'selected_client payload nil nil #'equal))))
+                        (alist-get 'selected_client payload nil nil #'equal)))
+       (hyprmacs-session--activate-selected-client-buffer))
       ("mode-changed"
        (setq hyprmacs-session-state
              (plist-put hyprmacs-session-state :input-mode
@@ -196,7 +209,8 @@ Any existing connection is closed first."
        (setq hyprmacs-session-state
              (plist-put hyprmacs-session-state :input-mode
                         (hyprmacs-ipc-mode-from-wire
-                         (alist-get 'input_mode payload nil nil #'equal)))))))
+                         (alist-get 'input_mode payload nil nil #'equal))))
+       (hyprmacs-session--activate-selected-client-buffer))))
   hyprmacs-session-state)
 
 (defun hyprmacs-session--process-filter (_process chunk)

@@ -5,7 +5,9 @@
 #include <optional>
 #include <string>
 #include <array>
+#include <algorithm>
 #include <string_view>
+#include <vector>
 #include <sys/socket.h>
 #include <sys/un.h>
 #include <unistd.h>
@@ -18,6 +20,16 @@
 #if __has_include(<hyprland/src/plugins/PluginAPI.hpp>) && __has_include(<hyprgraphics/color/Color.hpp>)
 #define HYPRMACS_HAS_REAL_PLUGIN_API 1
 #include <hyprland/src/plugins/PluginAPI.hpp>
+#if __has_include(<hyprland/src/layout/algorithm/TiledAlgorithm.hpp>) && __has_include(<hyprland/src/layout/space/Space.hpp>) && \
+    __has_include(<hyprland/src/layout/target/Target.hpp>)
+#define HYPRMACS_CAN_REGISTER_TILED_ALGO 1
+#include <hyprland/src/layout/algorithm/TiledAlgorithm.hpp>
+#include <hyprland/src/layout/algorithm/Algorithm.hpp>
+#include <hyprland/src/layout/space/Space.hpp>
+#include <hyprland/src/layout/target/Target.hpp>
+#else
+#define HYPRMACS_CAN_REGISTER_TILED_ALGO 0
+#endif
 #else
 #define HYPRMACS_HAS_REAL_PLUGIN_API 0
 
@@ -190,6 +202,119 @@ hyprmacs::IpcServer g_ipc_server(&g_workspace_manager, &g_layout_applier, &g_foc
 
 #if HYPRMACS_HAS_REAL_PLUGIN_API
 inline HANDLE PHANDLE = nullptr;
+#if HYPRMACS_CAN_REGISTER_TILED_ALGO
+
+class CHyprmacsAlgorithm final : public Layout::ITiledAlgorithm {
+  public:
+    void newTarget(SP<Layout::ITarget> target) override {
+        if (!target) {
+            return;
+        }
+        const auto it = std::ranges::find_if(m_targets_, [&target](const auto& weak) { return weak.lock() == target; });
+        if (it == m_targets_.end()) {
+            m_targets_.push_back(target);
+        }
+        recalculate();
+    }
+
+    void movedTarget(SP<Layout::ITarget> target, std::optional<Vector2D> focalPoint = std::nullopt) override {
+        (void)focalPoint;
+        newTarget(target);
+    }
+
+    void removeTarget(SP<Layout::ITarget> target) override {
+        std::erase_if(m_targets_, [&target](const auto& weak) { return !weak.lock() || weak.lock() == target; });
+        recalculate();
+    }
+
+    void resizeTarget(const Vector2D& delta, SP<Layout::ITarget> target, Layout::eRectCorner corner = Layout::CORNER_NONE) override {
+        (void)delta;
+        (void)target;
+        (void)corner;
+    }
+
+    void recalculate() override {
+        compact();
+        // Keep this layout non-intrusive: hyprmacs-managed client geometry is
+        // controlled by LayoutApplier, and we avoid compositor-side fallback
+        // tiling mutations that can cause overlap/input confusion.
+    }
+
+    SP<Layout::ITarget> getNextCandidate(SP<Layout::ITarget> old) override {
+        compact();
+        if (m_targets_.empty()) {
+            return nullptr;
+        }
+
+        size_t old_index = 0;
+        bool found = false;
+        for (size_t i = 0; i < m_targets_.size(); ++i) {
+            if (m_targets_[i].lock() == old) {
+                old_index = i;
+                found = true;
+                break;
+            }
+        }
+
+        if (!found) {
+            return m_targets_.front().lock();
+        }
+
+        const size_t next = (old_index + 1) % m_targets_.size();
+        return m_targets_[next].lock();
+    }
+
+    std::expected<void, std::string> layoutMsg(const std::string_view& sv) override {
+        (void)sv;
+        return {};
+    }
+
+    std::optional<Vector2D> predictSizeForNewTarget() override {
+        return std::nullopt;
+    }
+
+    void swapTargets(SP<Layout::ITarget> a, SP<Layout::ITarget> b) override {
+        if (!a || !b) {
+            return;
+        }
+        size_t ia = m_targets_.size();
+        size_t ib = m_targets_.size();
+        for (size_t i = 0; i < m_targets_.size(); ++i) {
+            const auto current = m_targets_[i].lock();
+            if (current == a) {
+                ia = i;
+            } else if (current == b) {
+                ib = i;
+            }
+        }
+        if (ia < m_targets_.size() && ib < m_targets_.size()) {
+            std::swap(m_targets_[ia], m_targets_[ib]);
+        }
+        recalculate();
+    }
+
+    void moveTargetInDirection(SP<Layout::ITarget> target, Math::eDirection direction, bool silent) override {
+        (void)target;
+        (void)direction;
+        (void)silent;
+    }
+
+  private:
+    void compact() {
+        std::erase_if(m_targets_, [](const auto& weak) { return !weak.lock(); });
+    }
+
+    std::vector<WP<Layout::ITarget>> m_targets_;
+};
+
+bool g_hyprmacs_layout_registered = false;
+
+std::function<UP<Layout::ITiledAlgorithm>()> make_hyprmacs_tiled_factory() {
+    return [] {
+        return makeUnique<CHyprmacsAlgorithm>();
+    };
+}
+#endif
 
 APICALL EXPORT std::string PLUGIN_API_VERSION() {
     return HYPRLAND_API_VERSION;
@@ -211,6 +336,23 @@ APICALL EXPORT PLUGIN_DESCRIPTION_INFO PLUGIN_INIT(HANDLE handle) {
         );
     }
 
+#if HYPRMACS_CAN_REGISTER_TILED_ALGO
+    g_hyprmacs_layout_registered = HyprlandAPI::addTiledAlgo(
+        PHANDLE,
+        "hyprmacs",
+        &typeid(CHyprmacsAlgorithm),
+        make_hyprmacs_tiled_factory()
+    );
+    if (!g_hyprmacs_layout_registered) {
+        HyprlandAPI::addNotification(
+            PHANDLE,
+            "[hyprmacs] failed to register hyprmacs tiled layout",
+            CHyprColor {1.0, 0.2, 0.2, 1.0},
+            5000
+        );
+    }
+#endif
+
     g_workspace_manager.start_event_tap();
     g_ipc_server.start();
 
@@ -225,6 +367,12 @@ APICALL EXPORT PLUGIN_DESCRIPTION_INFO PLUGIN_INIT(HANDLE handle) {
 }
 
 APICALL EXPORT void PLUGIN_EXIT() {
+#if HYPRMACS_CAN_REGISTER_TILED_ALGO
+    if (g_hyprmacs_layout_registered) {
+        (void)HyprlandAPI::removeAlgo(PHANDLE, "hyprmacs");
+        g_hyprmacs_layout_registered = false;
+    }
+#endif
     g_ipc_server.stop();
     g_workspace_manager.stop_event_tap();
 }

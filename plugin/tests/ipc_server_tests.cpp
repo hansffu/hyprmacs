@@ -41,6 +41,28 @@ bool test_route_manage_workspace() {
     return ok;
 }
 
+bool test_route_manage_workspace_hides_existing_managed_clients() {
+    hyprmacs::WorkspaceManager manager;
+    auto applier = make_noop_applier();
+    manager.process_event_for_tests("openwindowv2>>0xaaa,1,foot,foot-a");
+    manager.process_event_for_tests("openwindowv2>>0xbbb,1,foot,foot-b");
+
+    const hyprmacs::ProtocolMessage incoming {
+        .version = 1,
+        .type = "manage-workspace",
+        .workspace_id = "1",
+        .timestamp = "2026-04-18T00:00:00Z",
+        .payload_json = "{\"adopt_existing_clients\":true}",
+    };
+
+    const auto responses = hyprmacs::route_command_for_tests(incoming, manager, applier);
+    bool ok = true;
+    ok &= expect(responses.size() == 2, "manage-workspace should produce two responses");
+    ok &= expect(applier.is_hidden("0xaaa"), "manage-workspace should hide existing managed client 0xaaa");
+    ok &= expect(applier.is_hidden("0xbbb"), "manage-workspace should hide existing managed client 0xbbb");
+    return ok;
+}
+
 bool test_route_unmanage_workspace() {
     hyprmacs::WorkspaceManager manager;
     auto applier = make_noop_applier();
@@ -179,6 +201,37 @@ bool test_route_set_input_mode_updates_state_dump() {
             }
         }
     }
+    return ok;
+}
+
+bool test_route_set_input_mode_emacs_control_focuses_managing_frame() {
+    hyprmacs::WorkspaceManager manager;
+    auto applier = make_noop_applier();
+    std::string focused_command;
+    hyprmacs::FocusController focus_controller([&focused_command](const std::string& command) {
+        focused_command = command;
+        return 0;
+    });
+
+    manager.process_event_for_tests("openwindowv2>>0xeee,1,emacs,emacs-primary");
+    manager.process_event_for_tests("openwindowv2>>0xfff,1,emacs,emacs-secondary");
+    manager.process_event_for_tests("activewindowv2>>0xfff");
+    manager.manage_workspace("1");
+    manager.process_event_for_tests("activewindowv2>>0xeee");
+
+    const hyprmacs::ProtocolMessage incoming {
+        .version = 1,
+        .type = "set-input-mode",
+        .workspace_id = "1",
+        .timestamp = "2026-04-18T00:00:00Z",
+        .payload_json = "{\"mode\":\"emacs-control\"}",
+    };
+
+    const auto responses = hyprmacs::route_command_for_tests(incoming, manager, applier, &focus_controller);
+    bool ok = true;
+    ok &= expect(responses.size() == 2, "set-input-mode should produce two responses");
+    ok &= expect(focused_command == "dispatch focuswindow address:0xfff",
+                 "emacs-control should focus the managing emacs frame");
     return ok;
 }
 
@@ -386,11 +439,13 @@ bool test_route_unknown_type_returns_protocol_error() {
 int main() {
     bool ok = true;
     ok &= test_route_manage_workspace();
+    ok &= test_route_manage_workspace_hides_existing_managed_clients();
     ok &= test_route_unmanage_workspace();
     ok &= test_route_request_state();
     ok &= test_route_debug_hide_show();
     ok &= test_route_set_selected_client_hides_non_selected();
     ok &= test_route_set_input_mode_updates_state_dump();
+    ok &= test_route_set_input_mode_emacs_control_focuses_managing_frame();
     ok &= test_route_seed_client_adopts_existing_window();
     ok &= test_route_set_layout_applies_visibility_and_geometry();
     ok &= test_route_set_layout_rejects_overlapping_rectangles();

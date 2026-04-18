@@ -7,9 +7,11 @@
 #include <string>
 #include <string_view>
 #include <thread>
+#include <unordered_set>
 #include <unordered_map>
 
 #include "hyprmacs/client_registry.hpp"
+#include "hyprmacs/client_classifier.hpp"
 #include "hyprmacs/plugin_state.hpp"
 
 namespace hyprmacs {
@@ -27,6 +29,7 @@ class WorkspaceManager {
     using DispatchExecutor = std::function<int(const std::string&)>;
     using QueryExecutor = std::function<std::optional<std::string>(const std::string&)>;
     using ClientTransitionNotifier = std::function<void(const WorkspaceId&, const ClientId&, bool)>;
+    using StateChangeNotifier = std::function<void(const WorkspaceId&)>;
 
     WorkspaceManager();
     explicit WorkspaceManager(DispatchExecutor dispatch_executor, QueryExecutor query_executor = {});
@@ -50,24 +53,31 @@ class WorkspaceManager {
     std::optional<ClientId> selected_managed_client(const WorkspaceId& workspace_id) const;
     std::optional<ClientId> emacs_client(const WorkspaceId& workspace_id) const;
     void set_client_transition_notifier(ClientTransitionNotifier notifier);
+    void set_state_change_notifier(StateChangeNotifier notifier);
     void set_controller_connected(bool connected);
     StateDumpPayload build_state_dump(const WorkspaceId& workspace_id) const;
     void process_event_for_tests(const std::string& line);
 
   private:
     struct PolicySnapshot {
-        std::optional<int> follow_mouse;
         std::optional<int> animations_enabled;
         std::optional<int> focus_on_activate;
     };
 
     static std::optional<int> parse_int_field(std::string_view json, std::string_view key);
     std::optional<int> query_option_int_locked(std::string_view option_name) const;
+    std::optional<std::string> query_option_string_locked(std::string_view option_name) const;
     std::optional<bool> query_client_floating_locked(std::string_view client_id) const;
+    std::optional<std::string> query_workspace_tiled_layout_locked(std::string_view workspace_id) const;
     bool dispatch_keyword_locked(std::string_view key, std::string_view value) const;
+    std::optional<ClientId> find_emacs_client_locked(const WorkspaceId& workspace_id) const;
+    void refresh_managing_emacs_client_locked();
+
+    void apply_managed_layout_locked(const WorkspaceId& workspace_id);
+    void restore_managed_layout_locked(const WorkspaceId& workspace_id);
     void capture_policy_snapshot_locked();
-    void apply_managed_policy_locked();
-    void restore_policy_locked();
+    void acquire_managed_policy_lease_locked();
+    void release_managed_policy_lease_locked();
 
     void event_loop();
     void handle_line(const std::string& line);
@@ -82,12 +92,17 @@ class WorkspaceManager {
     ClientRegistry client_registry_;
     std::optional<WorkspaceId> managed_workspace_id_;
     std::optional<InputMode> input_mode_;
+    std::optional<ClientId> last_active_client_id_;
     bool controller_connected_ = false;
-    bool policy_applied_ = false;
+    size_t policy_lease_count_ = 0;
     PolicySnapshot policy_snapshot_;
+    std::unordered_map<WorkspaceId, std::string> workspace_layout_snapshot_;
+    std::unordered_set<ClientId> managed_client_seen_;
+    std::optional<ClientId> managing_emacs_client_id_;
     DispatchExecutor dispatch_executor_;
     QueryExecutor query_executor_;
     ClientTransitionNotifier client_transition_notifier_;
+    StateChangeNotifier state_change_notifier_;
 };
 
 }  // namespace hyprmacs

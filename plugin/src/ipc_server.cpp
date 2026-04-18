@@ -414,10 +414,12 @@ std::vector<ProtocolMessage> route_command_for_tests(
 
     if (incoming.type == "manage-workspace") {
         workspace_manager.manage_workspace(incoming.workspace_id);
+        const auto state = workspace_manager.build_state_dump(incoming.workspace_id);
+        for (const auto& managed_client : state.managed_clients) {
+            (void)layout_applier.hide_client(managed_client, incoming.workspace_id);
+        }
         out.push_back(make_message("workspace-managed", incoming.workspace_id, payload_for_workspace_managed(true)));
-        out.push_back(make_message(
-            "state-dump", incoming.workspace_id, serialize_state_dump_payload(workspace_manager.build_state_dump(incoming.workspace_id))
-        ));
+        out.push_back(make_message("state-dump", incoming.workspace_id, serialize_state_dump_payload(state)));
         return out;
     }
 
@@ -629,12 +631,18 @@ IpcServer::IpcServer(WorkspaceManager* workspace_manager, LayoutApplier* layout_
                 on_client_transition(workspace_id, client_id, floating);
             }
         );
+        workspace_manager_->set_state_change_notifier(
+            [this](const WorkspaceId& workspace_id) {
+                on_workspace_state_changed(workspace_id);
+            }
+        );
     }
 }
 
 IpcServer::~IpcServer() {
     if (workspace_manager_ != nullptr) {
         workspace_manager_->set_client_transition_notifier({});
+        workspace_manager_->set_state_change_notifier({});
     }
     stop();
 }
@@ -871,8 +879,25 @@ void IpcServer::on_client_transition(const WorkspaceId& workspace_id, const Clie
         return;
     }
 
+    if (!floating && layout_applier_ != nullptr) {
+        (void)layout_applier_->hide_client(client_id, workspace_id);
+    }
+
     const char* type = floating ? "client-became-floating" : "client-became-tiled";
     send_message(fd, make_message(type, workspace_id, payload_for_client_transition(client_id, floating)));
+    send_message(fd, make_message("state-dump", workspace_id, serialize_state_dump_payload(workspace_manager_->build_state_dump(workspace_id))));
+}
+
+void IpcServer::on_workspace_state_changed(const WorkspaceId& workspace_id) {
+    int fd = -1;
+    {
+        std::scoped_lock lock(controller_mutex_);
+        fd = controller_fd_;
+    }
+    if (!running_.load() || fd < 0 || workspace_manager_ == nullptr) {
+        return;
+    }
+
     send_message(fd, make_message("state-dump", workspace_id, serialize_state_dump_payload(workspace_manager_->build_state_dump(workspace_id))));
 }
 

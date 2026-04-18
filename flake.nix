@@ -97,7 +97,9 @@
 
           input {
             kb_layout = no
-            follow_mouse = 0
+            follow_mouse = 2
+            mouse_refocus = false
+            float_switch_override_focus = 0
           }
 
           animations {
