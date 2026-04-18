@@ -708,8 +708,13 @@ This covers the implemented runtime contract through Task 11."
                (wait-managed-membership close-target nil)
                path "closed client removed from managed set"))
 
-        (hyprmacs-set-emacs-control-mode workspace-id)
-        (hyprmacs--wait-seconds 0.25)
+        (pcase-let ((`(:exit ,dispatcher-exit :out ,dispatcher-out)
+                     (hyprmacs--run-command "hyprctl dispatch hyprmacs:set-emacs-control-mode")))
+          (append-to-file (format "dispatcher-set-emacs-control-out:\n%s\n" dispatcher-out) nil path)
+          (hyprmacs--e2e-assert
+           (zerop dispatcher-exit)
+           path "dispatcher hyprmacs:set-emacs-control-mode succeeds"))
+        (hyprmacs--wait-seconds 0.35)
             (refresh-state)
         (hyprmacs--e2e-assert
          (eq (plist-get hyprmacs-session-state :input-mode) 'emacs-control)

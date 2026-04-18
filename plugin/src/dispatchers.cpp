@@ -23,7 +23,6 @@ std::string trim_copy(const std::string& text) {
 DispatcherOutcome dispatch_set_emacs_control_mode(
     const std::string& arg,
     WorkspaceManager& workspace_manager,
-    FocusController& focus_controller,
     ActiveWorkspaceResolver active_workspace_resolver
 ) {
     DispatcherOutcome out;
@@ -47,11 +46,7 @@ DispatcherOutcome dispatch_set_emacs_control_mode(
         return out;
     }
 
-    const auto emacs_client = workspace_manager.emacs_client(*out.workspace_id);
-    if (emacs_client.has_value() && !focus_controller.focus_client(*emacs_client)) {
-        out.error = "failed to focus managing emacs client";
-        return out;
-    }
+    out.focus_client_id = workspace_manager.emacs_client(*out.workspace_id);
 
     out.success = true;
     return out;

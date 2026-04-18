@@ -1042,12 +1042,12 @@ Steps:
 - Register one or more hyprmacs dispatchers via Hyprland plugin API.
 - Implement at minimum =hyprmacs:set-emacs-control-mode=.
 *** DONE Bridge dispatcher to existing workspace control path
-- Resolve target workspace from active compositor context when possible.
+- Resolve target workspace from dispatcher arg (fallback to managed workspace in current single-workspace prototype).
 - Route dispatcher action into existing input-mode handling (=set-input-mode emacs-control= equivalent behavior).
 *** DONE Wire nested config keybind
 - Bind =ALT+E= in nested Hyprland config to call the new dispatcher.
 *** DONE Add regression tests
-- Validate dispatcher command updates mode and focuses managing Emacs frame.
+- Validate dispatcher command updates mode and returns focus to managing Emacs frame without hanging Hyprland IPC.
 - Keep current IPC command-path tests green.
 *** WAIT Review task 13 with user
 - Validate real interactive handoff: client-control -> =ALT+E= -> emacs-control focus return.
@@ -1079,6 +1079,30 @@ Validation:
 - Latest nested harness artifact bundle:
   - =artifacts/e2e/20260419-003841/summary.log=
   - =artifacts/e2e/20260419-003841/session-e2e.log=
+
+*** DONE Session note: Task 13 review bugfix for =ALT+E= input handoff hang (2026-04-19)
+- User review reported reproducer:
+  - =client-control= via =C-c C-c= in managed buffer works
+  - =ALT+E= makes all input appear dead.
+- Root cause identified:
+  - Dispatcher callback executed synchronous socket-based =hyprctl dispatch/query= from inside Hyprland dispatcher thread, causing IPC timeout/hang (for example: =Hyprland IPC didn't respond in time=).
+- Fix implemented:
+  - Refactored dispatcher contract to only set mode and return optional focus target.
+  - Removed synchronous socket query for active workspace from dispatcher callback path.
+  - Dispatcher callback now:
+    - resolves workspace via dispatcher arg or managed-workspace fallback
+    - sets input mode to =emacs-control=
+    - schedules focus to managing Emacs client asynchronously after callback return.
+- Regression coverage added:
+  - Nested e2e now explicitly asserts =hyprctl dispatch hyprmacs:set-emacs-control-mode= succeeds.
+  - Direct scripted repro confirms:
+    - active window =foot= in client-control
+    - dispatcher returns =ok=
+    - active window returns to managing =emacs= client.
+- Verification evidence:
+  - =just e2e= PASS with new dispatcher assertion:
+    - =artifacts/e2e/20260419-005640/summary.log=
+    - =artifacts/e2e/20260419-005640/session-e2e.log=
 
 ** TODO Task 14: Package the prototype, document usage, and freeze the first demo flow
 Purpose:

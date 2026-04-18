@@ -4,7 +4,6 @@
 #include <optional>
 #include <string>
 
-#include "hyprmacs/focus_controller.hpp"
 #include "hyprmacs/workspace_manager.hpp"
 
 namespace {
@@ -16,13 +15,8 @@ bool expect(bool cond, const char* message) {
     return cond;
 }
 
-bool test_dispatcher_sets_emacs_control_and_focuses_emacs() {
+bool test_dispatcher_sets_emacs_control_and_reports_emacs_focus_target() {
     hyprmacs::WorkspaceManager manager;
-    std::string focused_command;
-    hyprmacs::FocusController focus_controller([&focused_command](const std::string& command) {
-        focused_command = command;
-        return 0;
-    });
 
     manager.process_event_for_tests("openwindowv2>>0xeee,1,emacs,emacs-primary");
     manager.process_event_for_tests("openwindowv2>>0xaaa,1,foot,foot-a");
@@ -31,7 +25,7 @@ bool test_dispatcher_sets_emacs_control_and_focuses_emacs() {
     manager.set_input_mode("1", hyprmacs::InputMode::kClientControl);
 
     const auto outcome =
-        hyprmacs::dispatch_set_emacs_control_mode("", manager, focus_controller, []() -> std::optional<std::string> {
+        hyprmacs::dispatch_set_emacs_control_mode("", manager, []() -> std::optional<std::string> {
             return "1";
         });
 
@@ -39,8 +33,8 @@ bool test_dispatcher_sets_emacs_control_and_focuses_emacs() {
     ok &= expect(outcome.success, "dispatcher should succeed for managed workspace");
     ok &= expect(outcome.workspace_id.has_value() && *outcome.workspace_id == "1",
                  "dispatcher should report workspace 1");
-    ok &= expect(focused_command == "dispatch focuswindow address:0xeee",
-                 "dispatcher should focus managing emacs client");
+    ok &= expect(outcome.focus_client_id.has_value() && *outcome.focus_client_id == "0xeee",
+                 "dispatcher should report managing emacs client focus target");
 
     const auto state = manager.build_state_dump("1");
     ok &= expect(state.input_mode.has_value() && *state.input_mode == hyprmacs::InputMode::kEmacsControl,
@@ -50,13 +44,10 @@ bool test_dispatcher_sets_emacs_control_and_focuses_emacs() {
 
 bool test_dispatcher_fails_for_unmanaged_workspace_argument() {
     hyprmacs::WorkspaceManager manager;
-    hyprmacs::FocusController focus_controller([](const std::string&) {
-        return 0;
-    });
     manager.manage_workspace("1");
 
     const auto outcome =
-        hyprmacs::dispatch_set_emacs_control_mode("2", manager, focus_controller, []() -> std::optional<std::string> {
+        hyprmacs::dispatch_set_emacs_control_mode("2", manager, []() -> std::optional<std::string> {
             return "1";
         });
 
@@ -69,17 +60,12 @@ bool test_dispatcher_fails_for_unmanaged_workspace_argument() {
 
 bool test_dispatcher_falls_back_to_managed_workspace() {
     hyprmacs::WorkspaceManager manager;
-    std::string focused_command;
-    hyprmacs::FocusController focus_controller([&focused_command](const std::string& command) {
-        focused_command = command;
-        return 0;
-    });
 
     manager.process_event_for_tests("openwindowv2>>0xeee,1,emacs,emacs-primary");
     manager.process_event_for_tests("activewindowv2>>0xeee");
     manager.manage_workspace("1");
 
-    const auto outcome = hyprmacs::dispatch_set_emacs_control_mode("", manager, focus_controller, []() -> std::optional<std::string> {
+    const auto outcome = hyprmacs::dispatch_set_emacs_control_mode("", manager, []() -> std::optional<std::string> {
         return std::nullopt;
     });
 
@@ -87,7 +73,21 @@ bool test_dispatcher_falls_back_to_managed_workspace() {
     ok &= expect(outcome.success, "dispatcher should fall back to managed workspace");
     ok &= expect(outcome.workspace_id.has_value() && *outcome.workspace_id == "1",
                  "fallback workspace should be managed workspace");
-    ok &= expect(!focused_command.empty(), "dispatcher should attempt focus for managing emacs client");
+    ok &= expect(outcome.focus_client_id.has_value() && *outcome.focus_client_id == "0xeee",
+                 "fallback should report managing emacs client focus target");
+    return ok;
+}
+
+bool test_dispatcher_fails_without_target_workspace() {
+    hyprmacs::WorkspaceManager manager;
+    const auto outcome = hyprmacs::dispatch_set_emacs_control_mode("", manager, []() -> std::optional<std::string> {
+        return std::nullopt;
+    });
+
+    bool ok = true;
+    ok &= expect(!outcome.success, "dispatcher should fail without explicit, active, or managed workspace");
+    ok &= expect(outcome.error == "no target workspace resolved",
+                 "dispatcher should report missing workspace resolution");
     return ok;
 }
 
@@ -95,8 +95,9 @@ bool test_dispatcher_falls_back_to_managed_workspace() {
 
 int main() {
     bool ok = true;
-    ok &= test_dispatcher_sets_emacs_control_and_focuses_emacs();
+    ok &= test_dispatcher_sets_emacs_control_and_reports_emacs_focus_target();
     ok &= test_dispatcher_fails_for_unmanaged_workspace_argument();
     ok &= test_dispatcher_falls_back_to_managed_workspace();
+    ok &= test_dispatcher_fails_without_target_workspace();
     return ok ? 0 : 1;
 }

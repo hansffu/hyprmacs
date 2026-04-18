@@ -6,7 +6,9 @@
 #include <string>
 #include <array>
 #include <algorithm>
+#include <chrono>
 #include <string_view>
+#include <thread>
 #include <vector>
 #include <cctype>
 #include <sys/socket.h>
@@ -185,42 +187,6 @@ int dispatch_hypr_command_via_socket(const std::string& command) {
     return 0;
 }
 
-std::optional<std::string> query_active_workspace_id_via_socket() {
-    const auto reply_opt = send_hypr_command_via_socket("j/activeworkspace");
-    if (!reply_opt.has_value()) {
-        return std::nullopt;
-    }
-
-    const std::string& json = *reply_opt;
-    const std::string token = "\"id\"";
-    const size_t key_pos = json.find(token);
-    if (key_pos == std::string::npos) {
-        return std::nullopt;
-    }
-    const size_t colon = json.find(':', key_pos + token.size());
-    if (colon == std::string::npos) {
-        return std::nullopt;
-    }
-    size_t value_start = colon + 1;
-    while (value_start < json.size() && std::isspace(static_cast<unsigned char>(json[value_start])) != 0) {
-        ++value_start;
-    }
-    if (value_start >= json.size()) {
-        return std::nullopt;
-    }
-    size_t value_end = value_start;
-    if (json[value_end] == '-') {
-        ++value_end;
-    }
-    while (value_end < json.size() && std::isdigit(static_cast<unsigned char>(json[value_end])) != 0) {
-        ++value_end;
-    }
-    if (value_end == value_start || (value_end == value_start + 1 && json[value_start] == '-')) {
-        return std::nullopt;
-    }
-    return json.substr(value_start, value_end - value_start);
-}
-
 hyprmacs::WorkspaceManager g_workspace_manager(
     [](const std::string& command) {
         return dispatch_hypr_command_via_socket(command);
@@ -396,14 +362,14 @@ APICALL EXPORT PLUGIN_DESCRIPTION_INFO PLUGIN_INIT(HANDLE handle) {
         PHANDLE,
         "hyprmacs:set-emacs-control-mode",
         [](std::string arg) -> SDispatchResult {
-            const auto outcome = hyprmacs::dispatch_set_emacs_control_mode(
-                arg,
-                g_workspace_manager,
-                g_focus_controller,
-                []() {
-                    return query_active_workspace_id_via_socket();
-                }
-            );
+            const auto outcome = hyprmacs::dispatch_set_emacs_control_mode(arg, g_workspace_manager);
+            if (outcome.success && outcome.focus_client_id.has_value()) {
+                const auto focus_target = *outcome.focus_client_id;
+                std::thread([focus_target]() {
+                    std::this_thread::sleep_for(std::chrono::milliseconds(1));
+                    (void)g_focus_controller.focus_client(focus_target);
+                }).detach();
+            }
             if (outcome.workspace_id.has_value()) {
                 g_ipc_server.publish_state_dump_for_workspace(*outcome.workspace_id);
             }
