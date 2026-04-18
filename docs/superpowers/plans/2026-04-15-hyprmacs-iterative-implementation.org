@@ -1117,7 +1117,7 @@ Validation:
   - Nested e2e expects managed client removal after kill request and subsequent close event/state update.
   - Manual smoke checklist documents kill-buffer closes client behavior.
 
-** TODO Task 14: Package the prototype, document usage, and freeze the first demo flow
+** NEXT Task 14: Package the prototype, document usage, and freeze the first demo flow
 Purpose:
 - Make the prototype repeatable and easy to evaluate.
 
@@ -1128,17 +1128,26 @@ Files:
 - Modify =docs/testing/manual-smoke-tests.org=
 
 Steps:
-*** TODO Add a reliable demo entrypoint
+*** DONE Add a reliable demo entrypoint
 - Provide one command that builds the plugin and launches nested Hyprland with the plugin loaded.
-*** TODO Document the user workflow
+*** DONE Document the user workflow
 - Explain how to start the demo, load the Emacs package, connect, manage a workspace, and switch modes.
-*** TODO Freeze a smoke-test checklist
+*** DONE Freeze a smoke-test checklist
 - Record the exact scenarios that must pass before any future refactor is considered safe.
 *** WAIT Review task 14 with user
 - Use this checkpoint to decide whether to continue toward polish work or pause after the first usable prototype.
 
 Validation:
 - Follow =README.org= from a clean shell and reproduce the demo without manual patching.
+
+*** DONE Session note: Task 14 implementation for packaging/docs/demo flow (2026-04-19)
+- Added a stable demo entrypoint alias in flake outputs:
+  - =nix run .#demo= (mapped to nested Hyprland launcher with plugin preloaded).
+- Added prototype operator documentation:
+  - =README.org= with quick-start, controls, semantics, and verification pointers.
+  - =docs/testing/demo-script.org= with step-by-step demo script.
+- Froze prototype gate checklist in:
+  - =docs/testing/manual-smoke-tests.org= under =Prototype Gate Checklist=.
 
 * Execution Order
 - Start with task 0 and task 1 only.

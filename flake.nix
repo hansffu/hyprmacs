@@ -176,11 +176,16 @@
       in
       {
         packages.default = runNested;
+        packages.demo = runNested;
         packages.codex-sandbox = codex-sandbox;
         packages.hyprmacs-plugin = hyprmacsPlugin;
         packages.hyprmacs-load = hyprmacsLoad;
 
         apps.default = {
+          type = "app";
+          program = "${runNested}/bin/run-nested-hyprland-debug";
+        };
+        apps.demo = {
           type = "app";
           program = "${runNested}/bin/run-nested-hyprland-debug";
         };

@@ -197,3 +197,29 @@ Quick manual checks for each prototype checkpoint in the nested Hyprland environ
 * Notes
 - Task 6 uses temporary debug commands and a special workspace (=special:hyprmacs-hidden=) for hide/restore.
 - This is a spike path and may change before layout integration.
+
+* Prototype Gate Checklist
+These scenarios are required before prototype-significant refactors are accepted:
+
+- Nested demo boot:
+  - =nix run .#demo= starts nested Hyprland with plugin loaded.
+- Manage/unmanage:
+  - Emacs can manage current workspace and restore previous layout on unmanage.
+- Discovery:
+  - Existing eligible tiled clients are discovered and represented in =*hyprmacs-state*=.
+- Selection + visibility:
+  - Selecting managed buffers updates visible managed clients.
+  - Hide/show semantics remain stable across layout sync.
+- Input mode handoff:
+  - managed buffer =C-c C-c= enters client-control.
+  - =ALT+E= dispatcher returns emacs-control without focus deadlock.
+- Geometry sync:
+  - set-layout updates size and position (including minibuffer/Vertico perturbations) without drift.
+- Kill interception:
+  - killing a managed buffer requests compositor close and does not immediately destroy buffer.
+  - buffer/client are removed when compositor confirms close.
+- Floating/native behavior:
+  - true floating/dialog/popup windows remain native and are not forced into managed layout.
+- Regression suite:
+  - =just test= passes.
+  - =just e2e= passes.

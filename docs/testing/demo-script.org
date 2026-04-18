@@ -1,0 +1,60 @@
+#+title: hyprmacs Demo Script
+
+* Purpose
+Provide a repeatable operator flow for showing the first usable hyprmacs prototype.
+
+* Demo Flow
+** 1. Start nested demo
+From repo root:
+
+#+begin_src sh
+nix run .#demo
+#+end_src
+
+** 2. Open clients in nested Hyprland
+- ~ALT+Return~ -> open first ~foot~ terminal.
+- ~ALT+Return~ again -> open second ~foot~ terminal.
+
+** 3. Start Emacs in first terminal
+Run:
+
+#+begin_src sh
+just emacs
+#+end_src
+
+** 4. Manage workspace
+In Emacs:
+- ~M-x hyprmacs-manage-current-workspace~
+- ~M-x hyprmacs-request-state~
+- ~M-x hyprmacs-open-state-buffer~
+
+Expected:
+- Workspace is managed.
+- At least one eligible/managed client is visible in ~*hyprmacs-state*~.
+
+** 5. Switch input modes
+- In managed buffer: press ~C-c C-c~ to enter client-control.
+- Type in client to verify client input ownership.
+- Press ~ALT+E~ to return to emacs-control.
+
+Expected:
+- Focus and input return to Emacs.
+- State buffer shows ~input-mode: emacs-control~.
+
+** 6. Validate kill interception behavior
+In a managed buffer:
+- Run ~M-x kill-current-buffer~.
+
+Expected:
+- hyprmacs requests close for the corresponding client.
+- Buffer is not immediately killed if app close is pending.
+- Once client closes, it disappears from managed set and buffer is removed.
+
+* Notes
+- Nested keybinds:
+  - ~ALT+Return~ open terminal
+  - ~ALT+Q~ close active window
+  - ~ALT+E~ dispatcher return to emacs-control
+  - ~ALT+Shift+E~ exit nested Hyprland
+- For deeper coverage, run all items in ~docs/testing/manual-smoke-tests.org~.
+
