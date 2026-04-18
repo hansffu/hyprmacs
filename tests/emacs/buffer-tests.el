@@ -42,7 +42,8 @@
       (hyprmacs-buffer-reset))))
 
 (ert-deftest hyprmacs-buffer-recreate-after-kill ()
-  (let ((buffer (hyprmacs-buffer-ensure-for-client "0x123" "foot")))
+  (let ((hyprmacs-window-close-on-buffer-kill nil)
+        (buffer (hyprmacs-buffer-ensure-for-client "0x123" "foot")))
     (unwind-protect
         (progn
           (kill-buffer buffer)
@@ -73,9 +74,13 @@
            (push (list client-id workspace-id) calls)
            t)))
     (let ((buffer (hyprmacs-buffer-ensure-for-client "0xabc" "foot" "shell" "1")))
-      (kill-buffer buffer)
+      (should-not (kill-buffer buffer))
       (should (equal calls '(("0xabc" "1"))))
-      (should-not (hyprmacs-buffer-for-client "0xabc"))
+      (should (buffer-live-p buffer))
+      (should (eq (hyprmacs-buffer-for-client "0xabc") buffer))
+      (with-current-buffer buffer
+        (setq-local hyprmacs--suppress-close-on-kill t))
+      (kill-buffer buffer)
       (hyprmacs-buffer-reset))))
 
 (ert-deftest hyprmacs-buffer-remove-client-does-not-close-window ()

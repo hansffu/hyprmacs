@@ -99,18 +99,28 @@ Functions receive: NEW-MODE OLD-MODE.")
           (and (integerp rc) (zerop rc)))
       (error nil))))
 
+(defun hyprmacs-window-mode--kill-buffer-query ()
+  "Intercept managed-buffer kill and request client close.
+Returns non-nil to allow normal kill to continue, nil to cancel."
+  (if (or hyprmacs--suppress-close-on-kill
+          (not hyprmacs-window-close-on-buffer-kill)
+          (not (stringp hyprmacs-client-id))
+          (string-empty-p hyprmacs-client-id)
+          (not (functionp hyprmacs-window-close-client-function)))
+      t
+    (let ((closed (ignore-errors
+                    (funcall hyprmacs-window-close-client-function
+                             hyprmacs-client-id
+                             hyprmacs-workspace-id))))
+      ;; On successful close request, keep buffer alive until the compositor
+      ;; reports the client is actually gone.
+      (not closed))))
+
 (defun hyprmacs-window-mode--kill-buffer-hook ()
-  "Close the managed client when a managed buffer is killed by the user."
+  "Cleanup mapping when a managed buffer is really killed."
   (when (and (stringp hyprmacs-client-id)
              (not (string-empty-p hyprmacs-client-id)))
-    (remhash hyprmacs-client-id hyprmacs-buffer-table)
-    (when (and hyprmacs-window-close-on-buffer-kill
-               (not hyprmacs--suppress-close-on-kill)
-               (functionp hyprmacs-window-close-client-function))
-      (ignore-errors
-        (funcall hyprmacs-window-close-client-function
-                 hyprmacs-client-id
-                 hyprmacs-workspace-id)))))
+    (remhash hyprmacs-client-id hyprmacs-buffer-table)))
 
 (defun hyprmacs-window-default-rename-function (_client-id app-id title _workspace-id)
   "Return default managed buffer name for APP-ID and TITLE."
@@ -140,6 +150,7 @@ Functions receive: NEW-MODE OLD-MODE.")
 (define-derived-mode hyprmacs-window-mode fundamental-mode "Hyprmacs"
   "Major mode for buffers associated with managed Hyprland clients."
   (setq-local mode-name (hyprmacs-window-mode--mode-name))
+  (add-hook 'kill-buffer-query-functions #'hyprmacs-window-mode--kill-buffer-query nil t)
   (add-hook 'kill-buffer-hook #'hyprmacs-window-mode--kill-buffer-hook nil t))
 
 (defun hyprmacs-window-mode-refresh ()

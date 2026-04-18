@@ -1107,13 +1107,14 @@ Validation:
 *** DONE Session note: Post-Task 13 behavior change - killing managed buffer closes client (2026-04-19)
 - User requested that killing a managed Emacs buffer should close the corresponding Hyprland client window.
 - Implemented in Emacs managed-buffer mode:
-  - kill hook dispatches =hyprctl dispatch closewindow address:<client-id>= via configurable close handler.
-  - internal cleanup paths (=hyprmacs-buffer-remove-client=, reset) suppress close dispatch to avoid duplicate close attempts.
+  - kill interception dispatches =hyprctl dispatch closewindow address:<client-id>= via configurable close handler.
+  - buffer kill is canceled while close request is in-flight; buffer is removed when client-close state update arrives.
+  - internal cleanup paths (=hyprmacs-buffer-remove-client=, reset) suppress close dispatch interception.
 - Updated automated and manual validation:
   - Emacs unit tests assert:
-    - manual kill triggers close handler
+    - manual kill requests close and is intercepted (buffer not immediately killed)
     - internal remove does not trigger close handler
-  - Nested e2e no longer expects killed managed buffers to be recreated; now expects client removal from managed set.
+  - Nested e2e expects managed client removal after kill request and subsequent close event/state update.
   - Manual smoke checklist documents kill-buffer closes client behavior.
 
 ** TODO Task 14: Package the prototype, document usage, and freeze the first demo flow

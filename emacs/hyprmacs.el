@@ -652,8 +652,11 @@ This covers the implemented runtime contract through Task 11."
                          (not (string= workspace-name "special:hyprmacs-hidden")))))
                 5.0 0.20)
                path "managed client is restored visible after reopening managed buffer")
-              (call-interactively #'kill-current-buffer)
-              (hyprmacs--e2e-assert (not (buffer-live-p buffer)) path "managed buffer can be killed explicitly")
+              (let ((kill-result (kill-current-buffer)))
+                (append-to-file (format "kill-current-buffer-result: %S\n" kill-result) nil path)
+                (hyprmacs--e2e-assert (not kill-result)
+                                      path
+                                      "managed buffer kill is intercepted while close request is sent"))
               (hyprmacs--e2e-assert
                (hyprmacs--wait-until
                 (lambda ()

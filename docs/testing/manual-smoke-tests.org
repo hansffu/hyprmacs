@@ -173,8 +173,9 @@ Quick manual checks for each prototype checkpoint in the nested Hyprland environ
   - optional override of =hyprmacs-window-rename-function= is honored
 - Validate kill-buffer behavior:
   - in a managed buffer, run =M-x kill-current-buffer=
-  - confirm the corresponding Hyprland client window is closed (not merely hidden)
-  - confirm client disappears from =managed-clients= in =*hyprmacs-state*=
+  - confirm hyprmacs intercepts kill and requests compositor close for the client
+  - if the app closes, confirm client disappears from =managed-clients= in =*hyprmacs-state*=
+  - if the app shows a confirmation dialog instead of closing, confirm buffer remains and no duplicate/recreated managed buffer appears
 - Validate session-driven mode updates:
   - switching between emacs-control and client-control updates mode-line tag in managed buffers
   - selected client transitions trigger =hyprmacs-window-selected-functions=
