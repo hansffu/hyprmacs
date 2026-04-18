@@ -1024,7 +1024,7 @@ Validation:
 - Updated tests and nested harness validation with passing results:
   - latest artifact bundle: =artifacts/e2e/20260419-001943/=
 
-** NEXT Task 13: Add custom Hyprland dispatchers for plugin control
+** DONE Task 13: Add custom Hyprland dispatchers for plugin control
 Purpose:
 - Provide compositor-native commands (for example =Alt+E=) that can control hyprmacs even when Emacs does not own keyboard input.
 - Establish the dispatcher path that future hyprmacs actions can reuse.
@@ -1049,7 +1049,7 @@ Steps:
 *** DONE Add regression tests
 - Validate dispatcher command updates mode and returns focus to managing Emacs frame without hanging Hyprland IPC.
 - Keep current IPC command-path tests green.
-*** WAIT Review task 13 with user
+*** DONE Review task 13 with user
 - Validate real interactive handoff: client-control -> =ALT+E= -> emacs-control focus return.
 
 Validation:
