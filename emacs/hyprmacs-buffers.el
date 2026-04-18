@@ -1,4 +1,4 @@
-;;; hyprmacs-buffers.el --- managed buffer helpers  -*- lexical-binding: t; -*-
+;;; hyprmacs-buffers.el --- managed buffer mode and lifecycle helpers  -*- lexical-binding: t; -*-
 
 ;; Author: Hans Fredrik Furholt
 ;; Version: 0.1.0
@@ -6,14 +6,49 @@
 
 ;;; Commentary:
 
-;; Buffer association primitives for managed hyprmacs client identities.
+;; Mode and buffer association primitives for managed hyprmacs client identities.
 
 ;;; Code:
 
 (require 'subr-x)
+(require 'cl-lib)
 
 (defvar hyprmacs-buffer-table (make-hash-table :test #'equal)
   "Map client IDs to managed Emacs buffers.")
+
+(defvar hyprmacs-session-state nil
+  "Current hyprmacs session state plist.
+Declared here to avoid requiring `hyprmacs-session' from this module.")
+
+(defgroup hyprmacs nil
+  "Hyprmacs workspace integration."
+  :group 'applications)
+
+(defcustom hyprmacs-window-rename-function #'hyprmacs-window-default-rename-function
+  "Function used to compute managed buffer names.
+Called with four arguments: CLIENT-ID, APP-ID, TITLE, and WORKSPACE-ID.
+Should return a non-empty string. If nil/empty is returned, the default
+`hyprmacs-window-default-rename-function' result is used."
+  :type 'function
+  :group 'hyprmacs)
+
+(defvar hyprmacs-window-title-change-functions nil
+  "Hook run when a managed client title changes.
+Functions receive: CLIENT-ID OLD-TITLE NEW-TITLE BUFFER.")
+
+(defvar hyprmacs-window-selected-functions nil
+  "Hook run when selected managed client changes.
+Functions receive: NEW-CLIENT-ID OLD-CLIENT-ID BUFFER.")
+
+(defvar hyprmacs-window-input-mode-change-functions nil
+  "Hook run when hyprmacs input mode changes.
+Functions receive: NEW-MODE OLD-MODE.")
+
+(defvar hyprmacs-window-mode-map
+  (let ((map (make-sparse-keymap)))
+    (define-key map (kbd "C-c C-c") #'hyprmacs-set-input-mode)
+    map)
+  "Keymap for `hyprmacs-window-mode'.")
 
 (defvar-local hyprmacs-client-id nil
   "Associated Hyprland client ID for a managed buffer.")
@@ -21,19 +56,77 @@
 (defvar-local hyprmacs-client-app-id nil
   "Associated application ID for a managed buffer.")
 
-(defun hyprmacs-buffer--name (client-id title)
-  "Return a display name for CLIENT-ID with TITLE."  
-  (format "*hyprmacs:%s:%s*" client-id (if (string-empty-p title) "untitled" title)))
+(defvar-local hyprmacs-client-title nil
+  "Associated client title for a managed buffer.")
 
-(defun hyprmacs-buffer-ensure-for-client (client-id app-id)
-  "Create or return the managed buffer for CLIENT-ID and APP-ID."  
+(defvar-local hyprmacs-workspace-id nil
+  "Associated workspace ID for a managed buffer.")
+
+(declare-function hyprmacs-set-input-mode "hyprmacs")
+
+(defun hyprmacs-window-default-rename-function (_client-id app-id title _workspace-id)
+  "Return default managed buffer name for APP-ID and TITLE."
+  (format "*hyprmacs:%s: %s*" app-id (if (string-empty-p title) "untitled" title)))
+
+(defun hyprmacs-buffer--name (client-id app-id title workspace-id)
+  "Return display name for managed CLIENT-ID from APP-ID/TITLE/WORKSPACE-ID."
+  (let* ((safe-title (if (string-empty-p (or title "")) "untitled" title))
+         (default-name (hyprmacs-window-default-rename-function client-id app-id safe-title workspace-id))
+         (custom-name (ignore-errors
+                        (funcall hyprmacs-window-rename-function client-id app-id safe-title workspace-id))))
+    (if (and (stringp custom-name) (not (string-empty-p custom-name)))
+        custom-name
+      default-name)))
+
+(defun hyprmacs-window-mode--input-mode-tag ()
+  "Return short input-mode tag for managed buffer mode line."
+  (pcase (plist-get hyprmacs-session-state :input-mode)
+    ('client-control "C")
+    ('emacs-control "E")
+    (_ "?")))
+
+(defun hyprmacs-window-mode--mode-name ()
+  "Return mode name including current hyprmacs input mode."
+  (format "Hyprmacs[%s]" (hyprmacs-window-mode--input-mode-tag)))
+
+(define-derived-mode hyprmacs-window-mode fundamental-mode "Hyprmacs"
+  "Major mode for buffers associated with managed Hyprland clients."
+  (setq-local mode-name (hyprmacs-window-mode--mode-name)))
+
+(defun hyprmacs-window-mode-refresh ()
+  "Refresh mode line in all live managed window-mode buffers."
+  (maphash
+   (lambda (_client-id buffer)
+     (when (buffer-live-p buffer)
+       (with-current-buffer buffer
+         (when (eq major-mode 'hyprmacs-window-mode)
+           (setq-local mode-name (hyprmacs-window-mode--mode-name))
+           (force-mode-line-update t)))))
+   hyprmacs-buffer-table))
+
+(defun hyprmacs-buffer-ensure-for-client (client-id app-id &optional title workspace-id)
+  "Create or return managed buffer for CLIENT-ID.
+APP-ID identifies the application. Optional TITLE and WORKSPACE-ID update
+buffer-local metadata when available."
   (let ((existing (gethash client-id hyprmacs-buffer-table)))
     (if (buffer-live-p existing)
-        existing
-      (let ((buffer (generate-new-buffer (hyprmacs-buffer--name client-id app-id))))
+        (progn
+          (with-current-buffer existing
+            (unless (eq major-mode 'hyprmacs-window-mode)
+              (hyprmacs-window-mode))
+            (setq-local hyprmacs-client-id client-id)
+            (setq-local hyprmacs-client-app-id app-id)
+            (setq-local hyprmacs-client-title (or title app-id))
+            (setq-local hyprmacs-workspace-id workspace-id))
+          existing)
+      (let ((buffer (generate-new-buffer
+                     (hyprmacs-buffer--name client-id app-id (or title app-id) workspace-id))))
         (with-current-buffer buffer
+          (hyprmacs-window-mode)
           (setq-local hyprmacs-client-id client-id)
-          (setq-local hyprmacs-client-app-id app-id))
+          (setq-local hyprmacs-client-app-id app-id)
+          (setq-local hyprmacs-client-title (or title app-id))
+          (setq-local hyprmacs-workspace-id workspace-id))
         (puthash client-id buffer hyprmacs-buffer-table)
         buffer))))
 
@@ -42,11 +135,22 @@
   (gethash client-id hyprmacs-buffer-table))
 
 (defun hyprmacs-buffer-update-title (client-id title)
-  "Rename the managed buffer for CLIENT-ID using TITLE."  
+  "Rename managed buffer for CLIENT-ID using TITLE."
   (let ((buffer (hyprmacs-buffer-for-client client-id)))
     (when (buffer-live-p buffer)
       (with-current-buffer buffer
-        (rename-buffer (hyprmacs-buffer--name client-id title) t)))))
+        (let* ((old-title (or hyprmacs-client-title ""))
+               (new-title (or title ""))
+               (new-name (hyprmacs-buffer--name
+                          client-id
+                          (or hyprmacs-client-app-id "unknown")
+                          new-title
+                          hyprmacs-workspace-id)))
+          (setq-local hyprmacs-client-title new-title)
+          (rename-buffer new-name t)
+          (unless (equal old-title new-title)
+            (run-hook-with-args 'hyprmacs-window-title-change-functions
+                                client-id old-title new-title buffer)))))))
 
 (defun hyprmacs-buffer-remove-client (client-id)
   "Remove and kill the managed buffer for CLIENT-ID."  
@@ -88,7 +192,8 @@ ELIGIBLE-CLIENTS should be the decoded `eligible_clients' payload list."
       (let* ((entry (gethash client-id metadata-by-client))
              (app-id (or (alist-get 'app_id entry nil nil #'equal) "unknown"))
              (title (or (alist-get 'title entry nil nil #'equal) app-id))
-             (buffer (hyprmacs-buffer-ensure-for-client client-id app-id)))
+             (workspace-id (alist-get 'workspace_id entry nil nil #'equal))
+             (buffer (hyprmacs-buffer-ensure-for-client client-id app-id title workspace-id)))
         (hyprmacs-buffer-update-title client-id title)
         (push (cons client-id (buffer-name buffer)) associated-buffers)))
 
@@ -97,6 +202,24 @@ ELIGIBLE-CLIENTS should be the decoded `eligible_clients' payload list."
         (hyprmacs-buffer-remove-client client-id)))
 
     (nreverse associated-buffers)))
+
+(defun hyprmacs-buffer-notify-session-state-changed (old-state new-state)
+  "Emit buffer hooks for meaningful OLD-STATE -> NEW-STATE transitions."
+  (let ((old-selected (plist-get old-state :selected-client))
+        (new-selected (plist-get new-state :selected-client))
+        (old-input (plist-get old-state :input-mode))
+        (new-input (plist-get new-state :input-mode)))
+    (unless (equal old-selected new-selected)
+      (run-hook-with-args
+       'hyprmacs-window-selected-functions
+       new-selected
+       old-selected
+       (and new-selected (hyprmacs-buffer-for-client new-selected))))
+    (unless (equal old-input new-input)
+      (run-hook-with-args 'hyprmacs-window-input-mode-change-functions new-input old-input))
+    (when (or (not (equal old-selected new-selected))
+              (not (equal old-input new-input)))
+      (hyprmacs-window-mode-refresh))))
 
 (provide 'hyprmacs-buffers)
 

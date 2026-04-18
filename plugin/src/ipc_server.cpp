@@ -748,6 +748,10 @@ std::optional<std::string> IpcServer::socket_path() const {
     return socket_path_;
 }
 
+void IpcServer::publish_state_dump_for_workspace(const WorkspaceId& workspace_id) {
+    on_workspace_state_changed(workspace_id);
+}
+
 void IpcServer::accept_loop() {
     while (running_.load()) {
         int controller_fd = ::accept(listen_fd_, nullptr, nullptr);

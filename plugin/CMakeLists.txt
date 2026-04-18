@@ -18,6 +18,7 @@ add_library(hyprmacs SHARED
   src/ipc_server.cpp
   src/layout_applier.cpp
   src/focus_controller.cpp
+  src/dispatchers.cpp
 )
 
 target_include_directories(hyprmacs PRIVATE

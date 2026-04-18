@@ -8,6 +8,7 @@
 #include <algorithm>
 #include <string_view>
 #include <vector>
+#include <cctype>
 #include <sys/socket.h>
 #include <sys/un.h>
 #include <unistd.h>
@@ -15,6 +16,7 @@
 #include "hyprmacs/focus_controller.hpp"
 #include "hyprmacs/ipc_server.hpp"
 #include "hyprmacs/layout_applier.hpp"
+#include "hyprmacs/dispatchers.hpp"
 #include "hyprmacs/workspace_manager.hpp"
 
 #if __has_include(<hyprland/src/plugins/PluginAPI.hpp>) && __has_include(<hyprgraphics/color/Color.hpp>)
@@ -183,6 +185,42 @@ int dispatch_hypr_command_via_socket(const std::string& command) {
     return 0;
 }
 
+std::optional<std::string> query_active_workspace_id_via_socket() {
+    const auto reply_opt = send_hypr_command_via_socket("j/activeworkspace");
+    if (!reply_opt.has_value()) {
+        return std::nullopt;
+    }
+
+    const std::string& json = *reply_opt;
+    const std::string token = "\"id\"";
+    const size_t key_pos = json.find(token);
+    if (key_pos == std::string::npos) {
+        return std::nullopt;
+    }
+    const size_t colon = json.find(':', key_pos + token.size());
+    if (colon == std::string::npos) {
+        return std::nullopt;
+    }
+    size_t value_start = colon + 1;
+    while (value_start < json.size() && std::isspace(static_cast<unsigned char>(json[value_start])) != 0) {
+        ++value_start;
+    }
+    if (value_start >= json.size()) {
+        return std::nullopt;
+    }
+    size_t value_end = value_start;
+    if (json[value_end] == '-') {
+        ++value_end;
+    }
+    while (value_end < json.size() && std::isdigit(static_cast<unsigned char>(json[value_end])) != 0) {
+        ++value_end;
+    }
+    if (value_end == value_start || (value_end == value_start + 1 && json[value_start] == '-')) {
+        return std::nullopt;
+    }
+    return json.substr(value_start, value_end - value_start);
+}
+
 hyprmacs::WorkspaceManager g_workspace_manager(
     [](const std::string& command) {
         return dispatch_hypr_command_via_socket(command);
@@ -308,6 +346,7 @@ class CHyprmacsAlgorithm final : public Layout::ITiledAlgorithm {
 };
 
 bool g_hyprmacs_layout_registered = false;
+bool g_set_emacs_control_dispatcher_registered = false;
 
 std::function<UP<Layout::ITiledAlgorithm>()> make_hyprmacs_tiled_factory() {
     return [] {
@@ -353,6 +392,37 @@ APICALL EXPORT PLUGIN_DESCRIPTION_INFO PLUGIN_INIT(HANDLE handle) {
     }
 #endif
 
+    g_set_emacs_control_dispatcher_registered = HyprlandAPI::addDispatcherV2(
+        PHANDLE,
+        "hyprmacs:set-emacs-control-mode",
+        [](std::string arg) -> SDispatchResult {
+            const auto outcome = hyprmacs::dispatch_set_emacs_control_mode(
+                arg,
+                g_workspace_manager,
+                g_focus_controller,
+                []() {
+                    return query_active_workspace_id_via_socket();
+                }
+            );
+            if (outcome.workspace_id.has_value()) {
+                g_ipc_server.publish_state_dump_for_workspace(*outcome.workspace_id);
+            }
+            return {
+                .passEvent = false,
+                .success = outcome.success,
+                .error = outcome.error,
+            };
+        }
+    );
+    if (!g_set_emacs_control_dispatcher_registered) {
+        HyprlandAPI::addNotification(
+            PHANDLE,
+            "[hyprmacs] failed to register dispatcher hyprmacs:set-emacs-control-mode",
+            CHyprColor {1.0, 0.2, 0.2, 1.0},
+            5000
+        );
+    }
+
     g_workspace_manager.start_event_tap();
     g_ipc_server.start();
 
@@ -367,6 +437,12 @@ APICALL EXPORT PLUGIN_DESCRIPTION_INFO PLUGIN_INIT(HANDLE handle) {
 }
 
 APICALL EXPORT void PLUGIN_EXIT() {
+#if HYPRMACS_HAS_REAL_PLUGIN_API
+    if (g_set_emacs_control_dispatcher_registered) {
+        (void)HyprlandAPI::removeDispatcher(PHANDLE, "hyprmacs:set-emacs-control-mode");
+        g_set_emacs_control_dispatcher_registered = false;
+    }
+#endif
 #if HYPRMACS_CAN_REGISTER_TILED_ALGO
     if (g_hyprmacs_layout_registered) {
         (void)HyprlandAPI::removeAlgo(PHANDLE, "hyprmacs");

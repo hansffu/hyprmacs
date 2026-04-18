@@ -632,6 +632,7 @@ Steps:
 - Added nested keybind for returning keyboard focus to Emacs quickly from client-control testing:
   - =ALT+E -> focuswindow class:^(emacs)$= (native Hyprland dispatcher bind)
 - Note: this keybind currently performs compositor focus handoff only; plugin-native =hyprctl dispatch hyprmacs ...= mode commands are not implemented yet and remain future work.
+- Superseded by Task 13 (2026-04-19), where =ALT+E= now maps to plugin dispatcher =hyprmacs:set-emacs-control-mode=.
 
 *** DONE Session note: Emacs command UX defaults for workspace and connection (2026-04-17)
 - Interactive workspace-scoped commands now infer workspace from active Hyprland workspace by default (instead of prompting for workspace ID each invocation).
@@ -954,34 +955,76 @@ Steps:
   - targeted ERT protocol suite passes
   - full =just e2e= passes (artifact bundle: =artifacts/e2e/20260418-232545/=).
 
-** TODO Task 12: Introduce dedicated managed-client major mode
+** DONE Task 12: Introduce dedicated managed-client major mode
 Purpose:
 - Add a focused Emacs major mode for managed client buffers before broader packaging/documentation work.
 
 Files:
 - Modify =emacs/hyprmacs-buffers.el=
-- Modify =emacs/hyprmacs.el=
+- Modify =emacs/hyprmacs-session.el=
 - Modify =tests/emacs/buffer-tests.el=
 - Modify =docs/testing/manual-smoke-tests.org=
 
 Steps:
-*** TODO Add =hyprmacs-window-mode=
+*** DONE Add =hyprmacs-window-mode=
 - Define a dedicated major mode for managed client buffers.
 - Keep it minimal for prototype scope (identity + predictable mode map scaffold).
-*** TODO Attach mode during buffer association lifecycle
+*** DONE Attach mode during buffer association lifecycle
 - Ensure managed buffers created/recreated by client association always enter =hyprmacs-window-mode=.
-*** TODO Add regression tests
+*** DONE Add regression tests
 - Verify managed buffers use =hyprmacs-window-mode= on create and recreate paths.
-*** TODO Validate in nested runtime
+*** DONE Validate in nested runtime
 - Run =just e2e= and confirm managed buffer behavior remains stable with mode enabled.
-*** WAIT Review task 12 with user
+*** DONE Review task 12 with user
 - Use this checkpoint to validate mode behavior before packaging/demo polish.
 
 Validation:
 - In nested session, managed buffers report =major-mode= as =hyprmacs-window-mode=.
 - Existing buffer lifecycle and E2E tests remain green.
 
-** TODO Task 13: Add custom Hyprland dispatchers for plugin control
+*** DONE Session note: Task 12 implementation for managed-window major mode (2026-04-19)
+- Added =hyprmacs-window-mode= and keymap scaffold in =emacs/hyprmacs-buffers.el=.
+- Bound =i= in mode map to =hyprmacs-set-input-mode= (client-control entry path from Emacs-managed buffers).
+- Added configurable rename handler:
+  - =hyprmacs-window-rename-function=
+  - default implementation =hyprmacs-window-default-rename-function=
+- Added hook points:
+  - =hyprmacs-window-title-change-functions=
+  - =hyprmacs-window-selected-functions=
+  - =hyprmacs-window-input-mode-change-functions=
+- Added mode-line input-mode indicator (=Hyprmacs[E/C/?]=) with refresh on session selection/mode transitions.
+- Extended buffer-local metadata:
+  - =hyprmacs-client-title=
+  - =hyprmacs-workspace-id=
+- Updated session path to call =hyprmacs-buffer-notify-session-state-changed= after inbound frame handling so mode-line/hook behavior stays synchronized.
+
+*** DONE Session note: Task 12 verification evidence (2026-04-19)
+- Failing tests were added first in =tests/emacs/buffer-tests.el= to assert:
+  - mode activation and keymap binding
+  - rename handler override behavior
+  - title-change hook emission
+  - mode-line input indicator updates
+  - session state-change hook emission for selected/input transitions
+- Verification commands:
+  - =emacs -Q --batch -L emacs -L tests/emacs -l tests/emacs/buffer-tests.el -f ert-run-tests-batch-and-exit=
+  - =emacs -Q --batch -L emacs -L tests/emacs -l tests/emacs/session-tests.el -f ert-run-tests-batch-and-exit=
+  - =emacs -Q --batch -L emacs -L tests/emacs -l tests/emacs/protocol-tests.el -f ert-run-tests-batch-and-exit=
+  - =just e2e=
+- Latest nested harness artifact bundle:
+  - =artifacts/e2e/20260419-000421/summary.log=
+  - =artifacts/e2e/20260419-000421/session-e2e.log=
+
+*** DONE Session note: Task 12 review-feedback adjustments (2026-04-19)
+- Updated default mode-map binding for entering client-control from managed buffers:
+  - from =i=
+  - to =C-c C-c=
+- Updated default managed buffer naming policy:
+  - from client-id-based default (=*hyprmacs:<client-id>:<title>*=)
+  - to class/title default (=*hyprmacs:<class>: <title>*=)
+- Updated tests and nested harness validation with passing results:
+  - latest artifact bundle: =artifacts/e2e/20260419-001943/=
+
+** NEXT Task 13: Add custom Hyprland dispatchers for plugin control
 Purpose:
 - Provide compositor-native commands (for example =Alt+E=) that can control hyprmacs even when Emacs does not own keyboard input.
 - Establish the dispatcher path that future hyprmacs actions can reuse.
@@ -995,15 +1038,15 @@ Files:
 - Modify =docs/superpowers/plans/2026-04-15-hyprmacs-iterative-implementation.org=
 
 Steps:
-*** TODO Add dispatcher registration in plugin
+*** DONE Add dispatcher registration in plugin
 - Register one or more hyprmacs dispatchers via Hyprland plugin API.
 - Implement at minimum =hyprmacs:set-emacs-control-mode=.
-*** TODO Bridge dispatcher to existing workspace control path
+*** DONE Bridge dispatcher to existing workspace control path
 - Resolve target workspace from active compositor context when possible.
 - Route dispatcher action into existing input-mode handling (=set-input-mode emacs-control= equivalent behavior).
-*** TODO Wire nested config keybind
+*** DONE Wire nested config keybind
 - Bind =ALT+E= in nested Hyprland config to call the new dispatcher.
-*** TODO Add regression tests
+*** DONE Add regression tests
 - Validate dispatcher command updates mode and focuses managing Emacs frame.
 - Keep current IPC command-path tests green.
 *** WAIT Review task 13 with user
@@ -1012,6 +1055,30 @@ Steps:
 Validation:
 - In nested runtime, =ALT+E= returns control to managing Emacs frame while workspace is managed.
 - Plugin tests cover dispatcher behavior and existing mode-switch contracts.
+
+*** DONE Session note: Task 13 dispatcher implementation (2026-04-19)
+- Added new dispatcher bridge module:
+  - =plugin/include/hyprmacs/dispatchers.hpp=
+  - =plugin/src/dispatchers.cpp=
+- Implemented =hyprmacs:set-emacs-control-mode= behavior:
+  - resolve workspace from dispatcher arg or active workspace query (fallback managed workspace)
+  - set input mode to =emacs-control=
+  - focus managing Emacs frame when available
+- Registered dispatcher via Hyprland plugin API (=addDispatcherV2=) in =plugin_main.cpp= and removed it on plugin exit.
+- Added =IpcServer::publish_state_dump_for_workspace= so dispatcher path pushes state updates to connected controller.
+- Updated nested Hyprland bind in =flake.nix=:
+  - =ALT+E= now invokes dispatcher =hyprmacs:set-emacs-control-mode=.
+
+*** DONE Session note: Task 13 verification evidence (2026-04-19)
+- Added plugin regression target:
+  - =plugin/tests/dispatchers_tests.cpp=
+  - =hyprmacs_dispatcher_tests= added to plugin test CMake.
+- Verification commands:
+  - =nix develop -c sh -lc 'cmake -S plugin -B build/plugin && cmake --build build/plugin && ctest --test-dir build/plugin --output-on-failure'=
+  - =just e2e=
+- Latest nested harness artifact bundle:
+  - =artifacts/e2e/20260419-003841/summary.log=
+  - =artifacts/e2e/20260419-003841/session-e2e.log=
 
 ** TODO Task 14: Package the prototype, document usage, and freeze the first demo flow
 Purpose:

@@ -135,3 +135,25 @@ add_test(
   NAME hyprmacs_focus_controller_tests
   COMMAND hyprmacs_focus_controller_tests
 )
+
+add_executable(hyprmacs_dispatcher_tests
+  dispatchers_tests.cpp
+  ../src/dispatchers.cpp
+  ../src/workspace_manager.cpp
+  ../src/client_registry.cpp
+  ../src/client_classifier.cpp
+  ../src/focus_controller.cpp
+)
+
+target_include_directories(hyprmacs_dispatcher_tests PRIVATE
+  ${CMAKE_CURRENT_SOURCE_DIR}/../include
+)
+
+if(CMAKE_CXX_COMPILER_ID MATCHES "Clang|GNU")
+  target_compile_options(hyprmacs_dispatcher_tests PRIVATE -Wall -Wextra -Wpedantic)
+endif()
+
+add_test(
+  NAME hyprmacs_dispatcher_tests
+  COMMAND hyprmacs_dispatcher_tests
+)

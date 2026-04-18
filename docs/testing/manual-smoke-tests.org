@@ -158,6 +158,37 @@ Quick manual checks for each prototype checkpoint in the nested Hyprland environ
   - hidden clients return to the normal workspace
   - global policy values from Task 8A remain restored after cleanup
 
+* Task 12 Managed-Client Major Mode Smoke
+- Start nested session with Emacs and at least one managed non-Emacs client.
+- In Emacs run:
+  - =M-x hyprmacs-manage-current-workspace=
+  - open/select a managed client buffer (=*hyprmacs:...*=)
+- Validate buffer mode identity:
+  - =major-mode= is =hyprmacs-window-mode=
+  - mode line shows input state tag (=Hyprmacs[E]= or =Hyprmacs[C]=)
+- Validate mode keymap:
+  - press =C-c C-c= in a managed buffer and confirm hyprmacs switches to =client-control=
+- Validate mode hooks and rename behavior:
+  - changing client title updates buffer name via default rename policy
+  - optional override of =hyprmacs-window-rename-function= is honored
+- Validate session-driven mode updates:
+  - switching between emacs-control and client-control updates mode-line tag in managed buffers
+  - selected client transitions trigger =hyprmacs-window-selected-functions=
+
+* Task 13 Custom Dispatcher Smoke
+- Start nested session with plugin loaded, Emacs connected, and at least one managed client visible.
+- Enter client-control mode (for example from a managed buffer with =C-c C-c=).
+- Validate dispatcher handoff:
+  - press =ALT+E= in nested Hyprland
+  - confirm focus returns to managing Emacs frame
+  - confirm =*hyprmacs-state*= reflects =input-mode: emacs-control= after update
+- Validate direct dispatcher invocation:
+  - run =hyprctl dispatch hyprmacs:set-emacs-control-mode=
+  - confirm command succeeds and focus/state behavior matches keybind path
+- Regression checks:
+  - plugin test target =hyprmacs_dispatcher_tests= passes
+  - existing IPC mode-switch behavior remains unchanged for Emacs command path
+
 * Notes
 - Task 6 uses temporary debug commands and a special workspace (=special:hyprmacs-hidden=) for hide/restore.
 - This is a spike path and may change before layout integration.

@@ -150,7 +150,8 @@ If the buffer exists but is not visible, leave window selection unchanged."
 
 (defun hyprmacs-session-handle-frame (frame)
   "Handle one inbound protocol FRAME and update session state."  
-  (let* ((message (hyprmacs-ipc-decode-message frame))
+  (let* ((old-state (copy-tree hyprmacs-session-state))
+         (message (hyprmacs-ipc-decode-message frame))
          (type (alist-get 'type message nil nil #'equal))
          (workspace-id (alist-get 'workspace_id message nil nil #'equal))
          (payload (alist-get 'payload message)))
@@ -210,7 +211,8 @@ If the buffer exists but is not visible, leave window selection unchanged."
              (plist-put hyprmacs-session-state :input-mode
                         (hyprmacs-ipc-mode-from-wire
                          (alist-get 'input_mode payload nil nil #'equal))))
-       (hyprmacs-session--activate-selected-client-buffer))))
+       (hyprmacs-session--activate-selected-client-buffer)))
+    (hyprmacs-buffer-notify-session-state-changed old-state hyprmacs-session-state))
   hyprmacs-session-state)
 
 (defun hyprmacs-session--process-filter (_process chunk)

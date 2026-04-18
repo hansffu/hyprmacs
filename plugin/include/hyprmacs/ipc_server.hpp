@@ -34,6 +34,7 @@ class IpcServer {
     void stop();
 
     std::optional<std::string> socket_path() const;
+    void publish_state_dump_for_workspace(const WorkspaceId& workspace_id);
 
   private:
     void accept_loop();
