@@ -32,6 +32,18 @@ Should return a non-empty string. If nil/empty is returned, the default
   :type 'function
   :group 'hyprmacs)
 
+(defcustom hyprmacs-window-close-on-buffer-kill t
+  "Whether killing a managed buffer should also close its Hyprland client."
+  :type 'boolean
+  :group 'hyprmacs)
+
+(defcustom hyprmacs-window-close-client-function #'hyprmacs-window-default-close-client-function
+  "Function used to close a managed client when its buffer is killed.
+Called with two arguments: CLIENT-ID and WORKSPACE-ID.
+Should return non-nil on success."
+  :type 'function
+  :group 'hyprmacs)
+
 (defvar hyprmacs-window-title-change-functions nil
   "Hook run when a managed client title changes.
 Functions receive: CLIENT-ID OLD-TITLE NEW-TITLE BUFFER.")
@@ -62,7 +74,43 @@ Functions receive: NEW-MODE OLD-MODE.")
 (defvar-local hyprmacs-workspace-id nil
   "Associated workspace ID for a managed buffer.")
 
+(defvar-local hyprmacs--suppress-close-on-kill nil
+  "Internal guard to avoid close dispatch during internal cleanup kills.")
+
 (declare-function hyprmacs-set-input-mode "hyprmacs")
+
+(defun hyprmacs--normalize-client-id (client-id)
+  "Return CLIENT-ID as a normalized Hyprland address string."
+  (let ((normalized (or client-id "")))
+    (when (string-prefix-p "address:" normalized)
+      (setq normalized (substring normalized (length "address:"))))
+    (unless (string-prefix-p "0x" normalized)
+      (setq normalized (concat "0x" normalized)))
+    normalized))
+
+(defun hyprmacs-window-default-close-client-function (client-id _workspace-id)
+  "Close Hyprland CLIENT-ID using hyprctl. Returns non-nil on success."
+  (let ((normalized (hyprmacs--normalize-client-id client-id)))
+    (condition-case nil
+        (let ((rc (call-process "hyprctl" nil nil nil
+                                "dispatch"
+                                "closewindow"
+                                (concat "address:" normalized))))
+          (and (integerp rc) (zerop rc)))
+      (error nil))))
+
+(defun hyprmacs-window-mode--kill-buffer-hook ()
+  "Close the managed client when a managed buffer is killed by the user."
+  (when (and (stringp hyprmacs-client-id)
+             (not (string-empty-p hyprmacs-client-id)))
+    (remhash hyprmacs-client-id hyprmacs-buffer-table)
+    (when (and hyprmacs-window-close-on-buffer-kill
+               (not hyprmacs--suppress-close-on-kill)
+               (functionp hyprmacs-window-close-client-function))
+      (ignore-errors
+        (funcall hyprmacs-window-close-client-function
+                 hyprmacs-client-id
+                 hyprmacs-workspace-id)))))
 
 (defun hyprmacs-window-default-rename-function (_client-id app-id title _workspace-id)
   "Return default managed buffer name for APP-ID and TITLE."
@@ -91,7 +139,8 @@ Functions receive: NEW-MODE OLD-MODE.")
 
 (define-derived-mode hyprmacs-window-mode fundamental-mode "Hyprmacs"
   "Major mode for buffers associated with managed Hyprland clients."
-  (setq-local mode-name (hyprmacs-window-mode--mode-name)))
+  (setq-local mode-name (hyprmacs-window-mode--mode-name))
+  (add-hook 'kill-buffer-hook #'hyprmacs-window-mode--kill-buffer-hook nil t))
 
 (defun hyprmacs-window-mode-refresh ()
   "Refresh mode line in all live managed window-mode buffers."
@@ -157,13 +206,17 @@ buffer-local metadata when available."
   (let ((buffer (gethash client-id hyprmacs-buffer-table)))
     (remhash client-id hyprmacs-buffer-table)
     (when (buffer-live-p buffer)
-      (kill-buffer buffer))))
+      (with-current-buffer buffer
+        (setq-local hyprmacs--suppress-close-on-kill t)
+        (kill-buffer buffer)))))
 
 (defun hyprmacs-buffer-reset ()
   "Reset all managed buffers and clear lookup state."  
   (maphash (lambda (_client-id buffer)
              (when (buffer-live-p buffer)
-               (kill-buffer buffer)))
+               (with-current-buffer buffer
+                 (setq-local hyprmacs--suppress-close-on-kill t)
+                 (kill-buffer buffer))))
            hyprmacs-buffer-table)
   (clrhash hyprmacs-buffer-table))
 

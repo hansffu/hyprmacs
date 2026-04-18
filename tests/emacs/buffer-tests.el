@@ -65,6 +65,32 @@
             (should (equal (buffer-name buffer) "*hm:foot:0x999:shell*")))
         (hyprmacs-buffer-reset)))))
 
+(ert-deftest hyprmacs-buffer-kill-closes-client-window ()
+  (let ((calls nil)
+        (hyprmacs-window-close-on-buffer-kill t)
+        (hyprmacs-window-close-client-function
+         (lambda (client-id workspace-id)
+           (push (list client-id workspace-id) calls)
+           t)))
+    (let ((buffer (hyprmacs-buffer-ensure-for-client "0xabc" "foot" "shell" "1")))
+      (kill-buffer buffer)
+      (should (equal calls '(("0xabc" "1"))))
+      (should-not (hyprmacs-buffer-for-client "0xabc"))
+      (hyprmacs-buffer-reset))))
+
+(ert-deftest hyprmacs-buffer-remove-client-does-not-close-window ()
+  (let ((calls nil)
+        (hyprmacs-window-close-on-buffer-kill t)
+        (hyprmacs-window-close-client-function
+         (lambda (client-id workspace-id)
+           (push (list client-id workspace-id) calls)
+           t)))
+    (let ((buffer (hyprmacs-buffer-ensure-for-client "0xaaa" "foot" "shell" "1")))
+      (hyprmacs-buffer-remove-client "0xaaa")
+      (should-not (buffer-live-p buffer))
+      (should (equal calls nil))
+      (hyprmacs-buffer-reset))))
+
 (ert-deftest hyprmacs-window-mode-name-reflects-input-mode ()
   (let ((buffer (hyprmacs-buffer-ensure-for-client "0xbee" "foot")))
     (unwind-protect

@@ -654,10 +654,16 @@ This covers the implemented runtime contract through Task 11."
                path "managed client is restored visible after reopening managed buffer")
               (call-interactively #'kill-current-buffer)
               (hyprmacs--e2e-assert (not (buffer-live-p buffer)) path "managed buffer can be killed explicitly")
-              (refresh-state)
               (hyprmacs--e2e-assert
-               (buffer-live-p (hyprmacs-buffer-for-client target-client))
-               path "managed buffer is recreated from state after kill command"))
+               (hyprmacs--wait-until
+                (lambda ()
+                  (refresh-state)
+                  (not (member target-client (managed-ids))))
+                5.0 0.20)
+               path "killing managed buffer closes and removes target client")
+              (hyprmacs--e2e-assert
+               (not (buffer-live-p (hyprmacs-buffer-for-client target-client)))
+               path "managed buffer stays removed after kill command"))
 
         ;; Task 6 debug hide/show round-trip.
         (hyprmacs-debug-hide-client target-client workspace-id)

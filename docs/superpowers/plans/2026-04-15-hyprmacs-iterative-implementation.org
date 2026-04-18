@@ -1104,6 +1104,18 @@ Validation:
     - =artifacts/e2e/20260419-005640/summary.log=
     - =artifacts/e2e/20260419-005640/session-e2e.log=
 
+*** DONE Session note: Post-Task 13 behavior change - killing managed buffer closes client (2026-04-19)
+- User requested that killing a managed Emacs buffer should close the corresponding Hyprland client window.
+- Implemented in Emacs managed-buffer mode:
+  - kill hook dispatches =hyprctl dispatch closewindow address:<client-id>= via configurable close handler.
+  - internal cleanup paths (=hyprmacs-buffer-remove-client=, reset) suppress close dispatch to avoid duplicate close attempts.
+- Updated automated and manual validation:
+  - Emacs unit tests assert:
+    - manual kill triggers close handler
+    - internal remove does not trigger close handler
+  - Nested e2e no longer expects killed managed buffers to be recreated; now expects client removal from managed set.
+  - Manual smoke checklist documents kill-buffer closes client behavior.
+
 ** TODO Task 14: Package the prototype, document usage, and freeze the first demo flow
 Purpose:
 - Make the prototype repeatable and easy to evaluate.
