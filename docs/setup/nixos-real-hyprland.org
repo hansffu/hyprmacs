@@ -4,19 +4,31 @@
 Install and run hyprmacs in your normal (non-nested) Hyprland session on NixOS.
 
 * 1. Add hyprmacs as a flake input
-In your system/home flake:
+In your system/home flake, and *critically* make the hyprland inputs follow each other so the plugin is compiled against the same Hyprland ABI that runs on your system:
 
 #+begin_src nix
 {
-  inputs.hyprmacs.url = "github:hansfredrikf/hyprmacs"; # or local path
+  inputs = {
+    hyprland.url = "github:hyprwm/Hyprland";
+
+    hyprmacs = {
+      url = "github:hansffu/hyprmacs";
+      inputs.hyprland.follows = "hyprland"; # must match your running Hyprland
+    };
+  };
 }
 #+end_src
 
 For local development:
 
 #+begin_src nix
-inputs.hyprmacs.url = "path:/home/<you>/code/hyprmacs";
+inputs.hyprmacs = {
+  url = "path:/home/<you>/code/hyprmacs";
+  inputs.hyprland.follows = "hyprland";
+};
 #+end_src
+
+Without ~inputs.hyprland.follows~, the plugin will be compiled against hyprmacs' pinned Hyprland, causing an ABI mismatch (~undefined symbol~ errors) when loading.
 
 * 2. Build the plugin package
 From hyprmacs repo:

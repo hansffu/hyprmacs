@@ -1155,6 +1155,37 @@ Validation:
 - Added README pointer so real-session instructions are discoverable from top-level docs.
 - Scope of this update is documentation only (no compositor/runtime behavior change).
 
+*** DONE Session note: Task 14 review bugfix for new tiled client adoption race (2026-04-19)
+- User review reported a real-session regression with =pcmanfm=:
+  - new client first opened beside Emacs instead of inside the managed buffer
+  - native tiling resized the Emacs frame before hyprmacs recovered
+- Root cause identified in the plugin transition path:
+  - newly managed-client adoption/hide was coupled to controller-connected IPC notification state
+  - this made immediate hide depend on IPC timing instead of on managed-state transition itself
+- Fix implemented:
+  - workspace-manager now emits managed-client tiled/floating transition callbacks whenever membership changes in the managed workspace, even if controller connection state is not yet marked connected
+  - IPC server now performs hide/show on those transitions independently of whether a controller socket is currently available for message delivery
+- Added plugin regression coverage to assert a newly opened managed tiled client still emits the transition callback without controller connection state.
+
+*** DONE Session note: Task 14 review bugfix for local e2e build environment and plugin link closure (2026-04-19)
+- User review reported =just e2e= failing before runtime validation.
+- First root cause:
+  - the dev shell exposed =hyprland.pc= but not the full pkg-config dependency closure required by its =Requires= chain
+  - updated the flake dev shell to derive =PKG_CONFIG_PATH= from =hyprPkg.buildInputs= plus =hyprPkg.dev= so local plugin builds inside =nix develop= track Hyprland dependency changes automatically
+- Second root cause uncovered after the shell fix:
+  - =plugin/CMakeLists.txt= consumed Hyprland include flags from pkg-config but did not link the plugin target against =PkgConfig::HYPRLAND=
+  - the resulting =libhyprmacs.so= built successfully but failed the symbol smoke test at =dlopen= time with unresolved Hyprland layout symbols
+- Fix implemented:
+  - link =hyprmacs= against =PkgConfig::HYPRLAND=
+  - keep the dev-shell pkg-config closure fix so =just e2e= and local =make build= use the same complete dependency view.
+- Follow-up correction:
+  - standalone =dlopen= is not a valid smoke check for a real Hyprland plugin because host-provided Hyprland symbols are resolved by the compositor process, not by the test binary
+  - updated the smoke test to inspect exported plugin entry symbols from the built shared object instead of requiring out-of-process Hyprland symbol resolution.
+  - aligned the symbol check with the real Hyprland export names from =PluginAPI.hpp=:
+    - =pluginAPIVersion=
+    - =pluginInit=
+    - =pluginExit=
+
 * Execution Order
 - Start with task 0 and task 1 only.
 - Do not start task 2 until the repo builds cleanly.

@@ -807,8 +807,7 @@ void WorkspaceManager::handle_line(const std::string& line) {
             if (after == nullptr || !managed_workspace_id_.has_value()) {
                 return;
             }
-            const bool can_notify = controller_connected_ && client_transition_notifier_ != nullptr
-                                    && after->workspace_id == *managed_workspace_id_;
+            const bool can_notify = client_transition_notifier_ != nullptr && after->workspace_id == *managed_workspace_id_;
             if (!can_notify) {
                 return;
             }
@@ -928,9 +927,8 @@ void WorkspaceManager::handle_line(const std::string& line) {
 
                     const auto after = client_registry_.find(parts[0]);
                     const bool now_managed = after != nullptr && after->managed;
-                    const bool can_notify = controller_connected_ && managed_workspace_id_.has_value() &&
-                                            client_transition_notifier_ != nullptr && after != nullptr &&
-                                            after->workspace_id == *managed_workspace_id_;
+                    const bool can_notify = managed_workspace_id_.has_value() && client_transition_notifier_ != nullptr &&
+                                            after != nullptr && after->workspace_id == *managed_workspace_id_;
                     if (can_notify) {
                         if (*floating && was_managed && !now_managed) {
                             maybe_set_transition(parts[0], true);

@@ -21,13 +21,20 @@ add_library(hyprmacs SHARED
   src/dispatchers.cpp
 )
 
+find_package(PkgConfig REQUIRED)
+pkg_check_modules(HYPRLAND REQUIRED hyprland IMPORTED_TARGET)
+
 target_include_directories(hyprmacs PRIVATE
   ${CMAKE_CURRENT_SOURCE_DIR}/include
+  ${HYPRLAND_INCLUDE_DIRS}
+)
+
+target_link_libraries(hyprmacs PRIVATE
+  PkgConfig::HYPRLAND
 )
 
 set_target_properties(hyprmacs PROPERTIES
   OUTPUT_NAME "hyprmacs"
-  PREFIX ""
 )
 
 if(CMAKE_CXX_COMPILER_ID MATCHES "Clang|GNU")

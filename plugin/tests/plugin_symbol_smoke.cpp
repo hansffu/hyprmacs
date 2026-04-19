@@ -1,15 +1,9 @@
 #include <cstdlib>
+#include <cstdio>
 #include <iostream>
-
-#include <dlfcn.h>
-
-namespace {
-bool has_symbol(void* handle, const char* name) {
-    dlerror();
-    void* symbol = dlsym(handle, name);
-    return symbol != nullptr && dlerror() == nullptr;
-}
-}
+#include <sstream>
+#include <string>
+#include <unordered_set>
 
 int main(int argc, char** argv) {
     if (argc != 2) {
@@ -17,26 +11,44 @@ int main(int argc, char** argv) {
         return EXIT_FAILURE;
     }
 
-    void* handle = dlopen(argv[1], RTLD_LAZY);
-    if (!handle) {
-        std::cerr << "failed to open plugin library: " << dlerror() << '\n';
+    const std::string command = std::string("nm -D --defined-only ") + argv[1];
+    FILE* pipe = popen(command.c_str(), "r");
+    if (pipe == nullptr) {
+        std::cerr << "failed to run symbol inspection command\n";
+        return EXIT_FAILURE;
+    }
+
+    std::unordered_set<std::string> exported_symbols;
+    char buffer[4096];
+    while (fgets(buffer, sizeof(buffer), pipe) != nullptr) {
+        std::istringstream line(buffer);
+        std::string address;
+        std::string type;
+        std::string symbol;
+        if (!(line >> address >> type >> symbol)) {
+            continue;
+        }
+        exported_symbols.insert(symbol);
+    }
+
+    const int rc = pclose(pipe);
+    if (rc != 0) {
+        std::cerr << "symbol inspection command failed with exit code " << rc << '\n';
         return EXIT_FAILURE;
     }
 
     const char* required_symbols[] = {
-        "PLUGIN_API_VERSION",
-        "PLUGIN_INIT",
-        "PLUGIN_EXIT",
+        "pluginAPIVersion",
+        "pluginInit",
+        "pluginExit",
     };
 
     for (const char* symbol_name : required_symbols) {
-        if (!has_symbol(handle, symbol_name)) {
+        if (!exported_symbols.contains(symbol_name)) {
             std::cerr << "missing symbol: " << symbol_name << '\n';
-            dlclose(handle);
             return EXIT_FAILURE;
         }
     }
 
-    dlclose(handle);
     return EXIT_SUCCESS;
 }

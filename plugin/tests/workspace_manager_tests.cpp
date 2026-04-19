@@ -344,7 +344,6 @@ bool test_refresh_based_float_transition_notifier_without_floating_event() {
             );
         }
     );
-    manager.set_controller_connected(true);
     manager.manage_workspace("1");
     manager.process_event_for_tests("openwindowv2>>0xaaa,1,foot,foot-a");
     auto state = manager.build_state_dump("1");
@@ -375,6 +374,34 @@ bool test_refresh_based_float_transition_notifier_without_floating_event() {
     ok &= expect(notifications.size() == 3, "tiled transition from query refresh should notify again");
     if (notifications.size() >= 3) {
         ok &= expect(notifications[2] == "client-became-tiled:1:0xaaa", "tiled notification payload mismatch");
+    }
+
+    return ok;
+}
+
+bool test_open_managed_client_emits_transition_without_controller_connection() {
+    bool ok = true;
+
+    hyprmacs::WorkspaceManager manager;
+    std::vector<std::string> notifications;
+    manager.set_client_transition_notifier(
+        [&notifications](const hyprmacs::WorkspaceId& workspace_id, const hyprmacs::ClientId& client_id, bool floating) {
+            notifications.push_back(
+                (floating ? "client-became-floating:" : "client-became-tiled:") + workspace_id + ":" + client_id
+            );
+        }
+    );
+
+    manager.manage_workspace("1");
+    manager.process_event_for_tests("openwindowv2>>0xaaa,1,pcmanfm,hansffu");
+
+    const auto state = manager.build_state_dump("1");
+    ok &= expect(state.managed_clients.size() == 1, "opened tiled client should enter managed set");
+    ok &= expect(notifications.size() == 1,
+                 "managed client open should still emit tiled transition without controller connection");
+    if (notifications.size() >= 1) {
+        ok &= expect(notifications[0] == "client-became-tiled:1:0xaaa",
+                     "open-managed transition payload should match client");
     }
 
     return ok;
@@ -425,6 +452,7 @@ int main() {
     ok &= test_float_state_transitions_update_managed_set_and_emit_notifications();
     ok &= test_openwindow_refreshes_floating_state_from_clients_query();
     ok &= test_refresh_based_float_transition_notifier_without_floating_event();
+    ok &= test_open_managed_client_emits_transition_without_controller_connection();
     ok &= test_state_change_notifier_on_focus_and_close_events();
     return ok ? 0 : 1;
 }

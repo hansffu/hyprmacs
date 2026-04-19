@@ -35,8 +35,16 @@
     flake-utils.lib.eachDefaultSystem (
       system:
       let
-        pkgs = import nixpkgs { inherit system; };
+        pkgs = import nixpkgs {
+          inherit system;
+          overlays = [ hyprland.overlays.hyprland-packages ];
+        };
         hyprPkg = hyprland.packages.${system}.hyprland;
+        hyprBuildDeps = hyprPkg.buildInputs;
+        hyprPkgConfigPath = pkgs.lib.concatStringsSep ":" [
+          (pkgs.lib.makeSearchPathOutput "dev" "lib/pkgconfig" hyprBuildDeps)
+          (pkgs.lib.makeSearchPathOutput "dev" "share/pkgconfig" ([ hyprPkg.dev ] ++ hyprBuildDeps))
+        ];
 
         commonTools = [
           pkgs.coreutils
@@ -60,10 +68,11 @@
 
         devTools = [
           hyprPkg
+          hyprPkg.dev
           pkgs.foot
           pkgs.gdb
           pkgs.wayland-utils
-        ];
+        ] ++ hyprBuildDeps;
         codex-sandbox = sandbox.lib.${system}.mkSandbox {
           pkg = llm-agents.packages.${system}.codex;
           binName = "codex";
@@ -112,7 +121,7 @@
             force_default_wallpaper = 0
           }
 
-          plugin = ${hyprmacsPlugin}/lib/hyprmacs.so
+          plugin = ${hyprmacsPlugin}/lib/libhyprmacs.so
 
           # Nested debug-friendly binds using ALT instead of SUPER
           bind = ALT, Return, exec, ${pkgs.foot}/bin/foot
@@ -203,10 +212,14 @@
         };
 
         devShells.default = pkgs.mkShell {
-          packages = commonTools ++ devTools ++ [
-            runNested
-            codex-sandbox
-          ];
+          packages =
+            commonTools
+            ++ devTools
+            ++ [
+              runNested
+              codex-sandbox
+            ];
+          PKG_CONFIG_PATH = hyprPkgConfigPath;
         };
       }
     );

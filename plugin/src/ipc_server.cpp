@@ -874,6 +874,14 @@ void IpcServer::send_message(int fd, const ProtocolMessage& message) {
 }
 
 void IpcServer::on_client_transition(const WorkspaceId& workspace_id, const ClientId& client_id, bool floating) {
+    if (layout_applier_ != nullptr) {
+        if (floating) {
+            (void)layout_applier_->show_client(client_id);
+        } else {
+            (void)layout_applier_->hide_client(client_id, workspace_id);
+        }
+    }
+
     int fd = -1;
     {
         std::scoped_lock lock(controller_mutex_);
@@ -881,10 +889,6 @@ void IpcServer::on_client_transition(const WorkspaceId& workspace_id, const Clie
     }
     if (!running_.load() || fd < 0 || workspace_manager_ == nullptr) {
         return;
-    }
-
-    if (!floating && layout_applier_ != nullptr) {
-        (void)layout_applier_->hide_client(client_id, workspace_id);
     }
 
     const char* type = floating ? "client-became-floating" : "client-became-tiled";
