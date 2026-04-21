@@ -371,6 +371,7 @@ bool WorkspaceManager::manage_workspace(const WorkspaceId& workspace_id) {
     input_mode_ = InputMode::kEmacsControl;
     client_registry_.reconcile_management(managed_workspace_id_);
     refresh_managing_emacs_client_locked();
+    sync_committed_layout_snapshot_locked();
     if (changed) {
         apply_managed_layout_locked(workspace_id);
         managed_client_seen_.clear();
@@ -409,6 +410,7 @@ bool WorkspaceManager::set_selected_client(const WorkspaceId& workspace_id, cons
         return false;
     }
     client_registry_.set_focus(client_id);
+    sync_committed_layout_snapshot_locked();
     return true;
 }
 
@@ -418,6 +420,7 @@ bool WorkspaceManager::set_input_mode(const WorkspaceId& workspace_id, InputMode
         return false;
     }
     input_mode_ = mode;
+    sync_committed_layout_snapshot_locked();
     return true;
 }
 
@@ -500,13 +503,11 @@ bool WorkspaceManager::apply_managed_layout_snapshot(ManagedWorkspaceLayoutSnaps
     }
 
     refresh_managing_emacs_client_locked();
-
+    managed_layout_version_ += 1;
     ManagedWorkspaceLayoutSnapshot committed_snapshot = std::move(snapshot);
-    committed_snapshot.layout_version = managed_layout_snapshot_.has_value() ? managed_layout_snapshot_->layout_version + 1 : 1;
-    committed_snapshot.input_mode = input_mode_;
-    committed_snapshot.selected_client = selected_managed_client_locked(*managed_workspace_id_);
-    committed_snapshot.managing_emacs_client_id = managing_emacs_client_id_;
+    committed_snapshot.layout_version = managed_layout_version_;
     managed_layout_snapshot_ = std::move(committed_snapshot);
+    sync_committed_layout_snapshot_locked();
     return true;
 }
 
@@ -703,9 +704,21 @@ std::optional<ClientId> WorkspaceManager::selected_managed_client_locked(const W
     return *snapshot.selected_client;
 }
 
+void WorkspaceManager::sync_committed_layout_snapshot_locked() {
+    if (!managed_layout_snapshot_.has_value() || !managed_workspace_id_.has_value() ||
+        managed_layout_snapshot_->workspace_id != *managed_workspace_id_) {
+        return;
+    }
+
+    managed_layout_snapshot_->selected_client = selected_managed_client_locked(*managed_workspace_id_);
+    managed_layout_snapshot_->input_mode = input_mode_;
+    managed_layout_snapshot_->managing_emacs_client_id = managing_emacs_client_id_;
+}
+
 void WorkspaceManager::refresh_managing_emacs_client_locked() {
     if (!managed_workspace_id_.has_value()) {
         managing_emacs_client_id_ = std::nullopt;
+        sync_committed_layout_snapshot_locked();
         return;
     }
 
@@ -731,6 +744,7 @@ void WorkspaceManager::refresh_managing_emacs_client_locked() {
     }
 
     managing_emacs_client_id_ = find_emacs_client_locked(*managed_workspace_id_);
+    sync_committed_layout_snapshot_locked();
 }
 
 void WorkspaceManager::apply_managed_layout_locked(const WorkspaceId& workspace_id) {

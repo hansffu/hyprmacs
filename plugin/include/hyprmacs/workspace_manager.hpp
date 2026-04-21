@@ -88,6 +88,7 @@ class WorkspaceManager {
     bool dispatch_keyword_locked(std::string_view key, std::string_view value) const;
     std::optional<ClientId> find_emacs_client_locked(const WorkspaceId& workspace_id) const;
     std::optional<ClientId> selected_managed_client_locked(const WorkspaceId& workspace_id) const;
+    void sync_committed_layout_snapshot_locked();
     void refresh_managing_emacs_client_locked();
 
     void apply_managed_layout_locked(const WorkspaceId& workspace_id);
@@ -117,6 +118,7 @@ class WorkspaceManager {
     std::unordered_set<ClientId> managed_client_seen_;
     std::optional<ClientId> managing_emacs_client_id_;
     std::optional<ManagedWorkspaceLayoutSnapshot> managed_layout_snapshot_;
+    std::uint64_t managed_layout_version_ = 0;
     DispatchExecutor dispatch_executor_;
     QueryExecutor query_executor_;
     ClientTransitionNotifier client_transition_notifier_;
