@@ -1186,6 +1186,66 @@ Validation:
     - =pluginInit=
     - =pluginExit=
 
+*** DONE Session note: Task 14 review-followup for floating window validation (2026-04-21)
+- User requested stronger floating-window validation before approving the Task 14 WAIT checkpoint.
+- Nested Hyprland config updates in =flake.nix=:
+  - Added =windowrulev2 = float,class:^(mpv)$= so mpv windows open as native floating surfaces.
+  - Added =ALT+F= keybind for native =togglefloating= dispatch in nested runs.
+  - Added =pkgs.mpv= to dev tools so nested E2E can spawn mpv deterministically.
+- Extended nested full E2E flow in =hyprmacs-run-full-e2e-test=:
+  - Spawns an =mpv= test window and asserts it remains floating and stays on the managed workspace.
+  - Verifies the floating mpv client is excluded from managed and eligible sets and has no managed Emacs buffer association.
+  - Re-validates those exclusions after Emacs focus and managed-client layout switches, ensuring managed layout sync does not absorb floating windows.
+
+*** DONE Session note: Task 14 review-followup manual event-tap capture for event selection (2026-04-21)
+- User requested a full Hyprland event capture pass from the same nested runtime path used by E2E (=nix run .#default=).
+- Added debug path in =WorkspaceManager=: when =HYPRMACS_LOG_ALL_EVENTS= is truthy, plugin logs every =.socket2.sock= frame as =event-all= before tracked-event filtering.
+- Nested launcher now exports =HYPRMACS_LOG_ALL_EVENTS=1= so manual/e2e nested sessions can capture complete event streams.
+- Ran a manual nested capture flow with window open/focus/title changes, workspace manage/unmanage, hide/show moves, close, and togglefloating actions; artifact bundle:
+  - =artifacts/manual-events/20260421-222735/summary.log=
+  - =artifacts/manual-events/20260421-222735/hyprland.log=
+  - =artifacts/manual-events/20260421-222735/event-name-counts.txt=
+- Observed event names in this runtime:
+  - =openwindow=, =closewindow=
+  - =activewindow=, =activewindowv2=
+  - =windowtitle=, =windowtitlev2=
+  - =movewindow=, =movewindowv2=
+  - workspace/monitor metadata events (=workspace*=, =createworkspace*=, =destroyworkspace*=, =moveworkspace*=, =focusedmon*=, =monitoradded*=, =monitorremoved*=, =activelayout=)
+- Not observed in this run, including after explicit =togglefloating= actions:
+  - =changefloatingmode=
+  - =changefloatingmodev2=
+- Practical implication for current runtime:
+  - floating-state transitions cannot rely solely on dedicated floating events.
+  - keep using refresh-from-=j/clients= on reliable lifecycle events (open/focus/title) to infer floating state changes.
+
+*** DONE Session note: Task 14 review-followup architecture spec for non-floating managed geometry (2026-04-21)
+- User requested a technical specification for replacing managed-client floating geometry with a tiled algorithm path.
+- Added markdown architecture spec:
+  - =docs/architecture/non-floating-managed-layout-spec.md=
+- Spec scope includes:
+  - Hyprland custom tiled algorithm API surface relevant to this repo
+  - plugin data/control flow for snapshot-driven non-floating geometry
+  - migration plan (feature-flagged dual path -> default tiled path -> remove floating geometry path)
+  - validation and acceptance criteria.
+
+*** DONE Session note: Task 14 review-followup requirement update for managing Emacs window fullscreen (2026-04-21)
+- User clarified a hard requirement for the proposed tiled-geometry architecture:
+  - managing Emacs window should always occupy full workspace area while managed.
+  - plugin (not Emacs) should own this placement if plugin owns all placement logic.
+- Updated =docs/architecture/non-floating-managed-layout-spec.md= to include:
+  - fullscreen Emacs invariant in goals/data model/control flow/behavior rules
+  - recalculate step that pins managing Emacs target to =space()->workArea()=
+  - validation and acceptance criteria for persistent Emacs fullscreen behavior.
+
+*** DONE Session note: Task 14 review-followup on managed-window reposition policy (2026-04-21)
+- User clarified two additional requirements for the architecture spec:
+  - app-specific examples (such as =mpv=) should not be part of the normative design text.
+  - managed clients and managing Emacs should not be user-repositionable while managed; if hard prevention is not guaranteed, plugin must detect geometry drift and snap back without infinite loops.
+- Updated =docs/architecture/non-floating-managed-layout-spec.md= accordingly:
+  - removed app-specific wording in automated validation criteria.
+  - added explicit interactive repositioning policy with prevent-first + corrective snapback model.
+  - added loop-guard requirements (expected-box compare, version token, debounced scheduling, bounded retries/backoff, managed-target-only scope).
+
 * Execution Order
 - Start with task 0 and task 1 only.
 - Do not start task 2 until the repo builds cleanly.
