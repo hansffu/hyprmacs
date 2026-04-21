@@ -446,7 +446,7 @@ bool test_managed_layout_snapshot_apply_get_and_versioning() {
 
     hyprmacs::ManagedWorkspaceLayoutSnapshot snapshot {
         .workspace_id = "1",
-        .layout_version = 0,
+        .layout_version = 99,
         .rectangles_by_client_id = {
             {"0xaaa", hyprmacs::ClientRect {.x = 0, .y = 0, .width = 100, .height = 100}},
             {"0xbbb", hyprmacs::ClientRect {.x = 100, .y = 0, .width = 100, .height = 100}},
@@ -483,6 +483,7 @@ bool test_managed_layout_snapshot_apply_get_and_versioning() {
 
     snapshot.selected_client = "0xbbb";
     snapshot.managing_emacs_client_id = "0xfff";
+    snapshot.layout_version = 7;
     ok &= expect(manager.apply_managed_layout_snapshot(snapshot), "second snapshot apply should succeed");
 
     stored = manager.managed_layout_snapshot("1");
@@ -553,6 +554,70 @@ bool test_managed_layout_snapshot_is_workspace_scoped() {
     return ok;
 }
 
+bool test_controller_disconnect_clears_all_managed_layout_snapshots() {
+    bool ok = true;
+
+    std::vector<std::string> dispatched_commands;
+    std::unordered_map<std::string, std::string> query_replies {
+        {"j/workspaces", R"([{"id":1,"tiledLayout":"master"},{"id":2,"tiledLayout":"dwindle"}])"},
+        {"j/getoption animations:enabled", "{\"int\":1}"},
+        {"j/getoption misc:focus_on_activate", "{\"int\":1}"},
+    };
+
+    hyprmacs::WorkspaceManager manager(
+        [&dispatched_commands](const std::string& command) {
+            dispatched_commands.push_back(command);
+            return 0;
+        },
+        [&query_replies](const std::string& command) -> std::optional<std::string> {
+            const auto it = query_replies.find(command);
+            if (it == query_replies.end()) {
+                return std::nullopt;
+            }
+            return it->second;
+        }
+    );
+
+    hyprmacs::ManagedWorkspaceLayoutSnapshot first {
+        .workspace_id = "1",
+        .layout_version = 44,
+        .rectangles_by_client_id = {},
+        .visible_client_ids = {},
+        .hidden_client_ids = {},
+        .stacking_order = {},
+        .selected_client = std::nullopt,
+        .input_mode = std::nullopt,
+        .managing_emacs_client_id = std::nullopt,
+    };
+    hyprmacs::ManagedWorkspaceLayoutSnapshot second {
+        .workspace_id = "2",
+        .layout_version = 88,
+        .rectangles_by_client_id = {},
+        .visible_client_ids = {},
+        .hidden_client_ids = {},
+        .stacking_order = {},
+        .selected_client = std::nullopt,
+        .input_mode = std::nullopt,
+        .managing_emacs_client_id = std::nullopt,
+    };
+
+    ok &= expect(manager.apply_managed_layout_snapshot(first), "first snapshot should apply");
+    ok &= expect(manager.apply_managed_layout_snapshot(second), "second snapshot should apply");
+    ok &= expect(manager.managed_layout_snapshot("1").has_value(), "workspace 1 snapshot should exist before disconnect");
+    ok &= expect(manager.managed_layout_snapshot("2").has_value(), "workspace 2 snapshot should exist before disconnect");
+
+    manager.manage_workspace("1");
+    manager.set_controller_connected(true);
+    manager.set_controller_connected(false);
+
+    ok &= expect(!manager.managed_layout_snapshot("1").has_value(),
+                 "disconnect should clear active workspace snapshot");
+    ok &= expect(!manager.managed_layout_snapshot("2").has_value(),
+                 "disconnect should clear inactive workspace snapshot too");
+
+    return ok;
+}
+
 }  // namespace
 
 int main() {
@@ -572,5 +637,6 @@ int main() {
     ok &= test_state_change_notifier_on_focus_and_close_events();
     ok &= test_managed_layout_snapshot_apply_get_and_versioning();
     ok &= test_managed_layout_snapshot_is_workspace_scoped();
+    ok &= test_controller_disconnect_clears_all_managed_layout_snapshots();
     return ok ? 0 : 1;
 }

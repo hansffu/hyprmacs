@@ -481,7 +481,7 @@ void WorkspaceManager::set_controller_connected(bool connected) {
     controller_connected_ = connected;
     if (transition_to_disconnected && managed_workspace_id_.has_value()) {
         restore_managed_layout_locked(*managed_workspace_id_);
-        managed_layout_snapshots_.erase(*managed_workspace_id_);
+        managed_layout_snapshots_.clear();
         managed_workspace_id_ = std::nullopt;
         input_mode_ = std::nullopt;
         last_active_client_id_ = std::nullopt;
@@ -498,10 +498,7 @@ bool WorkspaceManager::apply_managed_layout_snapshot(ManagedWorkspaceLayoutSnaps
     }
 
     auto& stored_snapshot = managed_layout_snapshots_[snapshot.workspace_id];
-    if (snapshot.layout_version <= stored_snapshot.layout_version) {
-        snapshot.layout_version = stored_snapshot.layout_version + 1;
-    }
-
+    snapshot.layout_version = stored_snapshot.layout_version + 1;
     stored_snapshot = std::move(snapshot);
     return true;
 }
