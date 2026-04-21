@@ -1,0 +1,58 @@
+#+title: ADR 0005 - Disconnect Recovery and Socket Resolution Hardening
+#+date: 2026-04-18
+
+* Status
+Accepted and implemented in Task 10.
+
+* Context
+During long-lived nested sessions, hyprmacs could end up in broken intermediate states when the Emacs controller disconnected or when runtime environment variables were no longer visible to later dispatch calls.
+
+Observed risks:
+
+1. Hidden managed clients remained hidden across controller disconnects.
+2. Clients kept temporary geometry mode after session teardown.
+3. Plugin dispatch/query helpers depended on reading =HYPRLAND_INSTANCE_SIGNATURE= at every call.
+4. Protocol failures and unknown commands were only logged, not reported to the controller.
+5. Emacs retained stale managed state after transport drop.
+
+* Decision
+Adopt a deterministic recovery contract for controller disconnect and reconnect.
+
+1. Plugin disconnect cleanup is authoritative and immediate.
+- On controller disconnect, plugin restores managed workspace clients to native behavior before clearing session ownership.
+- Cleanup includes:
+  - showing clients hidden in =special:hyprmacs-hidden= for that workspace
+  - disabling temporary geometry positioning mode for managed clients
+- After cleanup, plugin clears managed workspace ownership and restores workspace policy snapshot.
+
+2. Command socket path is resolved once and cached.
+- Plugin initializes Hyprland command socket path at plugin startup and reuses the cached path for later dispatch/query calls.
+- Runtime dispatch no longer depends on environment-variable availability at call time.
+
+3. Protocol errors are explicit frames.
+- Invalid frame, unsupported version, and unknown command paths emit =protocol-error= with machine-readable =code= and human-readable =message=.
+
+4. Emacs transport drop clears stale session state.
+- On process sentinel drop, Emacs clears managed snapshots and associated buffers.
+- Reconnect + request-state is the supported resync path to rebuild from plugin truth.
+
+* Consequences
+Pros:
+- Fewer stuck sessions after controller restarts.
+- Better operator visibility when protocol frames are malformed or unsupported.
+- Reduced fragility in long-lived plugin processes.
+
+Tradeoffs:
+- Disconnect cleanup now issues extra compositor commands (show/togglefloating) during teardown.
+- =protocol-error= increases IPC traffic for bad frames.
+
+* Rejected Alternatives
+1. Keep hidden/positioning cleanup as manual operator action.
+- Rejected because it leaves users in inconsistent post-crash state.
+
+2. Continue environment lookups for each dispatch.
+- Rejected due observed runtime failures when env vars were unavailable later in process lifetime.
+
+* Follow-up
+- Validate disconnect cleanup in nested Hyprland with active hidden clients and client-control mode.
+- Validate reconnect flow by killing Emacs and reissuing manage/request-state without restarting Hyprland.

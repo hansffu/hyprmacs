@@ -1,0 +1,286 @@
+#+title: hyprmacs IPC Protocol v1
+#+date: 2026-04-15
+
+* Status
+This document defines the active wire contract between the Hyprland plugin and the Emacs package for session control plus snapshot-style layout updates.
+
+* Transport
+- Unix domain socket owned by the plugin.
+- Socket location lives under =$XDG_RUNTIME_DIR/hypr/$HYPRLAND_INSTANCE_SIGNATURE/hyprmacs-v1.sock=.
+- Exactly one Emacs controller may be connected at a time.
+- Payload format is newline-delimited JSON.
+- Each line is one complete protocol frame.
+
+* Frame Envelope
+Every message uses this envelope:
+
+#+begin_src json
+{
+  "version": 1,
+  "type": "manage-workspace",
+  "workspace_id": "1",
+  "timestamp": "2026-04-15T12:00:00Z",
+  "payload": {}
+}
+#+end_src
+
+Envelope rules:
+- =version=: integer protocol version. v1 messages must use =1=.
+- =type=: string message name.
+- =workspace_id=: opaque workspace identifier represented as a string. The plugin and Emacs compare it by equality only.
+- =timestamp=: UTC timestamp in RFC 3339 format.
+- =payload=: message-specific JSON object. Use ={}= when no fields are needed.
+
+* Message Flow
+** Emacs -> Plugin
+*** =manage-workspace=
+Purpose:
+- Request that the target workspace enter hyprmacs-managed mode.
+
+Payload:
+#+begin_src json
+{
+  "adopt_existing_clients": true
+}
+#+end_src
+
+Rules:
+- =adopt_existing_clients= defaults to =true= if omitted.
+- If the workspace is already managed, the plugin treats the command as idempotent and replies with =workspace-managed= followed by =state-dump=.
+
+*** =unmanage-workspace=
+Purpose:
+- Request that the target workspace leave hyprmacs-managed mode and return to native Hyprland behavior.
+
+Payload:
+#+begin_src json
+{
+  "reason": "user-request"
+}
+#+end_src
+
+Rules:
+- =reason= is optional. Recommended values in v1 are =user-request= and =controller-disconnect=.
+- If the workspace is already unmanaged, the plugin still returns =workspace-unmanaged=.
+
+*** =request-state=
+Purpose:
+- Request a snapshot of the plugin's current understanding of the target workspace.
+
+Payload:
+#+begin_src json
+{}
+#+end_src
+
+Rules:
+- The plugin replies with =state-dump=.
+
+*** =set-layout=
+Purpose:
+- Publish Emacs layout intent as one canonical workspace snapshot.
+
+Payload:
+#+begin_src json
+{
+  "selected_client": "0xabc123",
+  "input_mode": "emacs-control",
+  "visible_clients": ["0xabc123", "0xdef456"],
+  "hidden_clients": ["0x999999"],
+  "rectangles": [
+    {"client_id": "0xabc123", "x": 0, "y": 0, "width": 960, "height": 540},
+    {"client_id": "0xdef456", "x": 960, "y": 0, "width": 960, "height": 540}
+  ],
+  "stacking_order": ["0xabc123", "0xdef456"]
+}
+#+end_src
+
+Rules:
+- =visible_clients=, =hidden_clients=, =rectangles=, and =stacking_order= are required.
+- Every visible client must have exactly one rectangle entry.
+- Overlapping visible rectangles are rejected in v1.
+- The plugin responds with =layout-applied= and then =state-dump=.
+
+** Plugin -> Emacs
+*** =workspace-managed=
+Purpose:
+- Notify Emacs that the workspace is now under hyprmacs management.
+
+Payload:
+#+begin_src json
+{
+  "managed": true,
+  "controller_connected": true
+}
+#+end_src
+
+*** =workspace-unmanaged=
+Purpose:
+- Notify Emacs that the workspace is no longer under hyprmacs management.
+
+Payload:
+#+begin_src json
+{
+  "managed": false,
+  "reason": "user-request"
+}
+#+end_src
+
+Rules:
+- =reason= should be present when known.
+- Recommended v1 values are =user-request=, =controller-disconnect=, and =plugin-shutdown=.
+
+*** =state-dump=
+Purpose:
+- Send a canonical workspace snapshot that Emacs can use to build local state.
+
+Payload:
+#+begin_src json
+{
+  "managed": true,
+  "controller_connected": true,
+  "eligible_clients": [
+    {
+      "client_id": "0xabc123",
+      "title": "foot",
+      "app_id": "foot",
+      "floating": false
+    }
+  ],
+  "managed_clients": [],
+  "selected_client": null,
+  "input_mode": null
+}
+#+end_src
+
+Payload field rules:
+- =eligible_clients=: clients in the workspace that could be managed if adoption rules allow it.
+- =managed_clients=: currently managed clients. In the earliest prototype this may be empty even when eligible clients exist.
+- =selected_client=: current managed client ID or =null= when none is selected.
+- =input_mode=: =null= until focus-mode support exists. Current values are =emacs-control= or =client-control=.
+
+*** =layout-applied=
+Purpose:
+- Acknowledge the most recent =set-layout= attempt.
+
+Payload:
+#+begin_src json
+{
+  "selected_client": "0xabc123",
+  "ok": true
+}
+#+end_src
+
+Rules:
+- =ok=false= means the snapshot was rejected (for example overlap validation failure or malformed payload).
+
+*** =mode-changed=
+Purpose:
+- Acknowledge =set-input-mode= requests.
+
+Payload:
+#+begin_src json
+{
+  "mode": "client-control",
+  "ok": true
+}
+#+end_src
+
+*** =client-became-floating=
+Purpose:
+- Notify Emacs that a previously managed client left managed membership due to floating transition.
+
+Payload:
+#+begin_src json
+{
+  "client_id": "0xabc123",
+  "floating": true
+}
+#+end_src
+
+Rules:
+- The plugin should send a fresh =state-dump= immediately after this event.
+
+*** =client-became-tiled=
+Purpose:
+- Notify Emacs that a previously floating client re-entered managed membership as tiled and eligible.
+
+Payload:
+#+begin_src json
+{
+  "client_id": "0xabc123",
+  "floating": false
+}
+#+end_src
+
+Rules:
+- The plugin should send a fresh =state-dump= immediately after this event.
+
+*** =protocol-error=
+Purpose:
+- Report malformed frames, unsupported protocol versions, or unsupported command types with machine-readable context.
+
+Payload:
+#+begin_src json
+{
+  "code": "unknown-type",
+  "message": "unsupported message type",
+  "detail": "totally-unknown-command"
+}
+#+end_src
+
+Rules:
+- =code= is a short category value such as =invalid-frame=, =unsupported-version=, or =unknown-type=.
+- =message= is a human-readable summary.
+- =detail= is optional and may include the offending type or version.
+
+* Protocol Rules
+- Unknown protocol versions are rejected.
+- Unknown message types are protocol violations and should return =protocol-error=.
+- Messages are processed in receive order.
+- The latest =state-dump= is authoritative when Emacs needs to resynchronize.
+- Invalid or malformed frames should return =protocol-error= when possible.
+
+* Task 6 Temporary Debug Commands
+These commands are temporary spike controls for validating hidden-client behavior before layout integration.
+
+** Emacs -> Plugin
+*** =debug-hide-client=
+Payload:
+#+begin_src json
+{
+  "client_id": "0xabc123"
+}
+#+end_src
+
+*** =debug-show-client=
+Payload:
+#+begin_src json
+{
+  "client_id": "0xabc123"
+}
+#+end_src
+
+** Plugin -> Emacs
+*** =debug-hide-client-result=
+Payload:
+#+begin_src json
+{
+  "client_id": "0xabc123",
+  "action": "hide",
+  "ok": true
+}
+#+end_src
+
+*** =debug-show-client-result=
+Payload:
+#+begin_src json
+{
+  "client_id": "0xabc123",
+  "action": "show",
+  "ok": true
+}
+#+end_src
+
+Notes:
+- These command types are for Task 6 spike validation only.
+- They are expected to be replaced by layout-driven visibility control in later tasks.

@@ -1,0 +1,225 @@
+#+title: hyprmacs Manual Smoke Tests
+#+date: 2026-04-16
+
+* Purpose
+Quick manual checks for each prototype checkpoint in the nested Hyprland environment.
+
+* Automated Harness
+- Run =just e2e= for the scripted nested regression flow (Tasks 1-11 coverage).
+- Artifacts are written under =artifacts/e2e/<timestamp>/=:
+  - compositor/plugin runtime log
+  - Emacs daemon/eval logs
+  - scripted session assertion log
+- The harness runs unit suites first, then launches a fresh nested Hyprland session and executes runtime assertions.
+- Runtime assertions include:
+  - manage/unmanage lifecycle and layout transition checks
+  - input-mode roundtrip and focus handoff to managing Emacs frame
+  - client-control mode targets the client bound to the current managed buffer (not arbitrary registry order)
+  - duplicate-title clients tracked by distinct client IDs
+  - managed-buffer visibility lifecycle (open in window, hide by closing window, restore visibility)
+  - managed-buffer kill-current-buffer and automatic recreate-on-state flow
+  - close-window by command and state cleanup
+  - floating-toggle lifecycle at compositor state level
+  - multi-frame Emacs scenario with managing-frame focus return validation
+
+* Prerequisites
+- Run nested Hyprland with =just run=.
+- Load plugin with =just load=.
+- Load Emacs package with =just emacs=.
+
+* Task 1 Bootstrap Smoke
+- Confirm plugin load prints a hyprmacs bootstrap notification.
+- Confirm Emacs can load =hyprmacs.el= without errors.
+
+* Task 3 Registry Smoke
+- Open two =foot= windows and move focus between them.
+- Verify plugin logs show event lines and =state-dump= lines.
+- Verify Emacs window is present in logs but marked =eligible=false=.
+
+* Task 5 IPC Smoke
+- In Emacs run:
+  - =M-x hyprmacs-manage-current-workspace=
+  - =M-x hyprmacs-request-state=
+  - =M-x hyprmacs-dump-state=
+- Notes:
+  - =hyprmacs-manage-current-workspace= auto-connects if needed.
+  - Interactive workspace commands infer current workspace from Hyprland active workspace.
+- Verify plugin logs include =ipc recv= and =ipc send= entries.
+- Verify =*hyprmacs-state*= updates with live workspace state.
+
+* Task 6 Hidden-Client Spike Smoke
+- Ensure at least one eligible client exists (e.g. =foot=).
+- In Emacs run:
+  - =M-x hyprmacs-debug-hide-client=
+  - enter client ID like =0x...=
+  - =M-x hyprmacs-debug-show-client=
+  - enter same client ID
+- Validate for =foot= and one GUI app:
+  - Client disappears after hide command.
+  - Client process remains alive.
+  - Client returns with state intact after show command.
+- Additional checks:
+  - Switch away and back to workspace while hidden.
+  - Close a client while hidden and ensure no plugin crash.
+
+* Task 8 Multi-Client Layout Smoke
+- Start at least two managed clients (for example two =foot= windows).
+- In Emacs run:
+  - =M-x hyprmacs-manage-current-workspace=
+  - =M-x hyprmacs-request-state=
+  - =M-x hyprmacs-dump-state=
+- Display two managed buffers in two Emacs windows:
+  - split Emacs window
+  - switch each pane to a different =*hyprmacs:...*= buffer
+- Trigger a layout publish:
+  - automatic: enabled by =hyprmacs-manage-current-workspace=
+  - manual fallback: =M-x hyprmacs-sync-layout=
+- Input mode helpers:
+  - =M-x hyprmacs-set-input-mode= enters =client-control=
+  - =M-x hyprmacs-set-emacs-control-mode= returns to =emacs-control=
+- Validate:
+  - both visible managed clients are on workspace 1 and moved to matching rectangles
+  - non-visible managed clients move to =special:hyprmacs-hidden=
+  - overlapping Emacs panes are rejected with a layout error (no partial mutation)
+
+* Task 8A Workspace Policy Smoke
+- Start nested Hyprland with =just run= and open Emacs + at least one app window.
+- In Emacs run:
+  - =M-x hyprmacs-manage-current-workspace=
+- Validate while managed:
+  - workspace policy applies:
+    - =hyprctl getoption animations:enabled= shows =0=
+    - =hyprctl getoption misc:focus_on_activate= shows =0=
+- In Emacs run:
+  - =M-x hyprmacs-unmanage-workspace=
+- Validate after unmanage:
+  - the two options above are restored to pre-manage values.
+
+* Task 9 Popup, Auxiliary, and Float-Transition Smoke
+- Start nested session with Emacs and at least two eligible app clients in one workspace.
+- In Emacs run:
+  - =M-x hyprmacs-manage-current-workspace=
+  - =M-x hyprmacs-request-state=
+- Validate popup/transient exclusion:
+  - open a dialog/auth/popup-like client (for example pinentry, chooser, or auth prompt)
+  - confirm it remains native (not in =managed-clients= in =*hyprmacs-state*=)
+- Validate Emacs auxiliary-window behavior:
+  - open minibuffer completion and/or a child-frame UI
+  - confirm auxiliary Emacs UI stays native and above managed clients
+- Validate float transition handling:
+  - toggle a managed client to floating
+  - confirm it leaves =managed-clients= after next state update
+  - toggle it back to tiled
+  - confirm it re-enters =managed-clients= automatically
+- Validate transition notification flow:
+  - check plugin logs for =client-became-floating= / =client-became-tiled= IPC sends followed by =state-dump=
+
+* Task 10 Disconnect and Resync Smoke
+- Start nested session with Emacs and at least two managed clients.
+- In Emacs run:
+  - =M-x hyprmacs-manage-current-workspace=
+  - =M-x hyprmacs-sync-layout=
+- Force one client hidden (for example by selecting another managed buffer) so hidden-client state exists.
+- Kill Emacs abruptly while workspace is managed (both from emacs-control and client-control should be tested).
+- Validate plugin cleanup:
+  - hidden clients return to visible native workspace placement
+  - temporary positioning mode does not remain sticky across reconnect
+  - managed policy options are restored to pre-manage values
+- Restart Emacs and reconnect:
+  - =M-x hyprmacs-connect=
+  - =M-x hyprmacs-request-state=
+- Validate resync:
+  - =*hyprmacs-state*= reflects plugin truth after reconnect
+  - managed buffers rebuild from fresh =state-dump=
+- Protocol error sanity checks:
+  - send an unsupported command frame and confirm plugin emits =protocol-error=
+  - verify Emacs session records =:last-error= after receiving a protocol-error frame
+
+* Task 11 Explicit hyprmacs Layout Mode Smoke
+- Start nested session with at least one eligible tiled client and Emacs available.
+- Capture baseline layout:
+  - =hyprctl -j activeworkspace | jq .tiledLayout=
+  - record expected pre-manage layout (typically =dwindle= or =master=)
+- In Emacs run:
+  - =M-x hyprmacs-manage-current-workspace=
+- Validate while managed:
+  - =hyprctl -j activeworkspace | jq .tiledLayout= reports =hyprmacs=
+  - existing eligible tiled clients are hidden to =special:hyprmacs-hidden= until Emacs publishes layout visibility
+- With workspace still managed, open a new eligible tiled client (for example =hyprctl dispatch exec foot=):
+  - verify the new client is hidden immediately to =special:hyprmacs-hidden= before any explicit layout publish
+- Open an additional Emacs frame/window in the same workspace while managed:
+  - verify Emacs-control handoff still returns focus to the original managing Emacs frame
+  - verify non-managed tiled windows are no longer forced into overlapping full-screen geometry by layout recalc
+- With managed clients visible, click-focus a different client and close one using the client UI close button:
+  - verify Emacs session state updates automatically (no manual =hyprmacs-request-state= required)
+  - verify =managed-clients= and =selected-client= in =*hyprmacs-state*= reflect the compositor event
+- Trigger disconnect cleanup (close Emacs controller, or let batch controller exit):
+  - =hyprctl -j activeworkspace | jq .tiledLayout= restores the pre-manage value
+  - hidden clients return to the normal workspace
+  - global policy values from Task 8A remain restored after cleanup
+
+* Task 12 Managed-Client Major Mode Smoke
+- Start nested session with Emacs and at least one managed non-Emacs client.
+- In Emacs run:
+  - =M-x hyprmacs-manage-current-workspace=
+  - open/select a managed client buffer (=*hyprmacs:...*=)
+- Validate buffer mode identity:
+  - =major-mode= is =hyprmacs-window-mode=
+  - mode line shows input state tag (=Hyprmacs[E]= or =Hyprmacs[C]=)
+- Validate mode keymap:
+  - press =C-c C-c= in a managed buffer and confirm hyprmacs switches to =client-control=
+- Validate mode hooks and rename behavior:
+  - changing client title updates buffer name via default rename policy
+  - optional override of =hyprmacs-window-rename-function= is honored
+- Validate kill-buffer behavior:
+  - in a managed buffer, run =M-x kill-current-buffer=
+  - confirm hyprmacs intercepts kill and requests compositor close for the client
+  - if the app closes, confirm client disappears from =managed-clients= in =*hyprmacs-state*=
+  - if the app shows a confirmation dialog instead of closing, confirm buffer remains and no duplicate/recreated managed buffer appears
+- Validate session-driven mode updates:
+  - switching between emacs-control and client-control updates mode-line tag in managed buffers
+  - selected client transitions trigger =hyprmacs-window-selected-functions=
+
+* Task 13 Custom Dispatcher Smoke
+- Start nested session with plugin loaded, Emacs connected, and at least one managed client visible.
+- Enter client-control mode (for example from a managed buffer with =C-c C-c=).
+- Validate dispatcher handoff:
+  - press =ALT+E= in nested Hyprland
+  - confirm focus returns to managing Emacs frame
+  - confirm =*hyprmacs-state*= reflects =input-mode: emacs-control= after update
+- Validate direct dispatcher invocation:
+  - run =hyprctl dispatch hyprmacs:set-emacs-control-mode=
+  - confirm command succeeds and focus/state behavior matches keybind path
+- Regression checks:
+  - plugin test target =hyprmacs_dispatcher_tests= passes
+  - existing IPC mode-switch behavior remains unchanged for Emacs command path
+
+* Notes
+- Task 6 uses temporary debug commands and a special workspace (=special:hyprmacs-hidden=) for hide/restore.
+- This is a spike path and may change before layout integration.
+
+* Prototype Gate Checklist
+These scenarios are required before prototype-significant refactors are accepted:
+
+- Nested demo boot:
+  - =nix run .#demo= starts nested Hyprland with plugin loaded.
+- Manage/unmanage:
+  - Emacs can manage current workspace and restore previous layout on unmanage.
+- Discovery:
+  - Existing eligible tiled clients are discovered and represented in =*hyprmacs-state*=.
+- Selection + visibility:
+  - Selecting managed buffers updates visible managed clients.
+  - Hide/show semantics remain stable across layout sync.
+- Input mode handoff:
+  - managed buffer =C-c C-c= enters client-control.
+  - =ALT+E= dispatcher returns emacs-control without focus deadlock.
+- Geometry sync:
+  - set-layout updates size and position (including minibuffer/Vertico perturbations) without drift.
+- Kill interception:
+  - killing a managed buffer requests compositor close and does not immediately destroy buffer.
+  - buffer/client are removed when compositor confirms close.
+- Floating/native behavior:
+  - true floating/dialog/popup windows remain native and are not forced into managed layout.
+- Regression suite:
+  - =just test= passes.
+  - =just e2e= passes.

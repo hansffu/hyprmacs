@@ -1,0 +1,912 @@
+#include "hyprmacs/ipc_server.hpp"
+
+#include <array>
+#include <cctype>
+#include <cerrno>
+#include <chrono>
+#include <cstdio>
+#include <cstdlib>
+#include <cstring>
+#include <ctime>
+#include <iostream>
+#include <sstream>
+#include <sys/socket.h>
+#include <sys/un.h>
+#include <unistd.h>
+
+namespace hyprmacs {
+namespace {
+
+std::string now_rfc3339() {
+    const auto now = std::chrono::system_clock::now();
+    const std::time_t t = std::chrono::system_clock::to_time_t(now);
+
+    std::tm tm {};
+    gmtime_r(&t, &tm);
+
+    char buffer[32] {};
+    std::strftime(buffer, sizeof(buffer), "%Y-%m-%dT%H:%M:%SZ", &tm);
+    return buffer;
+}
+
+std::string payload_for_workspace_managed(bool controller_connected) {
+    std::ostringstream out;
+    out << "{";
+    out << "\"managed\":true,";
+    out << "\"controller_connected\":" << (controller_connected ? "true" : "false");
+    out << "}";
+    return out.str();
+}
+
+std::string payload_for_workspace_unmanaged(std::string_view reason) {
+    std::ostringstream out;
+    out << "{";
+    out << "\"managed\":false,";
+    out << "\"reason\":\"" << reason << "\"";
+    out << "}";
+    return out.str();
+}
+
+std::string payload_for_debug_hide_show_result(std::string_view client_id, bool ok, std::string_view action) {
+    std::ostringstream out;
+    out << "{";
+    out << "\"client_id\":\"" << client_id << "\",";
+    out << "\"action\":\"" << action << "\",";
+    out << "\"ok\":" << (ok ? "true" : "false");
+    out << "}";
+    return out.str();
+}
+
+std::string payload_for_layout_applied(std::string_view selected_client, bool ok) {
+    std::ostringstream out;
+    out << "{";
+    out << "\"selected_client\":\"" << selected_client << "\",";
+    out << "\"ok\":" << (ok ? "true" : "false");
+    out << "}";
+    return out.str();
+}
+
+std::string payload_for_mode_changed(std::string_view mode, bool ok) {
+    std::ostringstream out;
+    out << "{";
+    out << "\"mode\":\"" << mode << "\",";
+    out << "\"ok\":" << (ok ? "true" : "false");
+    out << "}";
+    return out.str();
+}
+
+std::string payload_for_client_transition(std::string_view client_id, bool floating) {
+    std::ostringstream out;
+    out << "{";
+    out << "\"client_id\":\"" << client_id << "\",";
+    out << "\"floating\":" << (floating ? "true" : "false");
+    out << "}";
+    return out.str();
+}
+
+std::string payload_for_protocol_error(std::string_view code, std::string_view message, std::string_view detail = "") {
+    std::ostringstream out;
+    out << "{";
+    out << "\"code\":\"" << code << "\",";
+    out << "\"message\":\"" << message << "\"";
+    if (!detail.empty()) {
+        out << ",\"detail\":\"" << detail << "\"";
+    }
+    out << "}";
+    return out.str();
+}
+
+ProtocolMessage make_message(std::string_view type, const WorkspaceId& workspace_id, std::string payload_json) {
+    return ProtocolMessage {
+        .version = 1,
+        .type = std::string(type),
+        .workspace_id = workspace_id,
+        .timestamp = now_rfc3339(),
+        .payload_json = std::move(payload_json),
+    };
+}
+
+std::optional<std::string> parse_client_id_from_payload(std::string_view payload_json) {
+    const std::string key = "\"client_id\"";
+    const size_t key_pos = payload_json.find(key);
+    if (key_pos == std::string_view::npos) {
+        return std::nullopt;
+    }
+
+    const size_t colon_pos = payload_json.find(':', key_pos + key.size());
+    if (colon_pos == std::string_view::npos) {
+        return std::nullopt;
+    }
+
+    const size_t first_quote = payload_json.find('"', colon_pos + 1);
+    if (first_quote == std::string_view::npos) {
+        return std::nullopt;
+    }
+
+    const size_t second_quote = payload_json.find('"', first_quote + 1);
+    if (second_quote == std::string_view::npos) {
+        return std::nullopt;
+    }
+
+    return std::string(payload_json.substr(first_quote + 1, second_quote - first_quote - 1));
+}
+
+std::optional<std::string> parse_string_field_from_payload(std::string_view payload_json, std::string_view key) {
+    const std::string token = "\"" + std::string(key) + "\"";
+    const size_t key_pos = payload_json.find(token);
+    if (key_pos == std::string_view::npos) {
+        return std::nullopt;
+    }
+
+    const size_t colon_pos = payload_json.find(':', key_pos + token.size());
+    if (colon_pos == std::string_view::npos) {
+        return std::nullopt;
+    }
+
+    size_t value_start = colon_pos + 1;
+    while (value_start < payload_json.size() &&
+           std::isspace(static_cast<unsigned char>(payload_json[value_start])) != 0) {
+        ++value_start;
+    }
+    if (value_start >= payload_json.size() || payload_json[value_start] != '"') {
+        return std::nullopt;
+    }
+
+    const size_t first_quote = value_start;
+    const size_t second_quote = payload_json.find('"', first_quote + 1);
+    if (second_quote == std::string_view::npos) {
+        return std::nullopt;
+    }
+
+    return std::string(payload_json.substr(first_quote + 1, second_quote - first_quote - 1));
+}
+
+std::optional<bool> parse_bool_field_from_payload(std::string_view payload_json, std::string_view key) {
+    const std::string token = "\"" + std::string(key) + "\"";
+    const size_t key_pos = payload_json.find(token);
+    if (key_pos == std::string_view::npos) {
+        return std::nullopt;
+    }
+
+    const size_t colon_pos = payload_json.find(':', key_pos + token.size());
+    if (colon_pos == std::string_view::npos) {
+        return std::nullopt;
+    }
+
+    const size_t value_start = payload_json.find_first_not_of(" \t\r\n", colon_pos + 1);
+    if (value_start == std::string_view::npos) {
+        return std::nullopt;
+    }
+    if (payload_json.compare(value_start, 4, "true") == 0) {
+        return true;
+    }
+    if (payload_json.compare(value_start, 5, "false") == 0) {
+        return false;
+    }
+    return std::nullopt;
+}
+
+std::optional<int> parse_int_field_from_payload(std::string_view payload_json, std::string_view key) {
+    const std::string token = "\"" + std::string(key) + "\"";
+    const size_t key_pos = payload_json.find(token);
+    if (key_pos == std::string_view::npos) {
+        return std::nullopt;
+    }
+
+    const size_t colon_pos = payload_json.find(':', key_pos + token.size());
+    if (colon_pos == std::string_view::npos) {
+        return std::nullopt;
+    }
+
+    const size_t value_start = payload_json.find_first_not_of(" \t\r\n", colon_pos + 1);
+    if (value_start == std::string_view::npos) {
+        return std::nullopt;
+    }
+
+    size_t value_end = value_start;
+    if (payload_json[value_end] == '-') {
+        ++value_end;
+    }
+    while (value_end < payload_json.size() && std::isdigit(static_cast<unsigned char>(payload_json[value_end])) != 0) {
+        ++value_end;
+    }
+    if (value_end == value_start || (value_end == value_start + 1 && payload_json[value_start] == '-')) {
+        return std::nullopt;
+    }
+
+    try {
+        return std::stoi(std::string(payload_json.substr(value_start, value_end - value_start)));
+    } catch (...) {
+        return std::nullopt;
+    }
+}
+
+void skip_ws(std::string_view text, size_t* pos) {
+    while (*pos < text.size() && std::isspace(static_cast<unsigned char>(text[*pos])) != 0) {
+        ++(*pos);
+    }
+}
+
+std::optional<std::vector<std::string>> parse_string_array_field_from_payload(std::string_view payload_json, std::string_view key) {
+    const std::string token = "\"" + std::string(key) + "\"";
+    const size_t key_pos = payload_json.find(token);
+    if (key_pos == std::string_view::npos) {
+        return std::nullopt;
+    }
+
+    size_t pos = payload_json.find(':', key_pos + token.size());
+    if (pos == std::string_view::npos) {
+        return std::nullopt;
+    }
+    ++pos;
+    skip_ws(payload_json, &pos);
+    if (pos >= payload_json.size() || payload_json[pos] != '[') {
+        return std::nullopt;
+    }
+    ++pos;
+
+    std::vector<std::string> out;
+    while (true) {
+        skip_ws(payload_json, &pos);
+        if (pos >= payload_json.size()) {
+            return std::nullopt;
+        }
+        if (payload_json[pos] == ']') {
+            ++pos;
+            break;
+        }
+        if (payload_json[pos] != '"') {
+            return std::nullopt;
+        }
+        ++pos;
+        const size_t start = pos;
+        const size_t end = payload_json.find('"', start);
+        if (end == std::string_view::npos) {
+            return std::nullopt;
+        }
+        out.emplace_back(payload_json.substr(start, end - start));
+        pos = end + 1;
+
+        skip_ws(payload_json, &pos);
+        if (pos >= payload_json.size()) {
+            return std::nullopt;
+        }
+        if (payload_json[pos] == ',') {
+            ++pos;
+            continue;
+        }
+        if (payload_json[pos] == ']') {
+            ++pos;
+            break;
+        }
+        return std::nullopt;
+    }
+
+    return out;
+}
+
+std::optional<std::vector<LayoutRectangle>> parse_rectangles_field_from_payload(std::string_view payload_json, std::string_view key) {
+    const std::string token = "\"" + std::string(key) + "\"";
+    const size_t key_pos = payload_json.find(token);
+    if (key_pos == std::string_view::npos) {
+        return std::nullopt;
+    }
+
+    size_t pos = payload_json.find(':', key_pos + token.size());
+    if (pos == std::string_view::npos) {
+        return std::nullopt;
+    }
+    ++pos;
+    skip_ws(payload_json, &pos);
+    if (pos >= payload_json.size() || payload_json[pos] != '[') {
+        return std::nullopt;
+    }
+    ++pos;
+
+    std::vector<LayoutRectangle> out;
+    while (true) {
+        skip_ws(payload_json, &pos);
+        if (pos >= payload_json.size()) {
+            return std::nullopt;
+        }
+        if (payload_json[pos] == ']') {
+            ++pos;
+            break;
+        }
+        if (payload_json[pos] != '{') {
+            return std::nullopt;
+        }
+
+        const size_t object_start = pos;
+        int depth = 0;
+        while (pos < payload_json.size()) {
+            if (payload_json[pos] == '{') {
+                ++depth;
+            } else if (payload_json[pos] == '}') {
+                --depth;
+                if (depth == 0) {
+                    ++pos;
+                    break;
+                }
+            }
+            ++pos;
+        }
+        if (depth != 0) {
+            return std::nullopt;
+        }
+
+        const std::string object_json(payload_json.substr(object_start, pos - object_start));
+        const auto client_id = parse_string_field_from_payload(object_json, "client_id");
+        const auto x = parse_int_field_from_payload(object_json, "x");
+        const auto y = parse_int_field_from_payload(object_json, "y");
+        const auto width = parse_int_field_from_payload(object_json, "width");
+        const auto height = parse_int_field_from_payload(object_json, "height");
+        if (!client_id.has_value() || !x.has_value() || !y.has_value() || !width.has_value() || !height.has_value()) {
+            return std::nullopt;
+        }
+
+        out.push_back(LayoutRectangle {
+            .client_id = *client_id,
+            .x = *x,
+            .y = *y,
+            .width = *width,
+            .height = *height,
+        });
+
+        skip_ws(payload_json, &pos);
+        if (pos >= payload_json.size()) {
+            return std::nullopt;
+        }
+        if (payload_json[pos] == ',') {
+            ++pos;
+            continue;
+        }
+        if (payload_json[pos] == ']') {
+            ++pos;
+            break;
+        }
+        return std::nullopt;
+    }
+
+    return out;
+}
+
+std::optional<InputMode> parse_input_mode_field_from_payload(std::string_view payload_json, std::string_view key) {
+    const auto mode = parse_string_field_from_payload(payload_json, key);
+    if (!mode.has_value()) {
+        return std::nullopt;
+    }
+    if (*mode == "emacs-control") {
+        return InputMode::kEmacsControl;
+    }
+    if (*mode == "client-control") {
+        return InputMode::kClientControl;
+    }
+    return std::nullopt;
+}
+
+}  // namespace
+
+std::optional<std::string> default_ipc_socket_path() {
+    const char* runtime_dir = std::getenv("XDG_RUNTIME_DIR");
+    const char* instance = std::getenv("HYPRLAND_INSTANCE_SIGNATURE");
+    if (runtime_dir == nullptr || *runtime_dir == '\0' || instance == nullptr || *instance == '\0') {
+        return std::nullopt;
+    }
+
+    std::string path = runtime_dir;
+    if (!path.empty() && path.back() != '/') {
+        path.push_back('/');
+    }
+    path += "hypr/";
+    path += instance;
+    path += "/hyprmacs-v1.sock";
+    return path;
+}
+
+std::vector<ProtocolMessage> route_command_for_tests(
+    const ProtocolMessage& incoming,
+    WorkspaceManager& workspace_manager,
+    LayoutApplier& layout_applier,
+    FocusController* focus_controller
+) {
+    std::vector<ProtocolMessage> out;
+
+    if (incoming.type == "manage-workspace") {
+        workspace_manager.manage_workspace(incoming.workspace_id);
+        const auto state = workspace_manager.build_state_dump(incoming.workspace_id);
+        for (const auto& managed_client : state.managed_clients) {
+            (void)layout_applier.hide_client(managed_client, incoming.workspace_id);
+        }
+        out.push_back(make_message("workspace-managed", incoming.workspace_id, payload_for_workspace_managed(true)));
+        out.push_back(make_message("state-dump", incoming.workspace_id, serialize_state_dump_payload(state)));
+        return out;
+    }
+
+    if (incoming.type == "unmanage-workspace") {
+        workspace_manager.unmanage_workspace(incoming.workspace_id);
+        out.push_back(make_message("workspace-unmanaged", incoming.workspace_id, payload_for_workspace_unmanaged("user-request")));
+        out.push_back(make_message(
+            "state-dump", incoming.workspace_id, serialize_state_dump_payload(workspace_manager.build_state_dump(incoming.workspace_id))
+        ));
+        return out;
+    }
+
+    if (incoming.type == "request-state") {
+        out.push_back(make_message(
+            "state-dump", incoming.workspace_id, serialize_state_dump_payload(workspace_manager.build_state_dump(incoming.workspace_id))
+        ));
+        return out;
+    }
+
+    if (incoming.type == "debug-hide-client") {
+        const auto client_id = parse_client_id_from_payload(incoming.payload_json);
+        if (client_id.has_value()) {
+            const bool ok = layout_applier.hide_client(*client_id, incoming.workspace_id);
+            out.push_back(make_message(
+                "debug-hide-client-result", incoming.workspace_id, payload_for_debug_hide_show_result(*client_id, ok, "hide")
+            ));
+            out.push_back(make_message(
+                "state-dump", incoming.workspace_id, serialize_state_dump_payload(workspace_manager.build_state_dump(incoming.workspace_id))
+            ));
+        }
+        return out;
+    }
+
+    if (incoming.type == "debug-show-client") {
+        const auto client_id = parse_client_id_from_payload(incoming.payload_json);
+        if (client_id.has_value()) {
+            const bool ok = layout_applier.show_client(*client_id);
+            out.push_back(make_message(
+                "debug-show-client-result", incoming.workspace_id, payload_for_debug_hide_show_result(*client_id, ok, "show")
+            ));
+            out.push_back(make_message(
+                "state-dump", incoming.workspace_id, serialize_state_dump_payload(workspace_manager.build_state_dump(incoming.workspace_id))
+            ));
+        }
+        return out;
+    }
+
+    if (incoming.type == "set-selected-client") {
+        const auto client_id = parse_client_id_from_payload(incoming.payload_json);
+        if (client_id.has_value()) {
+            const bool ok = workspace_manager.set_selected_client(incoming.workspace_id, *client_id);
+            if (ok) {
+                const auto state = workspace_manager.build_state_dump(incoming.workspace_id);
+                if (state.selected_client.has_value()) {
+                    for (const auto& managed_client : state.managed_clients) {
+                        if (managed_client == *state.selected_client) {
+                            (void)layout_applier.show_client(managed_client);
+                        } else {
+                            (void)layout_applier.hide_client(managed_client, incoming.workspace_id);
+                        }
+                    }
+                }
+            }
+
+            out.push_back(make_message("layout-applied", incoming.workspace_id, payload_for_layout_applied(*client_id, ok)));
+            out.push_back(make_message(
+                "state-dump", incoming.workspace_id, serialize_state_dump_payload(workspace_manager.build_state_dump(incoming.workspace_id))
+            ));
+        }
+        return out;
+    }
+
+    if (incoming.type == "set-input-mode") {
+        const auto mode = parse_input_mode_field_from_payload(incoming.payload_json, "mode");
+        bool ok = false;
+        std::string wire_mode = "unknown";
+        if (mode.has_value()) {
+            ok = workspace_manager.set_input_mode(incoming.workspace_id, *mode);
+            wire_mode = (*mode == InputMode::kClientControl) ? "client-control" : "emacs-control";
+            if (ok && focus_controller != nullptr) {
+                if (*mode == InputMode::kClientControl) {
+                    auto selected = workspace_manager.selected_managed_client(incoming.workspace_id);
+                    if (!selected.has_value()) {
+                        const auto state = workspace_manager.build_state_dump(incoming.workspace_id);
+                        if (!state.managed_clients.empty()) {
+                            selected = state.managed_clients.front();
+                            (void)workspace_manager.set_selected_client(incoming.workspace_id, *selected);
+                        }
+                    }
+                    if (selected.has_value()) {
+                        (void)focus_controller->focus_client(*selected);
+                    }
+                } else if (*mode == InputMode::kEmacsControl) {
+                    const auto emacs_client = workspace_manager.emacs_client(incoming.workspace_id);
+                    if (emacs_client.has_value()) {
+                        (void)focus_controller->focus_client(*emacs_client);
+                    }
+                }
+            }
+        }
+        out.push_back(make_message("mode-changed", incoming.workspace_id, payload_for_mode_changed(wire_mode, ok)));
+        out.push_back(make_message(
+            "state-dump", incoming.workspace_id, serialize_state_dump_payload(workspace_manager.build_state_dump(incoming.workspace_id))
+        ));
+        return out;
+    }
+
+    if (incoming.type == "set-layout") {
+        bool ok = true;
+        std::string error;
+
+        const auto selected_client = parse_string_field_from_payload(incoming.payload_json, "selected_client");
+        const auto input_mode = parse_input_mode_field_from_payload(incoming.payload_json, "input_mode");
+        const auto visible_clients_opt = parse_string_array_field_from_payload(incoming.payload_json, "visible_clients");
+        const auto hidden_clients_opt = parse_string_array_field_from_payload(incoming.payload_json, "hidden_clients");
+        const auto rectangles_opt = parse_rectangles_field_from_payload(incoming.payload_json, "rectangles");
+        const auto stacking_order_opt = parse_string_array_field_from_payload(incoming.payload_json, "stacking_order");
+
+        if (!visible_clients_opt.has_value() || !hidden_clients_opt.has_value() || !rectangles_opt.has_value() ||
+            !stacking_order_opt.has_value()) {
+            ok = false;
+            error = "set-layout missing required fields";
+        }
+
+        if (ok && selected_client.has_value() && !selected_client->empty()) {
+            const bool selected_ok = workspace_manager.set_selected_client(incoming.workspace_id, *selected_client);
+            if (!selected_ok) {
+                std::cerr << "[hyprmacs] set-layout ignored non-managed selected_client workspace=" << incoming.workspace_id
+                          << " client=" << *selected_client << '\n';
+            }
+        }
+
+        if (ok && input_mode.has_value()) {
+            ok = workspace_manager.set_input_mode(incoming.workspace_id, *input_mode);
+            if (!ok) {
+                error = "set-layout input_mode rejected";
+            }
+        }
+
+        if (ok) {
+            std::vector<LayoutRectangle> visible_rectangles;
+            visible_rectangles.reserve(visible_clients_opt->size());
+
+            for (const auto& visible_client : *visible_clients_opt) {
+                bool found = false;
+                for (const auto& rectangle : *rectangles_opt) {
+                    if (rectangle.client_id == visible_client) {
+                        visible_rectangles.push_back(rectangle);
+                        found = true;
+                        break;
+                    }
+                }
+
+                if (!found) {
+                    ok = false;
+                    error = "set-layout missing rectangle for visible client " + visible_client;
+                    break;
+                }
+            }
+
+            if (ok) {
+                ok = layout_applier.apply_snapshot(
+                    incoming.workspace_id, visible_rectangles, *hidden_clients_opt, *stacking_order_opt, &error
+                );
+            }
+        }
+
+        if (!ok && !error.empty()) {
+            std::cerr << "[hyprmacs] set-layout failed workspace=" << incoming.workspace_id << " reason=" << error << '\n';
+        }
+
+        const auto state = workspace_manager.build_state_dump(incoming.workspace_id);
+        const std::string selected_wire = state.selected_client.value_or("");
+        out.push_back(make_message("layout-applied", incoming.workspace_id, payload_for_layout_applied(selected_wire, ok)));
+        out.push_back(make_message("state-dump", incoming.workspace_id, serialize_state_dump_payload(state)));
+        return out;
+    }
+
+    if (incoming.type == "seed-client") {
+        const auto client_id = parse_string_field_from_payload(incoming.payload_json, "client_id");
+        const auto workspace_id = parse_string_field_from_payload(incoming.payload_json, "workspace_id");
+        const auto app_id = parse_string_field_from_payload(incoming.payload_json, "app_id");
+        const auto title = parse_string_field_from_payload(incoming.payload_json, "title");
+        const auto floating = parse_bool_field_from_payload(incoming.payload_json, "floating");
+        if (client_id.has_value() && workspace_id.has_value() && app_id.has_value() && title.has_value() && floating.has_value()) {
+            workspace_manager.seed_client(*client_id, *workspace_id, *app_id, *title, *floating);
+            out.push_back(make_message(
+                "state-dump", incoming.workspace_id, serialize_state_dump_payload(workspace_manager.build_state_dump(incoming.workspace_id))
+            ));
+        }
+        return out;
+    }
+
+    out.push_back(make_message(
+        "protocol-error",
+        incoming.workspace_id,
+        payload_for_protocol_error("unknown-type", "unsupported message type", incoming.type)
+    ));
+    return out;
+}
+
+IpcServer::IpcServer(WorkspaceManager* workspace_manager, LayoutApplier* layout_applier, FocusController* focus_controller)
+    : workspace_manager_(workspace_manager)
+    , layout_applier_(layout_applier)
+    , focus_controller_(focus_controller) {
+    if (workspace_manager_ != nullptr) {
+        workspace_manager_->set_client_transition_notifier(
+            [this](const WorkspaceId& workspace_id, const ClientId& client_id, bool floating) {
+                on_client_transition(workspace_id, client_id, floating);
+            }
+        );
+        workspace_manager_->set_state_change_notifier(
+            [this](const WorkspaceId& workspace_id) {
+                on_workspace_state_changed(workspace_id);
+            }
+        );
+    }
+}
+
+IpcServer::~IpcServer() {
+    if (workspace_manager_ != nullptr) {
+        workspace_manager_->set_client_transition_notifier({});
+        workspace_manager_->set_state_change_notifier({});
+    }
+    stop();
+}
+
+bool IpcServer::start() {
+    if (workspace_manager_ == nullptr || layout_applier_ == nullptr) {
+        std::cerr << "[hyprmacs] ipc server start failed: missing dependencies\n";
+        return false;
+    }
+
+    bool expected = false;
+    if (!running_.compare_exchange_strong(expected, true)) {
+        return true;
+    }
+
+    socket_path_ = default_ipc_socket_path();
+    if (!socket_path_.has_value()) {
+        std::cerr << "[hyprmacs] ipc server disabled: missing XDG_RUNTIME_DIR\n";
+        running_.store(false);
+        return false;
+    }
+
+    listen_fd_ = ::socket(AF_UNIX, SOCK_STREAM, 0);
+    if (listen_fd_ < 0) {
+        std::cerr << "[hyprmacs] ipc server socket() failed: " << std::strerror(errno) << '\n';
+        running_.store(false);
+        return false;
+    }
+
+    ::unlink(socket_path_->c_str());
+
+    sockaddr_un addr {};
+    addr.sun_family = AF_UNIX;
+    if (socket_path_->size() >= sizeof(addr.sun_path)) {
+        std::cerr << "[hyprmacs] ipc server path too long: " << *socket_path_ << '\n';
+        ::close(listen_fd_);
+        listen_fd_ = -1;
+        running_.store(false);
+        return false;
+    }
+    std::memcpy(addr.sun_path, socket_path_->c_str(), socket_path_->size() + 1);
+
+    if (::bind(listen_fd_, reinterpret_cast<const sockaddr*>(&addr), sizeof(addr)) != 0) {
+        std::cerr << "[hyprmacs] ipc server bind failed: " << std::strerror(errno) << '\n';
+        ::close(listen_fd_);
+        listen_fd_ = -1;
+        running_.store(false);
+        return false;
+    }
+
+    if (::listen(listen_fd_, 4) != 0) {
+        std::cerr << "[hyprmacs] ipc server listen failed: " << std::strerror(errno) << '\n';
+        ::close(listen_fd_);
+        listen_fd_ = -1;
+        running_.store(false);
+        return false;
+    }
+
+    std::cerr << "[hyprmacs] ipc server listening at " << *socket_path_ << '\n';
+
+    accept_thread_ = std::thread([this]() {
+        accept_loop();
+    });
+    return true;
+}
+
+void IpcServer::stop() {
+    bool expected = true;
+    if (!running_.compare_exchange_strong(expected, false)) {
+        return;
+    }
+
+    if (listen_fd_ >= 0) {
+        ::shutdown(listen_fd_, SHUT_RDWR);
+        ::close(listen_fd_);
+        listen_fd_ = -1;
+    }
+
+    {
+        std::scoped_lock lock(controller_mutex_);
+        if (controller_fd_ >= 0) {
+            ::shutdown(controller_fd_, SHUT_RDWR);
+            ::close(controller_fd_);
+            controller_fd_ = -1;
+        }
+    }
+
+    if (accept_thread_.joinable()) {
+        accept_thread_.join();
+    }
+
+    if (socket_path_.has_value()) {
+        ::unlink(socket_path_->c_str());
+    }
+
+    if (workspace_manager_ != nullptr) {
+        restore_workspace_on_disconnect();
+        workspace_manager_->set_controller_connected(false);
+    }
+}
+
+std::optional<std::string> IpcServer::socket_path() const {
+    return socket_path_;
+}
+
+void IpcServer::publish_state_dump_for_workspace(const WorkspaceId& workspace_id) {
+    on_workspace_state_changed(workspace_id);
+}
+
+void IpcServer::accept_loop() {
+    while (running_.load()) {
+        int controller_fd = ::accept(listen_fd_, nullptr, nullptr);
+        if (controller_fd < 0) {
+            if (errno == EINTR) {
+                continue;
+            }
+            if (running_.load()) {
+                std::cerr << "[hyprmacs] ipc server accept failed: " << std::strerror(errno) << '\n';
+            }
+            break;
+        }
+
+        {
+            std::scoped_lock lock(controller_mutex_);
+            controller_fd_ = controller_fd;
+        }
+        workspace_manager_->set_controller_connected(true);
+        std::cerr << "[hyprmacs] ipc controller connected\n";
+        serve_controller(controller_fd);
+        {
+            std::scoped_lock lock(controller_mutex_);
+            if (controller_fd_ == controller_fd) {
+                ::shutdown(controller_fd_, SHUT_RDWR);
+                ::close(controller_fd_);
+                controller_fd_ = -1;
+            }
+        }
+        restore_workspace_on_disconnect();
+        workspace_manager_->set_controller_connected(false);
+        std::cerr << "[hyprmacs] ipc controller disconnected\n";
+    }
+}
+
+void IpcServer::serve_controller(int controller_fd) {
+    std::array<char, 4096> chunk {};
+    std::string pending;
+
+    while (running_.load()) {
+        const ssize_t read_bytes = ::recv(controller_fd, chunk.data(), chunk.size(), 0);
+        if (read_bytes <= 0) {
+            if (read_bytes < 0 && errno == EINTR) {
+                continue;
+            }
+            break;
+        }
+
+        pending.append(chunk.data(), static_cast<size_t>(read_bytes));
+
+        size_t newline = pending.find('\n');
+        while (newline != std::string::npos) {
+            const std::string frame = pending.substr(0, newline);
+            pending.erase(0, newline + 1);
+
+            if (!frame.empty()) {
+                const auto incoming = parse_message(frame);
+                if (!incoming.has_value()) {
+                    std::cerr << "[hyprmacs] ipc invalid frame dropped\n";
+                    send_message(
+                        controller_fd,
+                        make_message(
+                            "protocol-error",
+                            "",
+                            payload_for_protocol_error("invalid-frame", "malformed JSON envelope")
+                        )
+                    );
+                } else if (incoming->version != 1) {
+                    std::cerr << "[hyprmacs] ipc unsupported version: " << incoming->version << '\n';
+                    send_message(
+                        controller_fd,
+                        make_message(
+                            "protocol-error",
+                            incoming->workspace_id,
+                            payload_for_protocol_error(
+                                "unsupported-version", "unsupported protocol version", std::to_string(incoming->version)
+                            )
+                        )
+                    );
+                } else {
+                    std::cerr << "[hyprmacs] ipc recv type=" << incoming->type << " workspace=" << incoming->workspace_id << '\n';
+                    const auto responses = route_command_for_tests(*incoming, *workspace_manager_, *layout_applier_, focus_controller_);
+                    for (const auto& response : responses) {
+                        send_message(controller_fd, response);
+                    }
+                }
+            }
+
+            newline = pending.find('\n');
+        }
+    }
+}
+
+void IpcServer::restore_workspace_on_disconnect() {
+    if (workspace_manager_ == nullptr || layout_applier_ == nullptr) {
+        return;
+    }
+
+    const auto workspace_id = workspace_manager_->managed_workspace();
+    if (!workspace_id.has_value()) {
+        return;
+    }
+
+    const auto state = workspace_manager_->build_state_dump(*workspace_id);
+    const bool ok = layout_applier_->restore_workspace_to_native(*workspace_id, state.managed_clients);
+    if (!ok) {
+        std::cerr << "[hyprmacs] disconnect cleanup had partial restore failures workspace=" << *workspace_id << '\n';
+    }
+}
+
+void IpcServer::send_message(int fd, const ProtocolMessage& message) {
+    std::scoped_lock lock(send_mutex_);
+    const std::string encoded = serialize_message(message) + "\n";
+    const ssize_t sent = ::send(fd, encoded.data(), encoded.size(), 0);
+    if (sent < 0) {
+        std::cerr << "[hyprmacs] ipc send failed for type=" << message.type << ": " << std::strerror(errno) << '\n';
+        return;
+    }
+
+    std::cerr << "[hyprmacs] ipc send type=" << message.type << " workspace=" << message.workspace_id << '\n';
+}
+
+void IpcServer::on_client_transition(const WorkspaceId& workspace_id, const ClientId& client_id, bool floating) {
+    if (layout_applier_ != nullptr) {
+        if (floating) {
+            (void)layout_applier_->show_client(client_id);
+        } else {
+            (void)layout_applier_->hide_client(client_id, workspace_id);
+        }
+    }
+
+    int fd = -1;
+    {
+        std::scoped_lock lock(controller_mutex_);
+        fd = controller_fd_;
+    }
+    if (!running_.load() || fd < 0 || workspace_manager_ == nullptr) {
+        return;
+    }
+
+    const char* type = floating ? "client-became-floating" : "client-became-tiled";
+    send_message(fd, make_message(type, workspace_id, payload_for_client_transition(client_id, floating)));
+    send_message(fd, make_message("state-dump", workspace_id, serialize_state_dump_payload(workspace_manager_->build_state_dump(workspace_id))));
+}
+
+void IpcServer::on_workspace_state_changed(const WorkspaceId& workspace_id) {
+    int fd = -1;
+    {
+        std::scoped_lock lock(controller_mutex_);
+        fd = controller_fd_;
+    }
+    if (!running_.load() || fd < 0 || workspace_manager_ == nullptr) {
+        return;
+    }
+
+    send_message(fd, make_message("state-dump", workspace_id, serialize_state_dump_payload(workspace_manager_->build_state_dump(workspace_id))));
+}
+
+}  // namespace hyprmacs

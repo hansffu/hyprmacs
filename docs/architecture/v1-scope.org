@@ -1,0 +1,79 @@
+#+title: hyprmacs v1 Scope
+#+date: 2026-04-15
+
+* Status
+This document freezes the intended scope for the first usable hyprmacs prototype.
+
+* Goal
+Build a prototype where one Hyprland workspace can be managed as an Emacs-directed workspace while Hyprland remains responsible for composition, native floating behavior, and compositor-level input routing.
+
+* In Scope
+- One active managed workspace per controller session.
+- One Emacs controller process connected to the plugin at a time.
+- Nix-supported development and runtime setup for all project dependencies and tooling.
+- A Hyprland plugin that can:
+  - manage or unmanage a workspace
+  - track eligible tiled clients in that workspace
+  - maintain a managed-client registry
+  - receive direct IPC commands from Emacs
+  - apply Emacs-directed visibility and geometry later in the prototype
+- An Emacs package that can:
+  - connect to the plugin
+  - manage the current workspace
+  - maintain buffer-to-client associations
+  - publish layout snapshots to the plugin later in the prototype
+- Native Hyprland handling for:
+  - true floating windows
+  - dialogs and transient windows
+  - popup-like native compositor surfaces
+  - Emacs child frames and posframes
+- Rectangle-first layout semantics for managed clients.
+- Explicit rejection of overlapping managed rectangles in v1.
+- A dedicated managed-workspace policy profile that constrains compositor behaviors conflicting with Emacs layout ownership (including managed-geometry animations off while managed).
+- Disconnect recovery that returns the workspace to native Hyprland behavior.
+
+* Out Of Scope
+- Managing more than one workspace at a time.
+- More than one simultaneous Emacs controller connection.
+- Prefix mode or other hybrid input-routing schemes beyond Emacs-control and client-control.
+- Resize or placement animations.
+- Rendering foreign client content inside Emacs.
+- Emacs control of native floating windows.
+- Independent plugin-side layout persistence that keeps the workspace usable while Emacs is disconnected or lagging.
+- Support for overlapping managed client rectangles.
+- General-purpose `hyprctl` driven live synchronization as the main control path.
+
+* System Boundary
+** Hyprland Owns
+- Surface composition.
+- Native focus rules at the compositor level.
+- Global keybindings.
+- Native floating, popup, transient, and auxiliary-window behavior.
+
+** hyprmacs Plugin Owns
+- Managed workspace lifecycle.
+- Managed-client eligibility and registry state.
+- IPC session handling with Emacs.
+- Visibility, placement, stacking, and input-mode state for managed clients.
+
+** Emacs Package Owns
+- Buffer identity for managed clients.
+- Mapping between visible Emacs windows and managed clients.
+- Logical selection of the current managed client.
+- Snapshot publication of layout intent.
+
+* Success Criteria
+- A workspace can be explicitly switched between unmanaged and managed states.
+- Existing eligible tiled clients in the managed workspace can be observed and later adopted.
+- Floating windows, dialogs, popups, child frames, and posframes remain outside hyprmacs management.
+- The Emacs package and plugin can exchange private IPC messages over a Unix socket.
+- All required build and development dependencies are available through the repository's Nix flake.
+- The v1 implementation can reject unsupported overlapping layouts instead of guessing.
+- If Emacs disconnects, the workspace returns to native Hyprland behavior without leaving stale managed state behind.
+- Managed-workspace policy constraints are applied on manage and restored on unmanage/disconnect.
+
+* Deferred Questions
+- The exact hide and restore primitive for live managed clients is deferred to a dedicated validation task.
+- Popup and subsurface edge cases remain a validation item, not a v1 blocker unless they break the native-popup rule above.
+- The exact socket filename under =$XDG_RUNTIME_DIR= may be implementation-defined as long as it remains private to hyprmacs.
+- The existing nested Hyprland flake entrypoint is treated as the base development environment and should be extended rather than replaced.

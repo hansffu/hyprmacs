@@ -1,0 +1,5 @@
+.codex
+*.elc
+build/
+/logs.txt
+/artifacts/

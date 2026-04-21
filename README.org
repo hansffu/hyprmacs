@@ -1,0 +1,80 @@
+#+title: hyprmacs Prototype
+
+* Overview
+~hyprmacs~ is a Hyprland plugin + Emacs package prototype where Emacs controls workspace policy for managed clients while Hyprland remains compositor/input authority.
+
+This repository currently targets a nested demo workflow.
+
+* NixOS Real Hyprland Installation (Not Nested)
+For a real login session (your normal Hyprland), follow:
+- ~docs/setup/nixos-real-hyprland.org~
+
+This includes:
+- flake input wiring
+- Home Manager Hyprland plugin setup
+- plain ~hyprland.conf~ plugin path setup
+- validation steps in a real compositor session
+
+* Quick Start
+** 1. Launch the nested demo compositor
+From repo root:
+
+#+begin_src sh
+nix run .#demo
+#+end_src
+
+Equivalent:
+
+#+begin_src sh
+just run
+#+end_src
+
+This builds the plugin and starts a nested Hyprland session with the plugin loaded.
+
+** 2. Open terminals in nested Hyprland
+Use:
+- ~ALT+Return~ to open ~foot~
+
+Open at least one terminal for Emacs and one extra client to manage.
+
+** 3. Start Emacs from inside nested Hyprland
+In a nested terminal:
+
+#+begin_src sh
+just emacs
+#+end_src
+
+** 4. Manage workspace from Emacs
+Run:
+- ~M-x hyprmacs-manage-current-workspace~
+
+Optional visibility/debug helpers:
+- ~M-x hyprmacs-request-state~
+- ~M-x hyprmacs-open-state-buffer~
+- ~M-x hyprmacs-sync-layout~
+
+* Core Controls
+- Switch managed buffer -> client-control:
+  - In managed buffer: ~C-c C-c~
+- Return to emacs-control from compositor:
+  - ~ALT+E~ (Hyprland dispatcher ~hyprmacs:set-emacs-control-mode~)
+- Close active window in nested Hyprland:
+  - ~ALT+Q~
+
+* Managed Buffer Semantics
+- Managed buffers use ~hyprmacs-window-mode~.
+- Killing a managed buffer is intercepted:
+  - hyprmacs requests compositor close for the corresponding client.
+  - Buffer remains until compositor confirms the client is actually gone.
+  - This avoids kill/recreate races when apps show close-confirmation dialogs.
+
+* Demo Validation
+Use:
+- ~docs/testing/demo-script.org~ for operator flow.
+- ~docs/testing/manual-smoke-tests.org~ for regression/smoke coverage.
+
+Automated nested regression:
+
+#+begin_src sh
+just e2e
+#+end_src

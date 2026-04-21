@@ -12,8 +12,11 @@ Hyprland remains the compositor and input authority. The plugin owns workspace p
 * Working Agreement
 - Treat each top-level task as one reviewable increment.
 - Stop at every headline marked =WAIT= and review behavior together before moving on.
+- After a user approves a =WAIT= checkpoint, change that checkpoint to =DONE= immediately.
 - Prefer vertical slices over large foundation-only branches.
 - Keep v1 intentionally narrow so we can validate the design early.
+- Keep dependencies, tooling, and runnable development environments available through Nix.
+- Make a git commit when completing each top-level task unless the user explicitly says otherwise.
 
 * Plan Maintenance
 - This org file is the primary source of truth for implementation status across sessions.
@@ -25,10 +28,12 @@ Hyprland remains the compositor and input authority. The plugin owns workspace p
 - One Emacs controller process and one managed workspace per active session.
 - Plugin implementation in C++.
 - Emacs package implementation in Emacs Lisp.
+- The existing flake-based nested Hyprland environment is the base developer workflow and should be extended rather than replaced.
 - IPC transport is a plugin-owned Unix domain socket under =$XDG_RUNTIME_DIR=.
 - IPC payloads are newline-delimited JSON with an explicit protocol version field.
 - Overlapping managed rectangles are rejected in v1 instead of guessed.
 - No resize animations in v1.
+- Managed workspaces use a dedicated =hyprmacs= workspace policy profile so compositor behaviors that fight Emacs layout ownership can be explicitly constrained and restored on unmanage.
 - If Emacs disconnects, the plugin unmanages the workspace and returns clients to native Hyprland behavior.
 - Floating windows, dialogs, popups, child frames, and posframes remain native Hyprland surfaces.
 
@@ -64,7 +69,7 @@ Hyprland remains the compositor and input authority. The plugin owns workspace p
 - =docs/testing/manual-smoke-tests.org=: nested Hyprland manual validation checklist.
 
 * Iterative Plan
-** NEXT Task 0: Lock the prototype contract
+** DONE Task 0: Lock the prototype contract
 Purpose:
 - Freeze the first implementation target before code exists.
 
@@ -74,21 +79,29 @@ Files:
 - Create =docs/adr/0001-v1-boundaries.org=
 
 Steps:
-*** TODO Write the v1 scope document
+*** DONE Write the v1 scope document
 - Explicitly include: one managed workspace, native floating windows, native dialogs and popups, native Emacs child frames, single-controller IPC, and non-overlapping rectangles.
 - Explicitly exclude: multi-workspace management, prefix mode, animations, independent plugin layout persistence, and overlap support.
-*** TODO Define protocol version 1
+*** DONE Define protocol version 1
 - Specify message envelope fields: =version=, =type=, =workspace_id=, =timestamp=, and payload object.
 - Fully define the first coarse message set: =manage-workspace=, =unmanage-workspace=, =request-state=, =workspace-managed=, =workspace-unmanaged=, =state-dump=.
 - Reserve but do not implement the later layout fields now: =selected_client=, =input_mode=, =visible_clients=, =hidden_clients=, =rectangles=, =stacking_order=.
-*** TODO Write the first architecture decision record
+*** DONE Write the first architecture decision record
 - Record why JSON over Unix socket is acceptable for v1.
 - Record why overlap is rejected in v1.
 - Record why disconnect restores native workspace behavior.
-*** WAIT Review task 0 with user
+*** DONE Review task 0 with user
 - Confirm the v1 boundaries before any code scaffold is created.
+*** DONE Session note: branch and workflow decision
+- By user request, this session proceeds without a git worktree.
+- Implementation work continues on local branch =task-0-prototype-contract= instead of =main=.
+*** DONE Session note: nix environment requirement
+- Required dependencies, build tools, and runnable developer workflows must be supported through Nix.
+- The existing flake that boots a nested Hyprland session is the base environment to extend in later tasks.
+*** DONE Session note: task commit rule
+- Completed top-level tasks should be committed before moving on unless the user explicitly overrides that rule.
 
-** TODO Task 1: Bootstrap the repository and developer loop
+** DONE Task 1: Bootstrap the repository and developer loop
 Purpose:
 - Make the repo buildable and testable before adding behavior.
 
@@ -102,18 +115,50 @@ Files:
 - Create =docs/testing/manual-smoke-tests.org=
 
 Steps:
-*** TODO Add plugin build scaffolding
+*** DONE Add plugin build scaffolding
 - Create a minimal shared-library target that matches Hyprland's plugin loading expectations.
 - Add a trivial plugin entrypoint that logs successful load and unload.
-*** TODO Add Emacs package scaffolding
+*** DONE Add Emacs package scaffolding
 - Create a package entry file with a version constant, feature provide, and placeholder interactive commands for connect and manage-workspace.
-*** TODO Add test entrypoints
+*** DONE Add test entrypoints
 - Configure =ctest= for plugin-side pure tests.
 - Configure =ERT= batch execution for Emacs tests.
-*** TODO Extend the Nix dev environment
+*** DONE Extend the Nix dev environment
 - Add build tooling needed for C++, CMake, and test execution.
+- Extend the existing flake-based nested Hyprland session instead of creating a parallel non-Nix workflow.
 - Add a demo app or script that starts nested Hyprland with the plugin path wired into the config.
-*** WAIT Review task 1 with user
+*** DONE Session note: flake tool list split
+- The flake should separate =commonTools=, =agentTools=, and =devTools= to keep sandbox-visible tools and the developer shell aligned without duplicating package lists.
+*** DONE Session note: sandbox flake target
+- Expose =codex-sandbox= as both a flake package and app so restart flow can use =nix run .#codex-sandbox= directly.
+*** DONE Session note: sandbox artifact ignore
+- Ignore the empty =.codex= file created by the sandbox wrapper so it does not pollute repository status.
+*** DONE Session note: nix execution boundary
+- Keep the flake updated in-repo, but let the user run =nix= commands outside the agent sandbox for validation and restart flows.
+*** DONE Session note: local bootstrap verification
+- Local sandbox verification now covers =cmake= configure, =cmake --build=, =ctest=, ERT bootstrap tests, and byte-compilation of =emacs/hyprmacs.el=.
+- The remaining authoritative Task 1 check is loading the built plugin in the user's nested Hyprland session.
+*** DONE Session note: justfile bootstrap commands
+- Added a top-level =justfile= with =just build=, =just run=, and =just load= recipes for the Task 1 bootstrap workflow.
+*** DONE Session note: guard against fallback plugin load
+- =just load= now refuses to load a plugin artifact that contains fallback markers (missing real Hyprland headers at build time) and tells the user to rebuild first.
+*** DONE Session note: nix-native plugin build flow
+- Task 1 bootstrap flow now uses =nix build .#hyprmacs-plugin= for plugin artifacts, with =just load= consuming the resulting =result/lib/*.so= output.
+*** DONE Session note: hyprmacs-load run path
+- Simplified runtime testing flow: =just run= maps to =nix run .=, and =just load= maps to =nix run .#hyprmacs-load= where the loader script resolves and loads the plugin from the Nix store.
+*** DONE Session note: nested config autoload and quieter runtime
+- Nested Hyprland now autoloads the plugin via =plugin = ${hyprmacsPlugin}/lib/hyprmacs.so= in the generated config, so =just run= starts with hyprmacs loaded.
+- Kept =just load= (=nix run .#hyprmacs-load=) as a fallback/manual reload path.
+- Switched nested runtime package from =hyprland-debug= to =hyprland= to avoid debug/profiling noise during normal =hyprctl= usage.
+*** DONE Session note: mkHyprlandPlugin meta requirement
+- The plugin derivation must include a =meta= attribute (description/license/platforms) because =hyprlandPlugins.mkHyprlandPlugin= merges =args.meta= during evaluation.
+*** DONE Session note: plugin derivation source root
+- The Nix plugin derivation must use =src = ../plugin= so CMake sees the plugin =CMakeLists.txt= at source root.
+*** DONE Session note: nixpkgs channel selection
+- Switched flake input from =nixos-unstable= to =nixpkgs-unstable= for general nixpkgs tracking.
+*** DONE Session note: bootstrap hash mismatch handling
+- During Task 1 bootstrap, Hyprland API hash mismatch in =PLUGIN_INIT= is treated as a warning notification instead of a fatal throw so the empty plugin can load for smoke validation.
+*** DONE Review task 1 with user
 - Stop when the empty plugin loads and the empty Emacs package byte-compiles.
 
 Validation:
@@ -123,7 +168,7 @@ Validation:
 - =ctest --test-dir build/plugin --output-on-failure=
 - =emacs -Q --batch -L emacs -L tests/emacs -l bootstrap-tests.el -f ert-run-tests-batch-and-exit=
 
-** TODO Task 2: Implement shared protocol and state models first
+** DONE Task 2: Implement shared protocol and state models first
 Purpose:
 - Put the hardest coordination contract under test before compositor behavior enters the picture.
 
@@ -137,23 +182,35 @@ Files:
 - Create =tests/emacs/protocol-tests.el=
 
 Steps:
-*** TODO Define canonical identifiers
+*** DONE Define canonical identifiers
 - Standardize how workspace IDs, client IDs, buffer IDs, and mode names are represented on both sides.
-*** TODO Implement protocol encode and decode helpers
+*** DONE Implement protocol encode and decode helpers
 - Build parser and serializer helpers on the plugin side.
 - Build parser and serializer helpers on the Emacs side.
-*** TODO Add golden tests for wire compatibility
+*** DONE Add golden tests for wire compatibility
 - Add C++ tests for decoding example JSON payloads.
 - Add ERT tests that encode the same objects and compare them to the documented payload shapes.
-*** TODO Add a fake transport harness
+*** DONE Add a fake transport harness
 - Make it possible to drive the Emacs session code with fixture payloads before a real plugin server exists.
-*** WAIT Review task 2 with user
+*** DONE Review task 2 with user
 - Confirm the message contract before event hooks or layout logic are added.
+
+*** DONE Session note: canonical identifier and mode representation
+- Workspace IDs, client IDs, and buffer IDs are represented as opaque strings on both sides.
+- Input mode is represented as =emacs-control= and =client-control= on the wire, and mapped to Emacs symbols =emacs-control= and =client-control= in Lisp.
+
+*** DONE Session note: protocol helper coverage in Task 2
+- Plugin side includes explicit parse and serialize helpers for frame envelopes and =state-dump= payloads.
+- Emacs side includes envelope construction, newline-delimited frame encode/decode, mode conversion helpers, and frame splitting for incremental reads.
+
+*** DONE Session note: fake transport scope
+- Task 2 fake transport is in-memory only: outbound frames are captured in an outbox and inbound fixture frames are applied through session handlers.
+- Real Unix socket lifecycle and controller arbitration remain in Task 5.
 
 Validation:
 - Run plugin protocol tests and ERT protocol tests with fixture payloads from =docs/protocol/ipc-v1.org=.
 
-** TODO Task 3: Build the plugin event tap and managed-state registry
+** DONE Task 3: Build the plugin event tap and managed-state registry
 Purpose:
 - Give the plugin read-only awareness of relevant Hyprland state before it starts changing window behavior.
 
@@ -167,23 +224,45 @@ Files:
 - Create =plugin/tests/client_registry_tests.cpp=
 
 Steps:
-*** TODO Subscribe to Hyprland lifecycle hooks
+*** DONE Subscribe to Hyprland lifecycle hooks
 - Track client open, close, workspace move, focus change, title change, and float-state change events.
-*** TODO Implement the in-memory registry
+*** DONE Review task 3.1 with user
+- Validate the event tap can connect to Hyprland's event socket and log tracked lifecycle events in nested Hyprland.
+- Do not start Task 3.2 until this checkpoint is approved.
+*** DONE Implement the in-memory registry
 - Store client identity, workspace identity, visibility state, selected state, rectangle, eligibility, and association placeholders.
-*** TODO Implement client classification rules
+*** DONE Implement client classification rules
 - Exclude Emacs itself.
 - Exclude floating clients and obvious popup or transient clients.
 - Mark later edge cases with explicit TODO comments in code only if backed by an ADR or issue.
-*** TODO Add a plugin state dump path
+*** DONE Add a plugin state dump path
 - Expose a coarse debug command or log path that prints current managed and eligible client state without mutating it.
-*** WAIT Review task 3 with user
+*** DONE Review task 3 with user
 - Stop when we can inspect tracked clients in nested Hyprland without any layout control yet.
+
+*** DONE Session note: Task 3.1 event subscription mechanism
+- Task 3.1 uses Hyprland's event socket at =$XDG_RUNTIME_DIR/hypr/$HYPRLAND_INSTANCE_SIGNATURE/.socket2.sock= for lifecycle event intake in the plugin.
+- Tracked event names in this step: =openwindow=, =closewindow=, =movewindow=, =activewindow=, =windowtitle=, and =changefloatingmode=.
+- Event parsing and counting are isolated in =workspace_manager= and covered by a dedicated unit test target.
+- Floating-mode tracking was broadened to accept versioned/variant names (including =changefloatingmodev2= and any event name containing =floating=) after manual validation showed title/focus events but no floating event with the initial exact-name filter.
+- Temporary untracked-event logging was used for diagnosis and then reverted after confirming this runtime does not emit a float-change event on =.socket2.sock= during =togglefloating=.
+
+*** DONE Session note: local non-Nix build and load path
+- Added top-level =Makefile= with =make build=, =make test=, and =make load= for local plugin workflows without =nix build=.
+- Keep =justfile= on user-facing Nix commands (=just build=, =just run=, =just load=) while the =Makefile= exists as an agent/developer local path.
+
+*** DONE Session note: Task 3 registry and classification wiring
+- Added =ClientRegistry= state tracking for client identity, workspace, title, app ID, visibility, selected state, floating flag, eligibility, managed placeholder, rectangle placeholder, and buffer association placeholder.
+- Event ingestion now uses v2 events where available (=openwindowv2=, =activewindowv2=, =windowtitlev2=, =movewindowv2=) to maintain richer per-client state.
+- Added coarse classification rules that currently exclude Emacs clients, known popup/transient-like clients, and floating clients from eligibility.
+
+*** DONE Session note: Task 3 state-dump logging
+- The plugin now emits =state-dump= log lines after registry mutations, including global counts and per-client snapshots, so Task 3 can be validated without IPC or layout control.
 
 Validation:
 - Launch nested Hyprland, open a few windows, and confirm the registry reflects open and close events plus float transitions.
 
-** TODO Task 4: Build the Emacs-side session and buffer skeleton
+** DONE Task 4: Build the Emacs-side session and buffer skeleton
 Purpose:
 - Let Emacs observe plugin state and create the logical handles users will interact with later.
 
@@ -195,23 +274,38 @@ Files:
 - Create =tests/emacs/buffer-tests.el=
 
 Steps:
-*** TODO Create the session state object
+*** DONE Create the session state object
 - Track current connection status, active workspace, known clients, associated buffers, selected client, and current input mode.
-*** TODO Create user-visible commands
+*** DONE Create user-visible commands
 - Add interactive commands for connect, disconnect, manage current workspace, unmanage workspace, and dump known state into an Emacs buffer.
-*** TODO Create buffer association primitives
+*** DONE Create buffer association primitives
 - Define the buffer-local metadata that identifies a managed client buffer.
 - Add helper functions to create, rename, and clean up those buffers from plugin events.
-*** TODO Drive the Emacs code from fake plugin payloads
+*** DONE Drive the Emacs code from fake plugin payloads
 - Use fixture messages to prove state transitions happen correctly before the real socket is connected.
-*** WAIT Review task 4 with user
+*** DONE Review task 4 with user
 - Confirm the Emacs-side UX for state inspection before real IPC is enabled.
+
+*** DONE Session note: Task 4 Emacs modules and tests
+- Added =emacs/hyprmacs-buffers.el= for client-to-buffer mapping, title sync, and cleanup helpers.
+- Expanded =emacs/hyprmacs-session.el= with explicit connect/disconnect transitions, session fields for known clients and associations, and fake-transport command paths.
+- Expanded =emacs/hyprmacs.el= user commands to call session primitives and render a =*hyprmacs-state*= inspection buffer.
+- Added ERT coverage in =tests/emacs/session-tests.el= and =tests/emacs/buffer-tests.el= for command-side effects and buffer lifecycle behavior.
+
+*** DONE Session note: stale bytecode handling in Task 4 tests
+- Set =load-prefer-newer= in Task 4 session tests so source edits are always preferred over stale =.elc= artifacts during batch runs.
+
+*** DONE Session note: just emacs entrypoint
+- Updated =just emacs= to load =hyprmacs= (package entrypoint) instead of =hyprmacs-session= so interactive commands are available immediately.
+- Updated =just emacs= to delete stale =emacs/*.elc= before launching Emacs to avoid loading stale bytecode during manual testing.
+- Added =just emacs-test= to run an automated non-GUI smoke flow and write deterministic debug output to =logs.txt=.
+- User requested reverting from GUI smoke to the original batch/non-GUI flow because GUI variant provided less useful debug signal.
 
 Validation:
 - Run ERT tests for session transitions and buffer creation.
 - Open the state buffer in Emacs and inspect mock client data rendered there.
 
-** TODO Task 5: Wire up the real IPC handshake and coarse workspace commands
+** DONE Task 5: Wire up the real IPC handshake and coarse workspace commands
 Purpose:
 - Replace the fake transport with a real plugin-owned socket and prove that both sides stay synchronized.
 
@@ -225,23 +319,35 @@ Files:
 - Create =plugin/tests/ipc_server_tests.cpp=
 
 Steps:
-*** TODO Start the plugin socket server
+*** DONE Start the plugin socket server
 - Create and own a Unix socket path under =$XDG_RUNTIME_DIR=.
 - Support exactly one controller connection in v1 and reject extra controllers with a clear error.
-*** TODO Implement the first live command path
+*** DONE Implement the first live command path
 - Handle =manage-workspace=, =unmanage-workspace=, and =request-state= on the plugin side.
 - Send =workspace-managed=, =workspace-unmanaged=, and =state-dump= back to Emacs.
-*** TODO Implement reconnect-safe session handling
+*** DONE Implement reconnect-safe session handling
 - Ensure Emacs can disconnect and reconnect without leaking duplicate event handlers or stale process objects.
-*** TODO Add integration logging
+*** DONE Add integration logging
 - Log every message type at debug level with enough context to diagnose sync bugs.
-*** WAIT Review task 5 with user
+*** DONE Review task 5 with user
 - Stop when Emacs can manage and unmanage a workspace and display real plugin state.
+
+*** DONE Session note: Task 5 plugin socket path and command routing
+- Added plugin-owned Unix socket server at =$XDG_RUNTIME_DIR/hyprmacs-v1.sock= with newline-delimited JSON frames.
+- Added routing for =manage-workspace=, =unmanage-workspace=, and =request-state= to corresponding plugin responses.
+- Added =ipc_server_tests= coverage for command routing response shapes.
+
+*** DONE Session note: Task 5 reconnect-safe Emacs transport
+- Emacs session now connects through a real local socket process, with explicit filter/sentinel handling and partial-frame buffering.
+- Connect now tears down any existing process first; disconnect clears process handles and transport functions.
+
+*** DONE Session note: Task 5 integration logging
+- Plugin now logs IPC listen path, controller connect/disconnect, every received message type, and every sent message type.
 
 Validation:
 - Start nested Hyprland, connect Emacs, manage a workspace, request state, and verify the state buffer matches the live workspace contents.
 
-** TODO Task 6: Prove the hidden-client mechanism in isolation
+** DONE Task 6: Prove the hidden-client mechanism in isolation
 Purpose:
 - Retire the highest-risk compositor behavior before layout work depends on it.
 
@@ -253,21 +359,42 @@ Files:
 - Modify =docs/testing/manual-smoke-tests.org=
 
 Steps:
-*** TODO Implement a minimal show and hide experiment path
+*** DONE Implement a minimal show and hide experiment path
 - Add temporary plugin-only commands that can hide a tracked tiled client and then restore it without destroying the application.
-*** TODO Evaluate the mechanism against real applications
+*** DONE Evaluate the mechanism against real applications
 - Test at least =foot= and one GUI app inside nested Hyprland.
 - Verify the client stays alive, disappears from the visible tiled layout, and returns intact.
-*** TODO Write the strategy ADR
+*** DONE Write the strategy ADR
 - Document the exact Hyprland primitive used for hide and restore.
 - Document the failure cases discovered during the spike.
-*** WAIT Review task 6 with user
+*** DONE Review task 6 with user
 - Do not proceed to the first vertical slice until we trust the hide mechanism.
+
+*** DONE Session note: Task 6 hide and restore mechanism
+- Added =LayoutApplier= with hide/restore bookkeeping by client ID and original workspace.
+- Hide command path uses =hyprctl dispatch movetoworkspacesilent special:hyprmacs-hidden,address:<client-id>=.
+- Restore command path uses =hyprctl dispatch movetoworkspacesilent <workspace>,address:<client-id>=.
+
+*** DONE Session note: Task 6 temporary control surface
+- Added temporary plugin IPC commands =debug-hide-client= and =debug-show-client= plus result frames for manual validation.
+- Added temporary Emacs commands =hyprmacs-debug-hide-client= and =hyprmacs-debug-show-client= to drive the spike without raw socket tooling.
+
+*** DONE Session note: Task 6 docs sync
+- Added =docs/adr/0002-hidden-client-strategy.org= and updated =docs/testing/manual-smoke-tests.org= with hide/restore scenarios.
+- Added a Task 6 temporary command section to =docs/protocol/ipc-v1.org= to avoid protocol drift during the spike.
+
+*** DONE Session note: Task 6 dispatch path hardening
+- Replaced hide/restore execution from shelling out to =hyprctl= with direct writes to Hyprland command socket =.socket.sock=.
+- Added extra runtime error logging around connect/send/recv and added newline-terminated dispatch writes to reduce protocol ambiguity.
+
+*** DONE Session note: Task 6 user validation outcome
+- User validated restore behavior in nested Hyprland after dispatch hardening ("Now it worked to show!").
+- Task 6 review checkpoint approved and closed.
 
 Validation:
 - Manual smoke test passes for hide, restore, workspace switch away and back, and client close while hidden.
 
-** TODO Task 7: Deliver the first vertical slice with one visible managed client
+** DONE Task 7: Deliver the first vertical slice with one visible managed client
 Purpose:
 - Make the workspace feel meaningfully different as early as possible.
 
@@ -282,28 +409,69 @@ Files:
 - Create =tests/emacs/mode-tests.el=
 
 Steps:
-*** TODO Adopt eligible clients into a managed set
+*** DONE Adopt eligible clients into a managed set
 - When a workspace becomes managed, adopt existing eligible tiled clients.
 - Auto-adopt newly opened eligible tiled clients in that workspace.
-*** TODO Create one buffer per managed client
+*** DONE Create one buffer per managed client
 - Ensure each adopted client gets a corresponding Emacs buffer with stable identity.
-*** TODO Make exactly one managed client visible
+*** DONE Make exactly one managed client visible
 - Tie visibility to the selected managed buffer.
 - Hide every other managed client while keeping them alive.
-*** TODO Implement the first two input modes
+*** DONE Implement the first two input modes
 - Add Emacs-control mode where Emacs keeps focus.
 - Add client-control mode where the selected managed client receives keyboard focus.
-*** TODO Add the first user-facing switching commands
+*** DONE Add the first user-facing switching commands
 - Support selecting a managed buffer from Emacs and reflecting that in the workspace.
-*** WAIT Review task 7 with user
+*** DONE Review task 7 with user
 - Stop when buffer switching can swap one live client in and out without recreating it.
+
+*** DONE Session note: Task 7 selection-driven single visibility
+- Added =set-selected-client= IPC command path; when selection changes, plugin now hides other managed clients and keeps the selected client shown.
+- Added =layout-applied= response and updated state dump flow to reflect selected client after visibility updates.
+
+*** DONE Session note: Task 7 input mode command path
+- Added =set-input-mode= command with =mode-changed= response and state-dump propagation.
+- Workspace state dump now includes current input mode for managed workspaces.
+- Added =FocusController= and runtime focus dispatch for mode switching: =client-control= focuses selected managed client, =emacs-control= attempts to focus Emacs client in the managed workspace.
+
+*** DONE Session note: Task 7 adoption backfill for pre-existing windows
+- Added temporary =seed-client= command so Emacs can seed already-open clients when a workspace first becomes managed.
+- =hyprmacs-manage-current-workspace= now performs a one-shot =hyprctl -j clients= seed pass to avoid missing the initial terminal/emacs-launch window.
+- Added automatic Hyprland instance-signature detection in Emacs command paths so smoke commands can target a running nested instance without manual =HYPRLAND_INSTANCE_SIGNATURE= export.
+
+*** DONE Session note: Task 7 user-facing commands
+- Added Emacs commands to set selected managed client and set input mode, backed by new session send helpers.
+- Session handler now applies =layout-applied= and =mode-changed= frames to local session state.
+- Added =hyprmacs-run-smoke-test= for scripted connect/manage/request/select/mode-switch flow with state + =hyprctl clients= capture to =logs.txt=.
+- Added =hyprmacs-run-gui-smoke-test= for GUI-mode automation: spawns a second =foot= client, runs selection and mode toggles, and logs =hyprctl activewindow= snapshots after each step.
+- Extended non-GUI =hyprmacs-run-smoke-test= logging to capture =hyprctl activewindow= snapshots and intermediate =after-client-control= state, so mode diagnostics are still visible after reverting to non-GUI workflow.
+
+*** DONE Session note: Task 7 client-id canonicalization and seed false handling
+- Fixed registry-level client-id canonicalization to always use =0x...= form, preventing duplicate records for the same client (raw hex vs prefixed forms).
+- Fixed Emacs JSON boolean normalization for seed payloads to treat both =:json-false= and =:false= as false; this prevented incorrectly marking seeded tiled clients as floating/ineligible.
+- Verified by direct socket inspection that =seed-client= now yields non-empty =eligible_clients= and =managed_clients= in subsequent =state-dump= frames.
+
+*** DONE Session note: Task 7 managed-set adoption
+- Added registry reconciliation so managed membership is derived from three facts: workspace is currently managed, client is in that workspace, and client remains eligible.
+- Workspace manage/unmanage now immediately recalculates managed membership across tracked clients.
+- Lifecycle updates (open, close, move, title/classification changes, floating changes) also recalculate managed membership so new eligible clients auto-adopt and ineligible/moved clients auto-drop.
+
+*** DONE Session note: Task 7 internal hidden workspace move handling
+- Identified a switching bug where hidden-client moves to internal workspace =-98= could remove that client from the managed snapshot.
+- Added a regression test in =plugin/tests/workspace_manager_tests.cpp= that verifies an internal hide move event keeps both clients in managed state for workspace =1=.
+- Updated plugin move-event handling to ignore internal hide targets (=-98= and =special:hyprmacs-hidden=) for registry workspace updates so hidden clients remain switchable.
+
+*** DONE Session note: Task 7 managed buffer identity sync
+- Emacs now synchronizes one buffer per managed client from each =state-dump=, using client ID as stable identity and eligible-client metadata for naming and app id.
+- Session state now tracks =:associated-buffers= and prunes buffers for clients that leave the managed set.
+- Added ERT coverage for create/update/remove behavior when managed client membership changes across snapshots.
 
 Validation:
 - Manage a workspace with multiple apps.
 - Switch managed buffers in Emacs and verify only the selected client is visible.
 - Toggle Emacs-control and client-control modes and confirm focus moves as expected.
 
-** TODO Task 8: Implement rectangle-first layout updates and multi-client visibility
+** DONE Task 8: Implement rectangle-first layout updates and multi-client visibility
 Purpose:
 - Upgrade from a one-client prototype to the core design model.
 
@@ -317,82 +485,639 @@ Files:
 - Modify =plugin/tests/layout_applier_tests.cpp=
 
 Steps:
-*** TODO Compute managed-client rectangles in Emacs
+*** DONE Compute managed-client rectangles in Emacs
 - Detect which managed buffers are visible in the current Emacs window tree.
 - Convert visible window geometry into plugin-facing rectangles relative to the Emacs frame.
-*** TODO Send snapshot-style =set-layout= messages
+*** DONE Send snapshot-style =set-layout= messages
 - Include workspace ID, selected client, input mode, visible clients, hidden clients, rectangles, and stacking order.
-*** TODO Apply snapshot layouts in the plugin
+*** DONE Apply snapshot layouts in the plugin
 - Show clients listed as visible.
 - Hide clients listed as hidden.
 - Move visible clients into the exact rectangles specified by Emacs.
-*** TODO Reject unsupported layouts explicitly
+*** DONE Reject unsupported layouts explicitly
 - Detect overlapping rectangles in Emacs before sending them.
 - Validate the same constraint in the plugin and log a protocol error if violated.
-*** WAIT Review task 8 with user
+*** DONE Review task 8 with user
 - Stop when simple Emacs splits map to two or more live managed clients.
+
+*** DONE Session note: Task 8 rectangle-first Emacs layout module
+- Added =emacs/hyprmacs-layout.el= with window-tree rectangle extraction for managed buffers, snapshot payload construction, and overlap/size validation before send.
+- Added =hyprmacs-sync-layout= plus automatic layout sync hooks from =window-configuration-change-hook= (enabled on manage-workspace).
+- Added =tests/emacs/layout-tests.el= covering rectangle extraction, payload construction, and overlap rejection.
+
+*** DONE Session note: Task 8 set-layout protocol and plugin application path
+- Added plugin =set-layout= command routing with payload parsing for =selected_client=, =input_mode=, =visible_clients=, =hidden_clients=, =rectangles=, and =stacking_order=.
+- Added snapshot application in =LayoutApplier=: idempotent show/hide, move/resize dispatches, and overlap rejection.
+- Added/extended plugin tests in =layout_applier_tests= and =ipc_server_tests= for success and overlap-failure behavior.
+
+*** DONE Session note: Task 8 geometry mode bootstrap for tiled clients
+- Manual validation showed pixel move/resize dispatches were accepted but tiled clients did not move.
+- Added a Task 8 prototype geometry mode step that toggles a managed client into geometry-addressable mode before pixel move/resize on first visible layout application.
+- This is an implementation bootstrap for Task 8 validation and will be refined in later tasks to preserve the desired managed-layer semantics separate from native floating behavior.
+
+*** DONE Session note: Task 8 developer-loop verification updates
+- Added Emacs layout tests to default test workflows (=Makefile test= and =just test=).
+- Hardened fallback plugin API compile gating to require both Hyprland plugin API headers and Hyprgraphics headers before enabling real-plugin compile path.
+
+*** DONE Session note: Task 8 live-debug findings and initial publish fix
+- Direct live IPC validation on a clean nested session confirms =set-layout= can return =layout-applied ok=true= and mutate client geometry (workspace, position, size) when payload fields are complete.
+- Added immediate =request-state= on =hyprmacs-manage-current-workspace= and scheduled an initial delayed =hyprmacs-sync-layout= (interactive sessions) to reduce timing gaps where managed buffers are visible but no initial layout snapshot has been published yet.
+- During debugging, multiple stale nested Hyprland instances and stale controller connections to the shared socket path created misleading no-op behavior; manual validation should prefer a clean single nested session for deterministic results.
+
+*** DONE Session note: Task 8 per-instance IPC socket path
+- Root-cause for repeated \"snapshot published but wrong windows moved\" behavior was cross-instance IPC path collision: multiple nested Hyprland instances were sharing =/run/user/$UID/hyprmacs-v1.sock=.
+- Updated plugin default socket bind path to instance-specific location =/run/user/$UID/hypr/$HYPRLAND_INSTANCE_SIGNATURE/hyprmacs-v1.sock=.
+- Updated Emacs default socket resolution to the same per-instance path and ensured =hyprmacs-connect= sets/refreshes =HYPRLAND_INSTANCE_SIGNATURE= before connecting.
+- Updated protocol transport docs to reflect per-instance socket location.
+
+*** DONE Session note: Task 8 selected-client validity hardening
+- Root-cause for layout no-op behavior: plugin =state-dump= could publish focused Emacs client IDs as =selected_client=, and later =set-layout= snapshots were rejected when that non-managed selection was echoed back.
+- Updated plugin =state-dump= to include =selected_client= only when the selected client is managed in the target workspace.
+- Updated =set-layout= handling to ignore (not reject) non-managed =selected_client= values so visibility/geometry updates still apply.
+- Updated Emacs layout payload builder to drop =selected_client= when it is not in the current managed-client set.
+
+*** DONE Session note: Task 8 rectangle coordinate space fix
+- Manual validation showed managed clients were being moved but aligned to monitor origin instead of the Emacs frame region.
+- Root-cause: Emacs was sending frame-local window rectangles while plugin geometry commands require global compositor coordinates.
+- Updated Emacs layout rectangle calculation to add the frame inner origin (=frame-geometry inner-position= fallback chain) to window pixel edges before publishing =set-layout=.
+- Added Emacs regression coverage to verify visible rectangle payloads include frame offset.
+
+*** DONE Session note: Task 8 Wayland frame-origin fallback
+- Further validation showed Emacs on Wayland can report frame position as =0,0=, which makes global rectangle conversion incorrect even after frame-origin offset wiring.
+- Updated Emacs layout origin resolution to consult =hyprctl -j clients= and select the largest non-floating Emacs client for the current Emacs PID/workspace as the primary origin source.
+- =frame-geometry= and =frame-position= remain fallback paths when Hyprland client lookup is unavailable.
+
+*** DONE Session note: Task 8 minibuffer and Vertico auto-sync hooks
+- Validation showed managed client geometry could overlap minibuffer/Vertico UI and remain stale until manual =hyprmacs-sync-layout=.
+- Expanded automatic layout sync triggers beyond =window-configuration-change-hook= to also include =window-size-change-functions=, =minibuffer-setup-hook=, and =minibuffer-exit-hook=.
+- Added a short debounce timer so clustered UI updates coalesce into one =set-layout= publish while still reacting quickly to minibuffer size transitions.
+
+*** DONE Session note: Task 8 generic resize/state hook alignment
+- User requested avoiding package-specific hooks and relying on generic resize-driven triggers.
+- Replaced minibuffer-specific auto-sync triggers with generic =window-state-change-functions= while keeping =window-configuration-change-hook= and =window-size-change-functions=.
+- Retained debounce scheduling, updated ERT coverage for hook registration/removal and schedule behavior via generic change hooks.
+
+*** DONE Session note: Task 8 live named-daemon reproduction and set-layout null-array fix
+- Reproduced in a clean nested Hyprland session using named Emacs daemon =hyprmacs-e2e= and GUI client bound to the active instance socket.
+- Root-cause from live plugin logs: =set-layout= frames were rejected as \"missing required fields\" because Emacs encoded empty list fields as JSON =null= instead of =[]= (notably =hidden_clients= and potentially other array fields).
+- Fixed Emacs payload builder to emit vectors for all array-like fields (=visible_clients=, =hidden_clients=, =rectangles=, =stacking_order=) so wire encoding always uses JSON arrays.
+- Fixed plugin JSON string-field parsing to require a quoted string token at the field value position, preventing null values from being misparsed from later quoted tokens.
+
+*** DONE Session note: Task 8 duplicate-rectangle guard and Emacs-side debug logging
+- Added Emacs-side rectangle de-duplication by =client_id= before overlap validation and payload construction; this prevents self-overlap protocol rejects when the same managed buffer appears in multiple windows.
+- Added optional per-snapshot debug logging via =hyprmacs-layout-debug-log-file= to capture emitted =set-layout= payloads during manual GUI bug hunts.
+
+*** DONE Session note: Task 8 post-resize re-anchor in plugin geometry apply
+- Live validation showed =resizewindowpixel= can shift floating managed clients vertically even when =movewindowpixel= was applied immediately before resize.
+- Updated layout application to enforce =move -> resize -> move= for visible clients so top-left anchoring remains stable across minibuffer-driven height changes.
+- Extended layout applier tests to assert the extra post-resize move command in snapshot application.
+
+*** DONE Session note: Task 8 full graphical round validation and remaining prototype caveat
+- Ran a full graphical validation round in nested Hyprland with named daemon workflow (=emacs --daemon=hyprmacs-e2e= + GUI client), including: frame resize changes, Vertico/minibuffer open-close cycles, selection switches, hide/restore, input-mode toggles, and managed-client close handling.
+- Verified the reported minibuffer/Vertico drift path after the re-anchor fix: layout payloads and plugin commands kept =y= stable while height shrank/restored (=1368 -> 1188 -> 1368=), and managed client top-left anchors remained at expected coordinates.
+- Observed a known Task 8 prototype caveat during long runs: clients moved into temporary geometry mode are marked floating and can later be reclassified as ineligible on state refresh. This is consistent with the existing Task 8 bootstrap note and remains a refinement item for later tasks.
 
 Validation:
 - Split the Emacs frame, show two managed buffers, and verify both clients become visible in matching rectangles.
 - Delete one split and verify the corresponding client becomes hidden but remains alive.
 
-** TODO Task 9: Harden popup, floating, and Emacs auxiliary-window behavior
+** DONE Task 8A: Introduce the dedicated hyprmacs workspace policy profile
+Purpose:
+- Add a workspace-local policy mode that protects Emacs-directed layout semantics from conflicting Hyprland behaviors.
+
+Files:
+- Create =docs/adr/0003-hyprmacs-workspace-policy.org=
+- Modify =plugin/src/workspace_manager.cpp=
+- Modify =plugin/src/focus_controller.cpp=
+- Modify =plugin/src/layout_applier.cpp=
+- Modify =docs/testing/manual-smoke-tests.org=
+
+Steps:
+*** DONE Capture architecture and policy rules in ADR
+- Document dedicated =hyprmacs= policy profile lifecycle (=manage -> enforce, unmanage/disconnect -> restore=).
+- Document required baseline constraints:
+  - window animations disabled for managed geometry transitions
+*** DONE Implement workspace policy enforcement and restore
+- Workspace manager now applies managed policy keywords on =manage-workspace=:
+  - =animations:enabled = 0=
+  - =misc:focus_on_activate = 0=
+- Workspace manager snapshots prior option values using Hyprland =j/getoption= queries before applying policy.
+- Workspace manager restores snapped policy values on =unmanage-workspace=.
+- Controller disconnect transition now triggers workspace unmanage + policy restore in the manager state path.
+*** DONE Add additional safeguards for layout ownership
+- Prevent native focus/layout heuristics from overriding Emacs layout intent in managed mode.
+- Keep managed-layer stacking and non-overlap guarantees intact.
+- Added manager-level policy guard for =focus_on_activate= during managed sessions.
+- Existing layout safeguards remain active:
+  - plugin overlap rejection in =LayoutApplier=
+  - managed-layer visibility and geometry from Emacs snapshots
+  - native popup/floating surfaces remain outside managed set by classifier rules
+*** DONE Review task 8A with user
+- Stop when policy constraints are active and restored correctly across manage/unmanage.
+
+*** DONE Session note: post-Task-8 architecture agreement (2026-04-17)
+- User approved introducing a dedicated =hyprmacs= workspace layout/policy mode instead of relying on existing Hyprland layout defaults.
+- Initial mandatory constraints for this mode:
+  - window animations for managed geometry transitions must be off
+- Additional constraints to implement in the same policy profile:
+  - =focus_on_activate= should be constrained so managed clients do not steal keyboard ownership from Emacs-control mode
+  - managed-client geometry and visibility remain authoritative from Emacs snapshots, not native tiling mutations
+  - policy state should be restored cleanly when workspace is unmanaged or controller disconnects
+
+*** DONE Session note: nested-Hyprland QoL input-mode test binds (2026-04-17)
+- Updated flake nested Hyprland config to disable pointer focus stealing during manual input-mode validation:
+  - =input.follow_mouse = 2=
+- Updated flake nested Hyprland config to disable window animations for deterministic managed geometry tests:
+  - =animations.enabled = false=
+- Added nested keybind for returning keyboard focus to Emacs quickly from client-control testing:
+  - =ALT+E -> focuswindow class:^(emacs)$= (native Hyprland dispatcher bind)
+- Note: this keybind currently performs compositor focus handoff only; plugin-native =hyprctl dispatch hyprmacs ...= mode commands are not implemented yet and remain future work.
+- Superseded by Task 13 (2026-04-19), where =ALT+E= now maps to plugin dispatcher =hyprmacs:set-emacs-control-mode=.
+
+*** DONE Session note: Emacs command UX defaults for workspace and connection (2026-04-17)
+- Interactive workspace-scoped commands now infer workspace from active Hyprland workspace by default (instead of prompting for workspace ID each invocation).
+- =hyprmacs-manage-current-workspace= now auto-connects to plugin IPC when disconnected, so explicit =hyprmacs-connect= is optional for the common flow.
+- Manual smoke-test docs updated to reflect the new flow.
+
+*** DONE Session note: input-mode command UX simplification (2026-04-17)
+- =M-x hyprmacs-set-input-mode= now defaults to one-shot =client-control= without prompting for mode.
+- Added explicit =M-x hyprmacs-set-emacs-control-mode= command for forcing =emacs-control= from Emacs when needed.
+- Kept backward-compatible non-interactive argument forms for automation/tests.
+
+*** DONE Session note: new-client adoption UX gap discovered during manual test (2026-04-17)
+- Reproduction: with a managed workspace active, launching a new app can first appear as native tiled until Emacs receives refreshed state and re-publishes layout.
+- Current root cause: plugin-to-Emacs live lifecycle notifications (=client-opened/client-closed= style push) are not implemented yet; Emacs session state is primarily refreshed by explicit =request-state= command/response cycles.
+- Consequence: newly opened eligible clients are managed in plugin state, but Emacs buffer/layout intent may not update immediately in the same interaction step.
+- This is currently treated as not-yet-implemented behavior (synchronization gap), not a regression in existing implemented contract.
+
+*** DONE Session note: Task 8A policy implementation and test coverage (2026-04-17)
+- Injected command/query executors into =WorkspaceManager= so policy application and snapshot restore can be unit-tested without a live compositor.
+- Added policy tests in =plugin/tests/workspace_manager_tests.cpp= covering:
+  - apply-on-manage and restore-on-unmanage
+  - restore and managed-state cleanup on controller disconnect transition.
+- Plugin main now shares a raw Hyprland command-socket helper for both command dispatch and option query responses used by workspace policy handling.
+
+*** DONE Session note: live nested focus-handoff failure diagnosis (2026-04-17)
+- In live nested testing, Emacs appeared unresponsive while session state remained in =client-control=.
+- Root cause observed in plugin logs: dispatch helper failed with =missing runtime env= during focus handoff and policy restore paths.
+- Current plugin dispatch/query helpers read =HYPRLAND_INSTANCE_SIGNATURE= at call time; in this runtime, that env var can be unavailable later even though startup succeeded.
+- Consequence: mode state may update in IPC/session state, but compositor focus handoff command can fail, leaving keyboard ownership on client surfaces.
+
+** DONE Task 9: Harden popup, floating, and Emacs auxiliary-window behavior
 Purpose:
 - Make sure the design avoids the EXWM failure modes it was created to avoid.
 
 Files:
-- Modify =plugin/src/client_classifier.cpp=
-- Modify =plugin/src/workspace_manager.cpp=
-- Modify =plugin/src/layout_applier.cpp=
-- Modify =emacs/hyprmacs-layout.el=
-- Create =docs/adr/0003-auxiliary-window-classification.org=
+- Create =docs/adr/0004-auxiliary-window-classification.org=
+- Modify =docs/protocol/ipc-v1.org=
 - Modify =docs/testing/manual-smoke-tests.org=
+- Modify =plugin/src/client_classifier.cpp=
+- Modify =plugin/src/client_registry.cpp=
+- Modify =plugin/src/workspace_manager.cpp=
+- Modify =plugin/src/ipc_server.cpp=
+- Modify =plugin/src/plugin_main.cpp=
+- Modify =plugin/include/hyprmacs/workspace_manager.hpp=
+- Modify =plugin/include/hyprmacs/ipc_server.hpp=
+- Modify =plugin/src/layout_applier.cpp=
+- Modify =plugin/tests/client_registry_tests.cpp=
+- Modify =plugin/tests/workspace_manager_tests.cpp=
+- Modify =emacs/hyprmacs-layout.el=
+- Modify =emacs/hyprmacs.el=
+- Modify =tests/emacs/protocol-tests.el=
 
 Steps:
-*** TODO Tighten client exclusion rules
+*** DONE Tighten client exclusion rules
 - Verify dialogs, transient windows, and true floating windows never enter the managed set.
-*** TODO Keep Emacs-owned auxiliary windows native
+*** DONE Keep Emacs-owned auxiliary windows native
 - Confirm child frames and posframes are excluded even when they share process identity with the main Emacs frame.
-*** TODO Validate internal Emacs layout changes
+*** DONE Validate internal Emacs layout changes
 - Trigger fresh =set-layout= updates for minibuffer growth, side windows, and ordinary Emacs UI panes that change safe client geometry.
-*** TODO Handle client float-state transitions
+*** DONE Handle client float-state transitions
 - If a managed client becomes floating, remove it from the managed set and notify Emacs.
 - If a native tiled client becomes eligible again, let normal adoption rules decide whether to re-manage it.
-*** WAIT Review task 9 with user
+*** DONE Review task 9 with user
 - Stop when popups stay usable and Emacs auxiliary windows still render above managed clients.
+
+*** DONE Session note: Task 9 classification and transition hardening (2026-04-18)
+- Expanded popup/transient classification heuristics in =client_classifier= for chooser/portal/auth/dialog-style clients while keeping true floating clients ineligible.
+- Added explicit regression coverage in =client_registry_tests= for portal chooser/auth prompt exclusion and Emacs auxiliary-window exclusion.
+- =ClientRegistry::reconcile_management= now clears stale selection when selected client leaves managed membership (for example via float transition).
+
+*** DONE Session note: Task 9 float-transition notification path (2026-04-18)
+- Added managed-set transition notifications from =WorkspaceManager= on float/tile transitions:
+  - =client-became-floating=
+  - =client-became-tiled=
+- =IpcServer= now subscribes to workspace-manager transition callbacks and emits transition frame + fresh =state-dump= to connected Emacs controller.
+- Added workspace-manager regression coverage ensuring:
+  - floating transition removes client from managed set and emits notify event
+  - tiling transition re-adopts client and emits notify event.
+
+*** DONE Session note: Task 9 generic Emacs layout-change trigger expansion (2026-04-18)
+- Added =window-buffer-change-functions= auto-sync trigger in =hyprmacs.el= to catch side-window and visible-buffer churn through generic Emacs hooks.
+- Extended Emacs protocol tests to assert hook registration/removal for the new generic trigger.
+
+*** DONE Session note: Task 9 floating dialog validation checkpoint (2026-04-18)
+- User reproduced the =About PCManFM= dialog path after restart and confirmed it remained native floating at the Task 9 review checkpoint.
+- Review checkpoint closed based on this validation.
+
+*** DONE Session note: Task 9 floating-state refresh robustness (2026-04-18)
+- Added a fallback floating-state refresh path using =hyprctl j/clients= on key lifecycle events (=openwindowv2=, =activewindowv2=, =windowtitlev2=) because some nested runs did not emit reliable floating-transition events on =.socket2.sock=.
+- Fixed Hyprland command-socket response handling to read full responses (not a fixed-size 256-byte buffer) so =j/clients= parsing is reliable for transition classification.
+- Added workspace-manager regression coverage for open-time floating discovery and refresh-driven transition notifications when explicit floating events are absent.
 
 Validation:
 - Test pinentry or a dialog, a floating utility window, a posframe-like child frame, and a client that toggles floating state.
 
-** TODO Task 10: Add disconnect recovery, resync, and failure handling
+** DONE Task 10: Add disconnect recovery, resync, and failure handling
 Purpose:
 - Make the system survivable when either side lags, restarts, or disappears.
+- Eliminate runtime dispatch fragility caused by environment-dependent socket resolution after startup.
 
 Files:
 - Modify =plugin/src/ipc_server.cpp=
 - Modify =plugin/src/workspace_manager.cpp=
-- Modify =plugin/src/focus_controller.cpp=
+- Modify =plugin/src/layout_applier.cpp=
+- Modify =plugin/src/plugin_main.cpp=
+- Modify =plugin/include/hyprmacs/ipc_server.hpp=
+- Modify =plugin/include/hyprmacs/workspace_manager.hpp=
+- Modify =plugin/include/hyprmacs/layout_applier.hpp=
 - Modify =emacs/hyprmacs-ipc.el=
 - Modify =emacs/hyprmacs-session.el=
+- Modify =docs/protocol/ipc-v1.org=
+- Modify =docs/testing/manual-smoke-tests.org=
+- Modify =plugin/tests/ipc_server_tests.cpp=
+- Modify =plugin/tests/layout_applier_tests.cpp=
+- Modify =tests/emacs/session-tests.el=
 - Create =tests/emacs/reconnect-tests.el=
-- Create =docs/adr/0004-disconnect-recovery.org=
+- Create =docs/adr/0005-disconnect-recovery.org=
+- Modify =Makefile=
+- Modify =justfile=
 
 Steps:
-*** TODO Define the authoritative cleanup path
+*** DONE Define the authoritative cleanup path
 - On Emacs disconnect, unmanage the workspace, restore managed clients to native behavior, and clear plugin-side session state.
-*** TODO Add explicit resync support
+*** DONE Add explicit resync support
 - Let Emacs reconnect, request a state dump, and rebuild its session state from plugin truth.
-*** TODO Harden message processing
+*** DONE Harden message processing
 - Handle malformed messages, unsupported versions, and stale socket paths with clear errors.
-*** TODO Document recovery behavior
+*** DONE Harden plugin dispatch/query runtime dependencies
+- Remove per-call dependency on process environment for Hyprland command-socket resolution after plugin startup.
+- Ensure focus handoff and policy dispatches remain functional even if =HYPRLAND_INSTANCE_SIGNATURE= is unavailable at call time.
+- Add regression coverage for this path where feasible (unit tests for resolver logic and/or deterministic integration check in nested session).
+*** DONE Document recovery behavior
 - Write the ADR and add manual tests for restart scenarios.
-*** WAIT Review task 10 with user
+*** DONE Review task 10 with user
 - Stop when killing or restarting Emacs does not leave the workspace in a broken intermediate state.
+
+*** DONE Session note: Task 10 disconnect cleanup path (2026-04-18)
+- Added disconnect-time workspace restore in =IpcServer=: before controller state is cleared, plugin now calls layout cleanup to restore hidden clients and unwind temporary geometry mode for managed clients.
+- Added =LayoutApplier::restore_workspace_to_native= and regression coverage to ensure hidden-client/show state and positioning-mode state do not leak across controller restarts.
+
+*** DONE Session note: Task 10 reconnect and stale-state handling (2026-04-18)
+- Emacs transport drop now clears managed snapshot fields and associated managed buffers via =hyprmacs-session--handle-transport-drop=.
+- Added =hyprmacs-session-reconnect-and-resync= helper and ERT coverage in =tests/emacs/reconnect-tests.el=.
+- Added stale socket path validation in =hyprmacs-ipc-resolve-socket-path= with explicit error text when the resolved socket does not exist.
+
+*** DONE Session note: Task 10 protocol and runtime hardening (2026-04-18)
+- Added explicit =protocol-error= IPC response path for malformed frames, unsupported protocol versions, and unknown command types; updated protocol docs accordingly.
+- Plugin command-socket resolution now initializes and caches socket path at plugin startup, removing per-call env dependency for dispatch/query operations.
+- Added regression coverage for unknown-command protocol errors and integrated reconnect tests into default =make test= / =just test= workflows.
 
 Validation:
 - Kill Emacs during both input modes, reconnect, and verify the workspace is usable and re-manageable.
+- Validate mode switch handoff and policy dispatch continue working in a long-lived session where runtime env vars may be absent from plugin process environment.
 
-** TODO Task 11: Package the prototype, document usage, and freeze the first demo flow
+** DONE Task 11: Implement explicit hyprmacs layout mode
+Purpose:
+- Replace dependency on native =dwindle= tiling semantics in managed workspaces with an explicit Hyprland layout mode named =hyprmacs=.
+
+Files:
+- Modify =plugin/src/workspace_manager.cpp=
+- Modify =plugin/src/layout_applier.cpp=
+- Modify =plugin/src/plugin_main.cpp=
+- Modify =docs/adr/0003-hyprmacs-workspace-policy.org=
+- Modify =docs/superpowers/plans/2026-04-15-hyprmacs-iterative-implementation.org=
+- Modify =docs/testing/manual-smoke-tests.org=
+
+Steps:
+*** DONE Define the runtime contract for layout mode ownership
+- Specify when managed workspaces should expose =tiledLayout= as =hyprmacs=.
+- Define how layout mode is restored on unmanage/disconnect.
+*** DONE Implement layout mode switching in managed lifecycle
+- On =manage-workspace=, set layout mode to =hyprmacs= for that workspace.
+- On =unmanage-workspace= and disconnect cleanup, restore previous layout mode.
+*** DONE Guard managed geometry flow against native tiling fallback
+- Ensure managed clients are not laid out by dwindle/master rules while managed.
+- Keep native floating/transient behavior unchanged.
+*** DONE Add verification coverage
+- Add/extend tests and manual smoke scenarios that assert managed workspace layout mode transitions.
+*** DONE Run full self-validation before user review
+- Run full automated regression coverage (=make test=) and include new Task 11 tests.
+- Run end-to-end manual validation in the agent's own nested Hyprland instance for both:
+  - regression scenarios from completed tasks
+  - new Task 11 layout-mode behavior (=tiledLayout= transition, strict Emacs ownership, immediate hide-before-layout, restore on unmanage/disconnect)
+- Fix discovered bugs and update tests/docs before requesting the user review checkpoint.
+*** DONE Review task 11 with user
+- Stop when managed workspace reports =tiledLayout: hyprmacs= and restores cleanly on unmanage/disconnect.
+
+*** DONE Session note: Task 11 design constraints locked with user (2026-04-18)
+- Layout ownership model is strict: managed workspaces use explicit =hyprmacs= layout mode and do not allow native fallback tiling for managed clients.
+- New eligible clients must be hidden immediately until Emacs publishes visibility/geometry via =set-layout=.
+- 8A policy constraints are tied to managed-layout ownership, but implementation must remain future-compatible with multi-workspace support:
+  - use a global policy lease manager semantics (acquire on first managed workspace, restore on last release)
+  - avoid per-workspace restore assumptions for global Hyprland options.
+
+*** DONE Session note: Task 11 implementation details (2026-04-18)
+- Workspace manager now snapshots and restores per-workspace tiled layout via =j/workspaces= (fallback =general:layout=) and dispatches:
+  - =keyword workspace <id>,layout:hyprmacs= on manage
+  - =keyword workspace <id>,layout:<previous>= on unmanage/disconnect.
+- Managed policy enforcement moved to lease semantics for future multi-workspace compatibility:
+  - acquire policy snapshot/enforcement on first lease
+  - restore snapshot on final lease release.
+- Plugin now hides managed clients immediately on:
+  - =manage-workspace= (existing managed clients)
+  - transition to managed/tiled state (newly eligible clients while managed).
+- Plugin registers a Hyprland tiled algorithm named =hyprmacs= during plugin init and removes it on plugin exit.
+
+*** DONE Session note: Task 11 verification evidence (2026-04-18)
+- Automated verification:
+  - =just test= (Emacs suites) passed.
+  - =nix develop -c bash -lc 'cd /home/hansffu/code/hyprmacs && make test'= passed (C++ + Emacs suites).
+- Manual nested validation in agent-controlled session:
+  - During active managed controller: =hyprctl -j activeworkspace | jq .tiledLayout= returned =hyprmacs=.
+  - After controller disconnect: same command returned restored layout (=dwindle= in test session).
+  - Existing eligible client moved to =special:hyprmacs-hidden= immediately on manage before layout publication.
+  - Newly opened eligible client while managed was also moved immediately to =special:hyprmacs-hidden=.
+  - On disconnect cleanup, hidden clients returned to workspace =1=.
+
+*** DONE Session note: Task 11 review-feedback fixes (2026-04-18)
+- User reported runtime regressions during Task 11 review:
+  - Emacs-control handoff could target the wrong Emacs frame when multiple Emacs windows existed in the workspace.
+  - Non-managed tiled windows (for example Brave/extra Emacs windows) could overlap and produce confusing render/input behavior under =layout:hyprmacs=.
+- Implemented fixes:
+  - Added tracking for the workspace's managing Emacs frame in =WorkspaceManager= and prioritized it for Emacs-control focus handoff.
+  - Managing Emacs frame selection now remains stable across incidental focus changes and falls back safely if the managing frame closes.
+  - Changed the registered =hyprmacs= tiled algorithm to non-intrusive recalc behavior so compositor layout mode no longer force-overwrites tiled target geometry.
+- Added regression coverage:
+  - workspace-manager test for stable managing-Emacs-frame selection and fallback on close.
+  - IPC route test asserting =set-input-mode(emacs-control)= focuses the tracked managing Emacs frame.
+
+*** DONE Session note: Task 11 additional review-feedback fix (2026-04-18)
+- User reported Emacs state not updating when compositor focus/close changes happened outside Emacs commands (for example click-to-focus and in-app close button).
+- Added workspace-state change notifier path from =WorkspaceManager= to =IpcServer= so managed-workspace state mutations now push =state-dump= to Emacs controller without manual =request-state=.
+- Added regression coverage for focus-change and closewindow event-driven state notifications.
+- Added Emacs-side selected-client activation on inbound =state-dump= / =layout-applied= so when compositor focus changes managed client selection, the corresponding managed buffer window becomes the active Emacs window.
+
+*** DONE Session note: Task 11 follow-mouse policy rollback by user request (2026-04-18)
+- User requested disabling plugin-side =follow_mouse= handling because runtime behavior under =move-only= was inconsistent and they prefer explicit user-owned config.
+- Updated managed workspace policy lease scope:
+  - keep plugin-managed constraints on =animations:enabled= and =misc:focus_on_activate=
+  - stop snapshot/apply/restore of =input:follow_mouse= in plugin lifecycle.
+- Updated workspace-manager regression coverage and manual smoke docs to match this narrowed policy contract.
+
+*** DONE Session note: nested runtime follow-mouse default tuned after live repro (2026-04-18)
+- Live reproduction with logs showed compositor focus flips on mouse movement while a managed client was in positioning mode.
+- In nested debug config, set =input.follow_mouse= to =2= as the default runtime behavior.
+- Reason: with this setting in the reproduced session, hover focus stopped while click-to-focus still worked as expected.
+- Additional live finding: =input.float_switch_override_focus= caused unwanted focus steals in a user instance even with follow-mouse tuned.
+- Nested debug config now also sets:
+  - =input.mouse_refocus = false=
+  - =input.float_switch_override_focus = 0=
+- Plugin still does not manage this option; user config remains the source of truth.
+
+Validation:
+- Manage workspace and verify =hyprctl -j activeworkspace= reports =tiledLayout= as =hyprmacs=.
+- Unmanage/disconnect and verify prior layout mode is restored.
+
+** DONE Task 11B: Automate full nested E2E regression flow
+Purpose:
+- Replace manual-only nested validation with a repeatable script that exercises implemented behavior across Tasks 1-11.
+
+Files:
+- Create =scripts/hyprmacs-e2e-nested.sh=
+- Modify =emacs/hyprmacs.el=
+- Modify =justfile=
+- Modify =docs/testing/manual-smoke-tests.org=
+- Modify =docs/superpowers/plans/2026-04-15-hyprmacs-iterative-implementation.org=
+
+Steps:
+*** DONE Define E2E harness contract
+- Run static/unit coverage first (=make test=) before launching nested runtime checks.
+- Launch a fresh nested Hyprland instance and auto-detect the active instance signature.
+- Run scripted Emacs-driven workflow assertions for manage/state/layout/mode/unmanage behavior.
+*** DONE Implement nested orchestration script
+- Start nested compositor, spawn test windows, launch controllable Emacs daemon/client, and run E2E Lisp entrypoint.
+- Collect deterministic logs/artifacts for failures.
+- Ensure cleanup (nested compositor + daemon) on success and failure.
+*** DONE Add runtime assertions that map to Tasks 1-11
+- Validate plugin event tap and IPC message flow.
+- Validate managed workspace layout mode transitions and policy values.
+- Validate managed client discovery, selection/mode switching, and cleanup on unmanage.
+*** DONE Add developer entrypoint
+- Add a =just= recipe that runs the full nested E2E harness.
+*** DONE Review task 11B with user
+- Stop after the automated harness succeeds locally and provide generated artifact paths for user validation.
+
+*** DONE Session note: Task 11B automated harness implementation (2026-04-18)
+- Added =scripts/hyprmacs-e2e-nested.sh= as a full automated nested regression harness.
+- Added =M-x hyprmacs-run-full-e2e-test= with fail-fast assertions for runtime manage/layout/policy/mode/unmanage flow.
+- Added =just e2e= developer entrypoint (runs harness under =nix develop=).
+- Added manual smoke doc section describing the automated harness and artifact locations.
+
+*** DONE Session note: Task 11B local verification evidence (2026-04-18)
+- Ran =just e2e= successfully in nested mode.
+- Harness completed with:
+  - all plugin + Emacs unit suites passing
+  - nested runtime assertions passing
+  - plugin runtime signal checks (event tap + IPC command flow) passing
+- Example artifact bundle:
+  - =artifacts/e2e/20260418-211500/summary.log=
+  - =artifacts/e2e/20260418-211500/session-e2e.log=
+
+*** DONE Session note: Task 11B use-case coverage expansion (2026-04-18)
+- Expanded runtime E2E assertions based on user-requested lifecycle scenarios:
+  - managed-buffer window visibility roundtrip (show -> hide -> show) with compositor workspace verification
+  - command-path buffer close (=kill-current-buffer=) followed by automatic recreation from inbound state
+  - explicit retention of same-title distinct-client coverage, float/tile toggling, close-window command cleanup, and multi-frame focus handoff.
+- Updated =docs/testing/manual-smoke-tests.org= automated harness section to list the expanded scenario set.
+
+*** DONE Session note: Task 11B regression fix for client-control selection source (2026-04-18)
+- User-reported behavior: =M-x hyprmacs-set-input-mode= could focus the wrong managed client (observed as first client order fallback) instead of the client associated with the current managed buffer.
+- Root cause:
+  - Emacs command path only sent =set-input-mode(client-control)=.
+  - Plugin behavior when no selected client exists falls back to first managed client for focus.
+- Added failing test first:
+  - =tests/emacs/protocol-tests.el::hyprmacs-set-input-mode-selects-client-for-current-managed-buffer=
+  - verifies command emits =set-selected-client= for the current managed buffer before =set-input-mode=.
+- Implemented fix:
+  - =emacs/hyprmacs.el=: on client-control mode switch, derive current buffer client ID when it is managed and send =set-selected-client= first (when changed), then send mode switch.
+- Verification:
+  - targeted ERT protocol suite passes
+  - full =just e2e= passes (artifact bundle: =artifacts/e2e/20260418-232545/=).
+
+** DONE Task 12: Introduce dedicated managed-client major mode
+Purpose:
+- Add a focused Emacs major mode for managed client buffers before broader packaging/documentation work.
+
+Files:
+- Modify =emacs/hyprmacs-buffers.el=
+- Modify =emacs/hyprmacs-session.el=
+- Modify =tests/emacs/buffer-tests.el=
+- Modify =docs/testing/manual-smoke-tests.org=
+
+Steps:
+*** DONE Add =hyprmacs-window-mode=
+- Define a dedicated major mode for managed client buffers.
+- Keep it minimal for prototype scope (identity + predictable mode map scaffold).
+*** DONE Attach mode during buffer association lifecycle
+- Ensure managed buffers created/recreated by client association always enter =hyprmacs-window-mode=.
+*** DONE Add regression tests
+- Verify managed buffers use =hyprmacs-window-mode= on create and recreate paths.
+*** DONE Validate in nested runtime
+- Run =just e2e= and confirm managed buffer behavior remains stable with mode enabled.
+*** DONE Review task 12 with user
+- Use this checkpoint to validate mode behavior before packaging/demo polish.
+
+Validation:
+- In nested session, managed buffers report =major-mode= as =hyprmacs-window-mode=.
+- Existing buffer lifecycle and E2E tests remain green.
+
+*** DONE Session note: Task 12 implementation for managed-window major mode (2026-04-19)
+- Added =hyprmacs-window-mode= and keymap scaffold in =emacs/hyprmacs-buffers.el=.
+- Bound =i= in mode map to =hyprmacs-set-input-mode= (client-control entry path from Emacs-managed buffers).
+- Added configurable rename handler:
+  - =hyprmacs-window-rename-function=
+  - default implementation =hyprmacs-window-default-rename-function=
+- Added hook points:
+  - =hyprmacs-window-title-change-functions=
+  - =hyprmacs-window-selected-functions=
+  - =hyprmacs-window-input-mode-change-functions=
+- Added mode-line input-mode indicator (=Hyprmacs[E/C/?]=) with refresh on session selection/mode transitions.
+- Extended buffer-local metadata:
+  - =hyprmacs-client-title=
+  - =hyprmacs-workspace-id=
+- Updated session path to call =hyprmacs-buffer-notify-session-state-changed= after inbound frame handling so mode-line/hook behavior stays synchronized.
+
+*** DONE Session note: Task 12 verification evidence (2026-04-19)
+- Failing tests were added first in =tests/emacs/buffer-tests.el= to assert:
+  - mode activation and keymap binding
+  - rename handler override behavior
+  - title-change hook emission
+  - mode-line input indicator updates
+  - session state-change hook emission for selected/input transitions
+- Verification commands:
+  - =emacs -Q --batch -L emacs -L tests/emacs -l tests/emacs/buffer-tests.el -f ert-run-tests-batch-and-exit=
+  - =emacs -Q --batch -L emacs -L tests/emacs -l tests/emacs/session-tests.el -f ert-run-tests-batch-and-exit=
+  - =emacs -Q --batch -L emacs -L tests/emacs -l tests/emacs/protocol-tests.el -f ert-run-tests-batch-and-exit=
+  - =just e2e=
+- Latest nested harness artifact bundle:
+  - =artifacts/e2e/20260419-000421/summary.log=
+  - =artifacts/e2e/20260419-000421/session-e2e.log=
+
+*** DONE Session note: Task 12 review-feedback adjustments (2026-04-19)
+- Updated default mode-map binding for entering client-control from managed buffers:
+  - from =i=
+  - to =C-c C-c=
+- Updated default managed buffer naming policy:
+  - from client-id-based default (=*hyprmacs:<client-id>:<title>*=)
+  - to class/title default (=*hyprmacs:<class>: <title>*=)
+- Updated tests and nested harness validation with passing results:
+  - latest artifact bundle: =artifacts/e2e/20260419-001943/=
+
+** DONE Task 13: Add custom Hyprland dispatchers for plugin control
+Purpose:
+- Provide compositor-native commands (for example =Alt+E=) that can control hyprmacs even when Emacs does not own keyboard input.
+- Establish the dispatcher path that future hyprmacs actions can reuse.
+
+Files:
+- Modify =plugin/src/plugin_main.cpp=
+- Modify =plugin/src/ipc_server.cpp= (if routing helpers are needed)
+- Modify =plugin/tests/ipc_server_tests.cpp=
+- Modify =flake.nix= (nested config keybind wiring)
+- Modify =docs/testing/manual-smoke-tests.org=
+- Modify =docs/superpowers/plans/2026-04-15-hyprmacs-iterative-implementation.org=
+
+Steps:
+*** DONE Add dispatcher registration in plugin
+- Register one or more hyprmacs dispatchers via Hyprland plugin API.
+- Implement at minimum =hyprmacs:set-emacs-control-mode=.
+*** DONE Bridge dispatcher to existing workspace control path
+- Resolve target workspace from dispatcher arg (fallback to managed workspace in current single-workspace prototype).
+- Route dispatcher action into existing input-mode handling (=set-input-mode emacs-control= equivalent behavior).
+*** DONE Wire nested config keybind
+- Bind =ALT+E= in nested Hyprland config to call the new dispatcher.
+*** DONE Add regression tests
+- Validate dispatcher command updates mode and returns focus to managing Emacs frame without hanging Hyprland IPC.
+- Keep current IPC command-path tests green.
+*** DONE Review task 13 with user
+- Validate real interactive handoff: client-control -> =ALT+E= -> emacs-control focus return.
+
+Validation:
+- In nested runtime, =ALT+E= returns control to managing Emacs frame while workspace is managed.
+- Plugin tests cover dispatcher behavior and existing mode-switch contracts.
+
+*** DONE Session note: Task 13 dispatcher implementation (2026-04-19)
+- Added new dispatcher bridge module:
+  - =plugin/include/hyprmacs/dispatchers.hpp=
+  - =plugin/src/dispatchers.cpp=
+- Implemented =hyprmacs:set-emacs-control-mode= behavior:
+  - resolve workspace from dispatcher arg or active workspace query (fallback managed workspace)
+  - set input mode to =emacs-control=
+  - focus managing Emacs frame when available
+- Registered dispatcher via Hyprland plugin API (=addDispatcherV2=) in =plugin_main.cpp= and removed it on plugin exit.
+- Added =IpcServer::publish_state_dump_for_workspace= so dispatcher path pushes state updates to connected controller.
+- Updated nested Hyprland bind in =flake.nix=:
+  - =ALT+E= now invokes dispatcher =hyprmacs:set-emacs-control-mode=.
+
+*** DONE Session note: Task 13 verification evidence (2026-04-19)
+- Added plugin regression target:
+  - =plugin/tests/dispatchers_tests.cpp=
+  - =hyprmacs_dispatcher_tests= added to plugin test CMake.
+- Verification commands:
+  - =nix develop -c sh -lc 'cmake -S plugin -B build/plugin && cmake --build build/plugin && ctest --test-dir build/plugin --output-on-failure'=
+  - =just e2e=
+- Latest nested harness artifact bundle:
+  - =artifacts/e2e/20260419-003841/summary.log=
+  - =artifacts/e2e/20260419-003841/session-e2e.log=
+
+*** DONE Session note: Task 13 review bugfix for =ALT+E= input handoff hang (2026-04-19)
+- User review reported reproducer:
+  - =client-control= via =C-c C-c= in managed buffer works
+  - =ALT+E= makes all input appear dead.
+- Root cause identified:
+  - Dispatcher callback executed synchronous socket-based =hyprctl dispatch/query= from inside Hyprland dispatcher thread, causing IPC timeout/hang (for example: =Hyprland IPC didn't respond in time=).
+- Fix implemented:
+  - Refactored dispatcher contract to only set mode and return optional focus target.
+  - Removed synchronous socket query for active workspace from dispatcher callback path.
+  - Dispatcher callback now:
+    - resolves workspace via dispatcher arg or managed-workspace fallback
+    - sets input mode to =emacs-control=
+    - schedules focus to managing Emacs client asynchronously after callback return.
+- Regression coverage added:
+  - Nested e2e now explicitly asserts =hyprctl dispatch hyprmacs:set-emacs-control-mode= succeeds.
+  - Direct scripted repro confirms:
+    - active window =foot= in client-control
+    - dispatcher returns =ok=
+    - active window returns to managing =emacs= client.
+- Verification evidence:
+  - =just e2e= PASS with new dispatcher assertion:
+    - =artifacts/e2e/20260419-005640/summary.log=
+    - =artifacts/e2e/20260419-005640/session-e2e.log=
+
+*** DONE Session note: Post-Task 13 behavior change - killing managed buffer closes client (2026-04-19)
+- User requested that killing a managed Emacs buffer should close the corresponding Hyprland client window.
+- Implemented in Emacs managed-buffer mode:
+  - kill interception dispatches =hyprctl dispatch closewindow address:<client-id>= via configurable close handler.
+  - buffer kill is canceled while close request is in-flight; buffer is removed when client-close state update arrives.
+  - internal cleanup paths (=hyprmacs-buffer-remove-client=, reset) suppress close dispatch interception.
+- Updated automated and manual validation:
+  - Emacs unit tests assert:
+    - manual kill requests close and is intercepted (buffer not immediately killed)
+    - internal remove does not trigger close handler
+  - Nested e2e expects managed client removal after kill request and subsequent close event/state update.
+  - Manual smoke checklist documents kill-buffer closes client behavior.
+
+** DONE Task 14: Package the prototype, document usage, and freeze the first demo flow
 Purpose:
 - Make the prototype repeatable and easy to evaluate.
 
@@ -403,17 +1128,130 @@ Files:
 - Modify =docs/testing/manual-smoke-tests.org=
 
 Steps:
-*** TODO Add a reliable demo entrypoint
+*** DONE Add a reliable demo entrypoint
 - Provide one command that builds the plugin and launches nested Hyprland with the plugin loaded.
-*** TODO Document the user workflow
+*** DONE Document the user workflow
 - Explain how to start the demo, load the Emacs package, connect, manage a workspace, and switch modes.
-*** TODO Freeze a smoke-test checklist
+*** DONE Freeze a smoke-test checklist
 - Record the exact scenarios that must pass before any future refactor is considered safe.
-*** WAIT Review task 11 with user
+*** DONE Review task 14 with user
 - Use this checkpoint to decide whether to continue toward polish work or pause after the first usable prototype.
 
 Validation:
 - Follow =README.org= from a clean shell and reproduce the demo without manual patching.
+
+*** DONE Session note: Task 14 implementation for packaging/docs/demo flow (2026-04-19)
+- Added a stable demo entrypoint alias in flake outputs:
+  - =nix run .#demo= (mapped to nested Hyprland launcher with plugin preloaded).
+- Added prototype operator documentation:
+  - =README.org= with quick-start, controls, semantics, and verification pointers.
+  - =docs/testing/demo-script.org= with step-by-step demo script.
+- Froze prototype gate checklist in:
+  - =docs/testing/manual-smoke-tests.org= under =Prototype Gate Checklist=.
+
+*** DONE Session note: Task 14 review-feedback docs update for real NixOS Hyprland (2026-04-19)
+- Added first-class documentation for non-nested install/runtime on NixOS:
+  - =docs/setup/nixos-real-hyprland.org=
+- Added README pointer so real-session instructions are discoverable from top-level docs.
+- Scope of this update is documentation only (no compositor/runtime behavior change).
+
+*** DONE Session note: Task 14 review bugfix for new tiled client adoption race (2026-04-19)
+- User review reported a real-session regression with =pcmanfm=:
+  - new client first opened beside Emacs instead of inside the managed buffer
+  - native tiling resized the Emacs frame before hyprmacs recovered
+- Root cause identified in the plugin transition path:
+  - newly managed-client adoption/hide was coupled to controller-connected IPC notification state
+  - this made immediate hide depend on IPC timing instead of on managed-state transition itself
+- Fix implemented:
+  - workspace-manager now emits managed-client tiled/floating transition callbacks whenever membership changes in the managed workspace, even if controller connection state is not yet marked connected
+  - IPC server now performs hide/show on those transitions independently of whether a controller socket is currently available for message delivery
+- Added plugin regression coverage to assert a newly opened managed tiled client still emits the transition callback without controller connection state.
+
+*** DONE Session note: Task 14 review bugfix for local e2e build environment and plugin link closure (2026-04-19)
+- User review reported =just e2e= failing before runtime validation.
+- First root cause:
+  - the dev shell exposed =hyprland.pc= but not the full pkg-config dependency closure required by its =Requires= chain
+  - updated the flake dev shell to derive =PKG_CONFIG_PATH= from =hyprPkg.buildInputs= plus =hyprPkg.dev= so local plugin builds inside =nix develop= track Hyprland dependency changes automatically
+- Second root cause uncovered after the shell fix:
+  - =plugin/CMakeLists.txt= consumed Hyprland include flags from pkg-config but did not link the plugin target against =PkgConfig::HYPRLAND=
+  - the resulting =libhyprmacs.so= built successfully but failed the symbol smoke test at =dlopen= time with unresolved Hyprland layout symbols
+- Fix implemented:
+  - link =hyprmacs= against =PkgConfig::HYPRLAND=
+  - keep the dev-shell pkg-config closure fix so =just e2e= and local =make build= use the same complete dependency view.
+- Follow-up correction:
+  - standalone =dlopen= is not a valid smoke check for a real Hyprland plugin because host-provided Hyprland symbols are resolved by the compositor process, not by the test binary
+  - updated the smoke test to inspect exported plugin entry symbols from the built shared object instead of requiring out-of-process Hyprland symbol resolution.
+  - aligned the symbol check with the real Hyprland export names from =PluginAPI.hpp=:
+    - =pluginAPIVersion=
+    - =pluginInit=
+    - =pluginExit=
+
+*** DONE Session note: Task 14 review-followup for floating window validation (2026-04-21)
+- User requested stronger floating-window validation before approving the Task 14 WAIT checkpoint.
+- Nested Hyprland config updates in =flake.nix=:
+  - Added =windowrulev2 = float,class:^(mpv)$= so mpv windows open as native floating surfaces.
+  - Added =ALT+F= keybind for native =togglefloating= dispatch in nested runs.
+  - Added =pkgs.mpv= to dev tools so nested E2E can spawn mpv deterministically.
+- Extended nested full E2E flow in =hyprmacs-run-full-e2e-test=:
+  - Spawns an =mpv= test window and asserts it remains floating and stays on the managed workspace.
+  - Verifies the floating mpv client is excluded from managed and eligible sets and has no managed Emacs buffer association.
+  - Re-validates those exclusions after Emacs focus and managed-client layout switches, ensuring managed layout sync does not absorb floating windows.
+
+*** DONE Session note: Task 14 review-followup manual event-tap capture for event selection (2026-04-21)
+- User requested a full Hyprland event capture pass from the same nested runtime path used by E2E (=nix run .#default=).
+- Added debug path in =WorkspaceManager=: when =HYPRMACS_LOG_ALL_EVENTS= is truthy, plugin logs every =.socket2.sock= frame as =event-all= before tracked-event filtering.
+- Nested launcher now exports =HYPRMACS_LOG_ALL_EVENTS=1= so manual/e2e nested sessions can capture complete event streams.
+- Ran a manual nested capture flow with window open/focus/title changes, workspace manage/unmanage, hide/show moves, close, and togglefloating actions; artifact bundle:
+  - =artifacts/manual-events/20260421-222735/summary.log=
+  - =artifacts/manual-events/20260421-222735/hyprland.log=
+  - =artifacts/manual-events/20260421-222735/event-name-counts.txt=
+- Observed event names in this runtime:
+  - =openwindow=, =closewindow=
+  - =activewindow=, =activewindowv2=
+  - =windowtitle=, =windowtitlev2=
+  - =movewindow=, =movewindowv2=
+  - workspace/monitor metadata events (=workspace*=, =createworkspace*=, =destroyworkspace*=, =moveworkspace*=, =focusedmon*=, =monitoradded*=, =monitorremoved*=, =activelayout=)
+- Not observed in this run, including after explicit =togglefloating= actions:
+  - =changefloatingmode=
+  - =changefloatingmodev2=
+- Practical implication for current runtime:
+  - floating-state transitions cannot rely solely on dedicated floating events.
+  - keep using refresh-from-=j/clients= on reliable lifecycle events (open/focus/title) to infer floating state changes.
+
+*** DONE Session note: Task 14 review-followup architecture spec for non-floating managed geometry (2026-04-21)
+- User requested a technical specification for replacing managed-client floating geometry with a tiled algorithm path.
+- Added markdown architecture spec:
+  - =docs/architecture/non-floating-managed-layout-spec.md=
+- Spec scope includes:
+  - Hyprland custom tiled algorithm API surface relevant to this repo
+  - plugin data/control flow for snapshot-driven non-floating geometry
+  - migration plan (feature-flagged dual path -> default tiled path -> remove floating geometry path)
+  - validation and acceptance criteria.
+
+*** DONE Session note: Task 14 review-followup requirement update for managing Emacs window fullscreen (2026-04-21)
+- User clarified a hard requirement for the proposed tiled-geometry architecture:
+  - managing Emacs window should always occupy full workspace area while managed.
+  - plugin (not Emacs) should own this placement if plugin owns all placement logic.
+- Updated =docs/architecture/non-floating-managed-layout-spec.md= to include:
+  - fullscreen Emacs invariant in goals/data model/control flow/behavior rules
+  - recalculate step that pins managing Emacs target to =space()->workArea()=
+  - validation and acceptance criteria for persistent Emacs fullscreen behavior.
+
+*** DONE Session note: Task 14 review-followup on managed-window reposition policy (2026-04-21)
+- User clarified two additional requirements for the architecture spec:
+  - app-specific examples (such as =mpv=) should not be part of the normative design text.
+  - managed clients and managing Emacs should not be user-repositionable while managed; if hard prevention is not guaranteed, plugin must detect geometry drift and snap back without infinite loops.
+- Updated =docs/architecture/non-floating-managed-layout-spec.md= accordingly:
+  - removed app-specific wording in automated validation criteria.
+  - added explicit interactive repositioning policy with prevent-first + corrective snapback model.
+  - added loop-guard requirements (expected-box compare, version token, debounced scheduling, bounded retries/backoff, managed-target-only scope).
+
+*** DONE Session note: Task 14 WAIT checkpoint approval and final verification (2026-04-21)
+- User requested to wrap up the prototype and approved continuing past the Task 14 review checkpoint.
+- Re-ran verification before closeout:
+  - =just test= passed.
+  - =just e2e= passed with artifact bundle =artifacts/e2e/20260421-234020/=.
+- Task 14 review checkpoint is now closed and Task 14 is marked complete.
 
 * Execution Order
 - Start with task 0 and task 1 only.

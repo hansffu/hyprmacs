@@ -1,0 +1,70 @@
+(require 'ert)
+(require 'subr-x)
+(setq load-prefer-newer t)
+
+(add-to-list 'load-path
+             (expand-file-name "../../emacs" (file-name-directory load-file-name)))
+
+(require 'hyprmacs-session)
+(require 'hyprmacs)
+
+(ert-deftest hyprmacs-session-connect-disconnect-transitions ()
+  (hyprmacs-session-reset)
+  (cl-letf (((symbol-function 'hyprmacs-ipc-resolve-socket-path)
+             (lambda (&optional _socket-path) "/tmp/hyprmacs-test.sock"))
+            ((symbol-function 'make-network-process)
+             (lambda (&rest _args) 'hyprmacs-test-process))
+            ((symbol-function 'process-live-p)
+             (lambda (_process) t))
+            ((symbol-function 'delete-process)
+             (lambda (&rest _args) nil))
+            ((symbol-function 'process-send-string)
+             (lambda (&rest _args) nil)))
+    (hyprmacs-session-connect)
+    (should (eq (plist-get hyprmacs-session-state :connection-status) 'connected))
+    (hyprmacs-session-disconnect)
+    (should (eq (plist-get hyprmacs-session-state :connection-status) 'disconnected))))
+
+(ert-deftest hyprmacs-session-commands-enqueue-messages-in-fake-transport ()
+  (hyprmacs-session-reset)
+  (hyprmacs-session-use-fake-transport)
+  (hyprmacs-session-manage-workspace "1")
+  (hyprmacs-session-unmanage-workspace "1" "user-request")
+  (let ((frames (hyprmacs-session-fake-outbox)))
+    (should (= (length frames) 2))
+    (should (string-match-p "\\\"type\\\":\\\"manage-workspace\\\"" (car frames)))
+    (should (string-match-p "\\\"type\\\":\\\"unmanage-workspace\\\"" (cadr frames)))))
+
+(ert-deftest hyprmacs-state-buffer-renders-known-session-fields ()
+  (hyprmacs-session-reset)
+  (setq hyprmacs-session-state
+        (plist-put hyprmacs-session-state :workspace-id "1"))
+  (setq hyprmacs-session-state
+        (plist-put hyprmacs-session-state :managed t))
+  (setq hyprmacs-session-state
+        (plist-put hyprmacs-session-state :associated-buffers '(("0xabc" . "*hyprmacs:0xabc:foot*"))))
+  (hyprmacs-dump-state)
+  (with-current-buffer "*hyprmacs-state*"
+    (should (string-match-p "workspace-id: 1" (buffer-string)))
+    (should (string-match-p "managed: t" (buffer-string)))
+    (should (string-match-p "associated-buffers:" (buffer-string)))))
+
+(ert-deftest hyprmacs-session-state-dump-selects-window-for-selected-client-buffer ()
+  (hyprmacs-session-reset)
+  (hyprmacs-buffer-reset)
+  (delete-other-windows)
+  (unwind-protect
+      (progn
+        (hyprmacs-session-fake-receive
+         "{\"version\":1,\"type\":\"state-dump\",\"workspace_id\":\"1\",\"timestamp\":\"2026-04-18T12:00:00Z\",\"payload\":{\"managed\":true,\"controller_connected\":true,\"eligible_clients\":[{\"client_id\":\"0xaaa\",\"title\":\"foot-a\",\"app_id\":\"foot\",\"floating\":false},{\"client_id\":\"0xbbb\",\"title\":\"foot-b\",\"app_id\":\"foot\",\"floating\":false}],\"managed_clients\":[\"0xaaa\",\"0xbbb\"],\"selected_client\":\"0xaaa\",\"input_mode\":\"client-control\"}}\n")
+        (let ((left (selected-window))
+              (right (split-window-right)))
+          (set-window-buffer left (hyprmacs-buffer-for-client "0xaaa"))
+          (set-window-buffer right (hyprmacs-buffer-for-client "0xbbb"))
+          (select-window left)
+          (hyprmacs-session-fake-receive
+           "{\"version\":1,\"type\":\"state-dump\",\"workspace_id\":\"1\",\"timestamp\":\"2026-04-18T12:00:01Z\",\"payload\":{\"managed\":true,\"controller_connected\":true,\"eligible_clients\":[{\"client_id\":\"0xaaa\",\"title\":\"foot-a\",\"app_id\":\"foot\",\"floating\":false},{\"client_id\":\"0xbbb\",\"title\":\"foot-b\",\"app_id\":\"foot\",\"floating\":false}],\"managed_clients\":[\"0xaaa\",\"0xbbb\"],\"selected_client\":\"0xbbb\",\"input_mode\":\"client-control\"}}\n")
+          (should (eq (window-buffer (selected-window))
+                      (hyprmacs-buffer-for-client "0xbbb")))))
+    (delete-other-windows)
+    (hyprmacs-buffer-reset)))
