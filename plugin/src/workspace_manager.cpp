@@ -479,15 +479,17 @@ void WorkspaceManager::set_controller_connected(bool connected) {
     std::scoped_lock lock(mutex_);
     const bool transition_to_disconnected = controller_connected_ && !connected;
     controller_connected_ = connected;
-    if (transition_to_disconnected && managed_workspace_id_.has_value()) {
-        restore_managed_layout_locked(*managed_workspace_id_);
+    if (transition_to_disconnected) {
         managed_layout_snapshots_.clear();
-        managed_workspace_id_ = std::nullopt;
-        input_mode_ = std::nullopt;
-        last_active_client_id_ = std::nullopt;
-        managing_emacs_client_id_ = std::nullopt;
-        client_registry_.reconcile_management(managed_workspace_id_);
-        managed_client_seen_.clear();
+        if (managed_workspace_id_.has_value()) {
+            restore_managed_layout_locked(*managed_workspace_id_);
+            managed_workspace_id_ = std::nullopt;
+            input_mode_ = std::nullopt;
+            last_active_client_id_ = std::nullopt;
+            managing_emacs_client_id_ = std::nullopt;
+            client_registry_.reconcile_management(managed_workspace_id_);
+            managed_client_seen_.clear();
+        }
     }
 }
 

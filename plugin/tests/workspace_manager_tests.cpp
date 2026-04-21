@@ -618,6 +618,49 @@ bool test_controller_disconnect_clears_all_managed_layout_snapshots() {
     return ok;
 }
 
+bool test_controller_disconnect_while_idle_clears_all_managed_layout_snapshots() {
+    bool ok = true;
+
+    hyprmacs::WorkspaceManager manager;
+    hyprmacs::ManagedWorkspaceLayoutSnapshot first {
+        .workspace_id = "1",
+        .layout_version = 0,
+        .rectangles_by_client_id = {},
+        .visible_client_ids = {},
+        .hidden_client_ids = {},
+        .stacking_order = {},
+        .selected_client = std::nullopt,
+        .input_mode = std::nullopt,
+        .managing_emacs_client_id = std::nullopt,
+    };
+    hyprmacs::ManagedWorkspaceLayoutSnapshot second {
+        .workspace_id = "2",
+        .layout_version = 0,
+        .rectangles_by_client_id = {},
+        .visible_client_ids = {},
+        .hidden_client_ids = {},
+        .stacking_order = {},
+        .selected_client = std::nullopt,
+        .input_mode = std::nullopt,
+        .managing_emacs_client_id = std::nullopt,
+    };
+
+    ok &= expect(manager.apply_managed_layout_snapshot(first), "first snapshot should apply while idle");
+    ok &= expect(manager.apply_managed_layout_snapshot(second), "second snapshot should apply while idle");
+    ok &= expect(manager.managed_layout_snapshot("1").has_value(), "workspace 1 snapshot should exist before idle disconnect");
+    ok &= expect(manager.managed_layout_snapshot("2").has_value(), "workspace 2 snapshot should exist before idle disconnect");
+
+    manager.set_controller_connected(true);
+    manager.set_controller_connected(false);
+
+    ok &= expect(!manager.managed_layout_snapshot("1").has_value(),
+                 "idle disconnect should clear workspace 1 snapshot");
+    ok &= expect(!manager.managed_layout_snapshot("2").has_value(),
+                 "idle disconnect should clear workspace 2 snapshot");
+
+    return ok;
+}
+
 }  // namespace
 
 int main() {
@@ -638,5 +681,6 @@ int main() {
     ok &= test_managed_layout_snapshot_apply_get_and_versioning();
     ok &= test_managed_layout_snapshot_is_workspace_scoped();
     ok &= test_controller_disconnect_clears_all_managed_layout_snapshots();
+    ok &= test_controller_disconnect_while_idle_clears_all_managed_layout_snapshots();
     return ok ? 0 : 1;
 }
