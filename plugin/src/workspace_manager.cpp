@@ -364,6 +364,7 @@ bool WorkspaceManager::manage_workspace(const WorkspaceId& workspace_id) {
     const bool changed = !managed_workspace_id_.has_value() || *managed_workspace_id_ != workspace_id;
     if (changed && managed_workspace_id_.has_value()) {
         restore_managed_layout_locked(*managed_workspace_id_);
+        managed_layout_snapshots_.erase(*managed_workspace_id_);
     }
 
     managed_workspace_id_ = workspace_id;
@@ -391,6 +392,7 @@ bool WorkspaceManager::unmanage_workspace(const WorkspaceId& workspace_id) {
     }
 
     restore_managed_layout_locked(workspace_id);
+    managed_layout_snapshots_.erase(workspace_id);
     managed_workspace_id_ = std::nullopt;
     input_mode_ = std::nullopt;
     last_active_client_id_ = std::nullopt;
@@ -479,6 +481,7 @@ void WorkspaceManager::set_controller_connected(bool connected) {
     controller_connected_ = connected;
     if (transition_to_disconnected && managed_workspace_id_.has_value()) {
         restore_managed_layout_locked(*managed_workspace_id_);
+        managed_layout_snapshots_.erase(*managed_workspace_id_);
         managed_workspace_id_ = std::nullopt;
         input_mode_ = std::nullopt;
         last_active_client_id_ = std::nullopt;
@@ -486,6 +489,35 @@ void WorkspaceManager::set_controller_connected(bool connected) {
         client_registry_.reconcile_management(managed_workspace_id_);
         managed_client_seen_.clear();
     }
+}
+
+bool WorkspaceManager::apply_managed_layout_snapshot(ManagedWorkspaceLayoutSnapshot snapshot) {
+    std::scoped_lock lock(mutex_);
+    if (snapshot.workspace_id.empty()) {
+        return false;
+    }
+
+    auto& stored_snapshot = managed_layout_snapshots_[snapshot.workspace_id];
+    if (snapshot.layout_version <= stored_snapshot.layout_version) {
+        snapshot.layout_version = stored_snapshot.layout_version + 1;
+    }
+
+    stored_snapshot = std::move(snapshot);
+    return true;
+}
+
+std::optional<ManagedWorkspaceLayoutSnapshot> WorkspaceManager::managed_layout_snapshot(const WorkspaceId& workspace_id) const {
+    std::scoped_lock lock(mutex_);
+    const auto it = managed_layout_snapshots_.find(workspace_id);
+    if (it == managed_layout_snapshots_.end()) {
+        return std::nullopt;
+    }
+    return it->second;
+}
+
+void WorkspaceManager::clear_managed_layout_snapshot(const WorkspaceId& workspace_id) {
+    std::scoped_lock lock(mutex_);
+    managed_layout_snapshots_.erase(workspace_id);
 }
 
 StateDumpPayload WorkspaceManager::build_state_dump(const WorkspaceId& workspace_id) const {

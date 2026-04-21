@@ -437,6 +437,122 @@ bool test_state_change_notifier_on_focus_and_close_events() {
     return ok;
 }
 
+bool test_managed_layout_snapshot_apply_get_and_versioning() {
+    bool ok = true;
+
+    hyprmacs::WorkspaceManager manager;
+
+    ok &= expect(!manager.managed_layout_snapshot("1").has_value(), "snapshot should start empty");
+
+    hyprmacs::ManagedWorkspaceLayoutSnapshot snapshot {
+        .workspace_id = "1",
+        .layout_version = 0,
+        .rectangles_by_client_id = {
+            {"0xaaa", hyprmacs::ClientRect {.x = 0, .y = 0, .width = 100, .height = 100}},
+            {"0xbbb", hyprmacs::ClientRect {.x = 100, .y = 0, .width = 100, .height = 100}},
+        },
+        .visible_client_ids = {"0xaaa", "0xbbb"},
+        .hidden_client_ids = {"0xccc"},
+        .stacking_order = {"0xaaa", "0xbbb"},
+        .selected_client = "0xaaa",
+        .input_mode = hyprmacs::InputMode::kEmacsControl,
+        .managing_emacs_client_id = "0xeee",
+    };
+
+    ok &= expect(manager.apply_managed_layout_snapshot(snapshot), "first snapshot apply should succeed");
+
+    auto stored = manager.managed_layout_snapshot("1");
+    ok &= expect(stored.has_value(), "stored snapshot should be retrievable");
+    if (stored.has_value()) {
+        ok &= expect(stored->workspace_id == "1", "stored snapshot should retain workspace id");
+        ok &= expect(stored->layout_version == 1, "first stored snapshot should get version 1");
+        ok &= expect(stored->rectangles_by_client_id.size() == 2, "stored snapshot should keep rectangles");
+        ok &= expect(stored->visible_client_ids == std::vector<std::string>({"0xaaa", "0xbbb"}),
+                     "stored snapshot should keep visible clients");
+        ok &= expect(stored->hidden_client_ids == std::vector<std::string>({"0xccc"}),
+                     "stored snapshot should keep hidden clients");
+        ok &= expect(stored->stacking_order == std::vector<std::string>({"0xaaa", "0xbbb"}),
+                     "stored snapshot should keep stacking order");
+        ok &= expect(stored->selected_client.has_value() && *stored->selected_client == "0xaaa",
+                     "stored snapshot should keep selected client");
+        ok &= expect(stored->input_mode == hyprmacs::InputMode::kEmacsControl,
+                     "stored snapshot should keep input mode");
+        ok &= expect(stored->managing_emacs_client_id.has_value() && *stored->managing_emacs_client_id == "0xeee",
+                     "stored snapshot should keep managing emacs client id");
+    }
+
+    snapshot.selected_client = "0xbbb";
+    snapshot.managing_emacs_client_id = "0xfff";
+    ok &= expect(manager.apply_managed_layout_snapshot(snapshot), "second snapshot apply should succeed");
+
+    stored = manager.managed_layout_snapshot("1");
+    ok &= expect(stored.has_value(), "updated snapshot should still be retrievable");
+    if (stored.has_value()) {
+        ok &= expect(stored->layout_version == 2, "second stored snapshot should increment version");
+        ok &= expect(stored->selected_client.has_value() && *stored->selected_client == "0xbbb",
+                     "second stored snapshot should update selected client");
+        ok &= expect(stored->managing_emacs_client_id.has_value() && *stored->managing_emacs_client_id == "0xfff",
+                     "second stored snapshot should update managing emacs client id");
+    }
+
+    manager.clear_managed_layout_snapshot("1");
+    ok &= expect(!manager.managed_layout_snapshot("1").has_value(), "clear should remove stored snapshot");
+
+    return ok;
+}
+
+bool test_managed_layout_snapshot_is_workspace_scoped() {
+    bool ok = true;
+
+    hyprmacs::WorkspaceManager manager;
+    hyprmacs::ManagedWorkspaceLayoutSnapshot first {
+        .workspace_id = "1",
+        .layout_version = 0,
+        .rectangles_by_client_id = {},
+        .visible_client_ids = {"0xaaa"},
+        .hidden_client_ids = {},
+        .stacking_order = {"0xaaa"},
+        .selected_client = std::nullopt,
+        .input_mode = hyprmacs::InputMode::kEmacsControl,
+        .managing_emacs_client_id = std::nullopt,
+    };
+    hyprmacs::ManagedWorkspaceLayoutSnapshot second {
+        .workspace_id = "2",
+        .layout_version = 0,
+        .rectangles_by_client_id = {},
+        .visible_client_ids = {"0xbbb"},
+        .hidden_client_ids = {},
+        .stacking_order = {"0xbbb"},
+        .selected_client = std::nullopt,
+        .input_mode = hyprmacs::InputMode::kClientControl,
+        .managing_emacs_client_id = std::nullopt,
+    };
+
+    ok &= expect(manager.apply_managed_layout_snapshot(first), "first workspace snapshot should apply");
+    ok &= expect(manager.apply_managed_layout_snapshot(second), "second workspace snapshot should apply");
+
+    const auto stored_first = manager.managed_layout_snapshot("1");
+    const auto stored_second = manager.managed_layout_snapshot("2");
+    ok &= expect(stored_first.has_value(), "workspace 1 snapshot should be present");
+    ok &= expect(stored_second.has_value(), "workspace 2 snapshot should be present");
+    if (stored_first.has_value() && stored_second.has_value()) {
+        ok &= expect(stored_first->workspace_id == "1", "workspace 1 snapshot should retain workspace id");
+        ok &= expect(stored_second->workspace_id == "2", "workspace 2 snapshot should retain workspace id");
+        ok &= expect(stored_first->layout_version == 1, "workspace 1 snapshot should start at version 1");
+        ok &= expect(stored_second->layout_version == 1, "workspace 2 snapshot should start at version 1");
+        ok &= expect(stored_first->visible_client_ids == std::vector<std::string>({"0xaaa"}),
+                     "workspace 1 snapshot should remain isolated");
+        ok &= expect(stored_second->visible_client_ids == std::vector<std::string>({"0xbbb"}),
+                     "workspace 2 snapshot should remain isolated");
+    }
+
+    manager.clear_managed_layout_snapshot("1");
+    ok &= expect(!manager.managed_layout_snapshot("1").has_value(), "clearing workspace 1 should remove only that snapshot");
+    ok &= expect(manager.managed_layout_snapshot("2").has_value(), "clearing workspace 1 should not remove workspace 2");
+
+    return ok;
+}
+
 }  // namespace
 
 int main() {
@@ -454,5 +570,7 @@ int main() {
     ok &= test_refresh_based_float_transition_notifier_without_floating_event();
     ok &= test_open_managed_client_emits_transition_without_controller_connection();
     ok &= test_state_change_notifier_on_focus_and_close_events();
+    ok &= test_managed_layout_snapshot_apply_get_and_versioning();
+    ok &= test_managed_layout_snapshot_is_workspace_scoped();
     return ok ? 0 : 1;
 }

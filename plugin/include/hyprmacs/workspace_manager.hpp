@@ -1,5 +1,6 @@
 #pragma once
 
+#include <cstdint>
 #include <atomic>
 #include <functional>
 #include <mutex>
@@ -23,6 +24,18 @@ struct EventFrame {
 
 std::optional<EventFrame> parse_event_frame(const std::string& line);
 bool is_tracked_event_name(std::string_view event_name);
+
+struct ManagedWorkspaceLayoutSnapshot {
+    WorkspaceId workspace_id;
+    std::uint64_t layout_version = 0;
+    std::unordered_map<ClientId, ClientRect> rectangles_by_client_id;
+    std::vector<ClientId> visible_client_ids;
+    std::vector<ClientId> hidden_client_ids;
+    std::vector<ClientId> stacking_order;
+    std::optional<ClientId> selected_client;
+    std::optional<InputMode> input_mode;
+    std::optional<ClientId> managing_emacs_client_id;
+};
 
 class WorkspaceManager {
   public:
@@ -55,6 +68,9 @@ class WorkspaceManager {
     void set_client_transition_notifier(ClientTransitionNotifier notifier);
     void set_state_change_notifier(StateChangeNotifier notifier);
     void set_controller_connected(bool connected);
+    bool apply_managed_layout_snapshot(ManagedWorkspaceLayoutSnapshot snapshot);
+    std::optional<ManagedWorkspaceLayoutSnapshot> managed_layout_snapshot(const WorkspaceId& workspace_id) const;
+    void clear_managed_layout_snapshot(const WorkspaceId& workspace_id);
     StateDumpPayload build_state_dump(const WorkspaceId& workspace_id) const;
     void process_event_for_tests(const std::string& line);
 
@@ -99,6 +115,7 @@ class WorkspaceManager {
     std::unordered_map<WorkspaceId, std::string> workspace_layout_snapshot_;
     std::unordered_set<ClientId> managed_client_seen_;
     std::optional<ClientId> managing_emacs_client_id_;
+    std::unordered_map<WorkspaceId, ManagedWorkspaceLayoutSnapshot> managed_layout_snapshots_;
     DispatchExecutor dispatch_executor_;
     QueryExecutor query_executor_;
     ClientTransitionNotifier client_transition_notifier_;
