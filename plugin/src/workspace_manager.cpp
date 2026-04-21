@@ -1016,6 +1016,7 @@ void WorkspaceManager::handle_line(const std::string& line) {
 
         if (state_mutated) {
             refresh_managing_emacs_client_locked();
+            sync_committed_layout_snapshot_locked();
             log_state_dump_locked();
             if (!transition_notify && controller_connected_ && managed_workspace_id_.has_value() && state_change_notifier_ != nullptr) {
                 state_change_notify = true;

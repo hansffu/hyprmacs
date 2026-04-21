@@ -699,6 +699,48 @@ bool test_managing_emacs_refresh_keeps_committed_snapshot_in_sync() {
     return ok;
 }
 
+bool test_activewindow_updates_committed_snapshot_selected_client() {
+    bool ok = true;
+
+    hyprmacs::WorkspaceManager manager;
+    manager.process_event_for_tests("openwindowv2>>0xeee,1,emacs,emacs-main");
+    manager.process_event_for_tests("openwindowv2>>0xaaa,1,foot,foot-a");
+    manager.process_event_for_tests("openwindowv2>>0xbbb,1,foot,foot-b");
+    manager.process_event_for_tests("activewindowv2>>0xeee");
+    ok &= expect(manager.manage_workspace("1"), "workspace 1 should become managed");
+    ok &= expect(manager.set_selected_client("1", "0xaaa"), "workspace 1 should start with a managed selected client");
+
+    hyprmacs::ManagedWorkspaceLayoutSnapshot snapshot {
+        .workspace_id = "1",
+        .layout_version = 0,
+        .rectangles_by_client_id = {},
+        .visible_client_ids = {"0xaaa", "0xbbb"},
+        .hidden_client_ids = {},
+        .stacking_order = {"0xaaa", "0xbbb"},
+        .selected_client = std::nullopt,
+        .input_mode = std::nullopt,
+        .managing_emacs_client_id = std::nullopt,
+    };
+
+    ok &= expect(manager.apply_managed_layout_snapshot(snapshot), "snapshot should apply");
+    auto stored = manager.managed_layout_snapshot("1");
+    ok &= expect(stored.has_value(), "snapshot should exist after apply");
+    if (stored.has_value()) {
+        ok &= expect(stored->selected_client.has_value() && *stored->selected_client == "0xaaa",
+                     "initial committed selected client should reflect the managed selection");
+    }
+
+    manager.process_event_for_tests("activewindowv2>>0xbbb");
+    stored = manager.managed_layout_snapshot("1");
+    ok &= expect(stored.has_value(), "snapshot should remain available after activewindowv2");
+    if (stored.has_value()) {
+        ok &= expect(stored->selected_client.has_value() && *stored->selected_client == "0xbbb",
+                     "activewindowv2 should update committed selected client");
+    }
+
+    return ok;
+}
+
 }  // namespace
 
 int main() {
@@ -720,5 +762,6 @@ int main() {
     ok &= test_managed_layout_snapshot_rejects_non_managed_workspace_and_clears_on_switch();
     ok &= test_controller_disconnect_clears_active_managed_layout_snapshot();
     ok &= test_managing_emacs_refresh_keeps_committed_snapshot_in_sync();
+    ok &= test_activewindow_updates_committed_snapshot_selected_client();
     return ok ? 0 : 1;
 }
