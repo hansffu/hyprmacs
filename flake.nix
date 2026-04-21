@@ -146,6 +146,7 @@
           text = ''
             echo "Starting nested Hyprland session..."
             echo "  ALT+Return   open foot"
+            echo "  ALT+F        toggle floating for active window"
             echo "  ALT+Q        close active window"
             echo "  ALT+H/J/K/L  focus left/down/up/right"
             echo "  ALT+Shift+H/J/K/L  move window left/down/up/right"
