@@ -10,6 +10,7 @@
 #include <thread>
 #include <unordered_set>
 #include <unordered_map>
+#include <vector>
 
 #include "hyprmacs/client_registry.hpp"
 #include "hyprmacs/client_classifier.hpp"

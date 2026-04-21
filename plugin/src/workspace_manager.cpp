@@ -1,5 +1,6 @@
 #include "hyprmacs/workspace_manager.hpp"
 
+#include <algorithm>
 #include <array>
 #include <cctype>
 #include <cerrno>
@@ -709,6 +710,36 @@ void WorkspaceManager::sync_committed_layout_snapshot_locked() {
         managed_layout_snapshot_->workspace_id != *managed_workspace_id_) {
         return;
     }
+
+    const auto snapshot = client_registry_.snapshot();
+    std::unordered_set<ClientId> active_managed_client_ids;
+    for (const auto& client : snapshot.clients) {
+        if (client.workspace_id == *managed_workspace_id_ && client.managed && client.eligible) {
+            active_managed_client_ids.insert(client.client_id);
+        }
+    }
+
+    auto& committed_snapshot = *managed_layout_snapshot_;
+    for (auto it = committed_snapshot.rectangles_by_client_id.begin(); it != committed_snapshot.rectangles_by_client_id.end();) {
+        if (active_managed_client_ids.find(it->first) == active_managed_client_ids.end()) {
+            it = committed_snapshot.rectangles_by_client_id.erase(it);
+        } else {
+            ++it;
+        }
+    }
+
+    auto prune_client_vector = [&](std::vector<ClientId>& client_ids) {
+        client_ids.erase(
+            std::remove_if(client_ids.begin(), client_ids.end(), [&](const ClientId& client_id) {
+                return active_managed_client_ids.find(client_id) == active_managed_client_ids.end();
+            }),
+            client_ids.end()
+        );
+    };
+
+    prune_client_vector(committed_snapshot.visible_client_ids);
+    prune_client_vector(committed_snapshot.hidden_client_ids);
+    prune_client_vector(committed_snapshot.stacking_order);
 
     managed_layout_snapshot_->selected_client = selected_managed_client_locked(*managed_workspace_id_);
     managed_layout_snapshot_->input_mode = input_mode_;

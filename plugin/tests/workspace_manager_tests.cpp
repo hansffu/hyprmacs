@@ -443,6 +443,7 @@ bool test_managed_layout_snapshot_apply_get_and_versioning() {
     hyprmacs::WorkspaceManager manager;
     manager.process_event_for_tests("openwindowv2>>0xeee,1,emacs,emacs-main");
     manager.process_event_for_tests("openwindowv2>>0xaaa,1,foot,foot-a");
+    manager.process_event_for_tests("openwindowv2>>0xbbb,1,foot,foot-b");
     manager.process_event_for_tests("activewindowv2>>0xeee");
     manager.manage_workspace("1");
     ok &= expect(manager.set_selected_client("1", "0xaaa"), "should set managed selected client before apply");
@@ -467,8 +468,8 @@ bool test_managed_layout_snapshot_apply_get_and_versioning() {
             {"0xaaa", hyprmacs::ClientRect {.x = 0, .y = 0, .width = 100, .height = 100}},
             {"0xbbb", hyprmacs::ClientRect {.x = 100, .y = 0, .width = 100, .height = 100}},
         },
-        .visible_client_ids = {"0xaaa", "0xbbb"},
-        .hidden_client_ids = {"0xccc"},
+        .visible_client_ids = {"0xaaa"},
+        .hidden_client_ids = {"0xbbb"},
         .stacking_order = {"0xaaa", "0xbbb"},
         .selected_client = "0xnope",
         .input_mode = hyprmacs::InputMode::kUnknown,
@@ -483,9 +484,9 @@ bool test_managed_layout_snapshot_apply_get_and_versioning() {
         ok &= expect(stored->workspace_id == "1", "stored snapshot should retain workspace id");
         ok &= expect(stored->layout_version == 1, "first stored snapshot should get version 1");
         ok &= expect(stored->rectangles_by_client_id.size() == 2, "stored snapshot should keep rectangles");
-        ok &= expect(stored->visible_client_ids == std::vector<std::string>({"0xaaa", "0xbbb"}),
+        ok &= expect(stored->visible_client_ids == std::vector<std::string>({"0xaaa"}),
                      "stored snapshot should keep visible clients");
-        ok &= expect(stored->hidden_client_ids == std::vector<std::string>({"0xccc"}),
+        ok &= expect(stored->hidden_client_ids == std::vector<std::string>({"0xbbb"}),
                      "stored snapshot should keep hidden clients");
         ok &= expect(stored->stacking_order == std::vector<std::string>({"0xaaa", "0xbbb"}),
                      "stored snapshot should keep stacking order");
@@ -741,6 +742,111 @@ bool test_activewindow_updates_committed_snapshot_selected_client() {
     return ok;
 }
 
+bool test_committed_snapshot_prunes_closed_managed_clients() {
+    bool ok = true;
+
+    hyprmacs::WorkspaceManager manager;
+    manager.process_event_for_tests("openwindowv2>>0xeee,1,emacs,emacs-main");
+    manager.process_event_for_tests("openwindowv2>>0xaaa,1,foot,foot-a");
+    manager.process_event_for_tests("openwindowv2>>0xbbb,1,foot,foot-b");
+    manager.process_event_for_tests("activewindowv2>>0xeee");
+    ok &= expect(manager.manage_workspace("1"), "workspace 1 should become managed");
+    ok &= expect(manager.set_selected_client("1", "0xaaa"), "workspace 1 should start with a managed selected client");
+
+    hyprmacs::ManagedWorkspaceLayoutSnapshot snapshot {
+        .workspace_id = "1",
+        .layout_version = 0,
+        .rectangles_by_client_id = {
+            {"0xaaa", hyprmacs::ClientRect {.x = 0, .y = 0, .width = 100, .height = 100}},
+            {"0xbbb", hyprmacs::ClientRect {.x = 100, .y = 0, .width = 100, .height = 100}},
+        },
+        .visible_client_ids = {"0xaaa", "0xbbb"},
+        .hidden_client_ids = {},
+        .stacking_order = {"0xbbb", "0xaaa"},
+        .selected_client = std::nullopt,
+        .input_mode = std::nullopt,
+        .managing_emacs_client_id = std::nullopt,
+    };
+
+    ok &= expect(manager.apply_managed_layout_snapshot(snapshot), "snapshot should apply");
+    manager.process_event_for_tests("closewindow>>0xbbb");
+
+    auto stored = manager.managed_layout_snapshot("1");
+    ok &= expect(stored.has_value(), "snapshot should remain after client close");
+    if (stored.has_value()) {
+        ok &= expect(stored->rectangles_by_client_id.find("0xbbb") == stored->rectangles_by_client_id.end(),
+                     "closed client should be pruned from rectangles");
+        ok &= expect(std::find(stored->visible_client_ids.begin(), stored->visible_client_ids.end(), "0xbbb") ==
+                         stored->visible_client_ids.end(),
+                     "closed client should be pruned from visible_clients");
+        ok &= expect(std::find(stored->stacking_order.begin(), stored->stacking_order.end(), "0xbbb") ==
+                         stored->stacking_order.end(),
+                     "closed client should be pruned from stacking_order");
+        ok &= expect(std::find(stored->hidden_client_ids.begin(), stored->hidden_client_ids.end(), "0xbbb") ==
+                         stored->hidden_client_ids.end(),
+                     "closed client should be pruned from hidden_clients");
+        ok &= expect(stored->selected_client.has_value() && *stored->selected_client == "0xaaa",
+                     "selection should remain coherent after close pruning");
+    }
+
+    return ok;
+}
+
+bool test_committed_snapshot_prunes_moved_managed_clients() {
+    bool ok = true;
+
+    hyprmacs::WorkspaceManager manager;
+    manager.process_event_for_tests("openwindowv2>>0xeee,1,emacs,emacs-main");
+    manager.process_event_for_tests("openwindowv2>>0xaaa,1,foot,foot-a");
+    manager.process_event_for_tests("openwindowv2>>0xbbb,1,foot,foot-b");
+    manager.process_event_for_tests("activewindowv2>>0xeee");
+    ok &= expect(manager.manage_workspace("1"), "workspace 1 should become managed");
+    ok &= expect(manager.set_selected_client("1", "0xaaa"), "workspace 1 should start with a managed selected client");
+
+    hyprmacs::ManagedWorkspaceLayoutSnapshot snapshot {
+        .workspace_id = "1",
+        .layout_version = 0,
+        .rectangles_by_client_id = {
+            {"0xaaa", hyprmacs::ClientRect {.x = 0, .y = 0, .width = 100, .height = 100}},
+            {"0xbbb", hyprmacs::ClientRect {.x = 100, .y = 0, .width = 100, .height = 100}},
+        },
+        .visible_client_ids = {"0xaaa", "0xbbb"},
+        .hidden_client_ids = {},
+        .stacking_order = {"0xbbb", "0xaaa"},
+        .selected_client = std::nullopt,
+        .input_mode = std::nullopt,
+        .managing_emacs_client_id = std::nullopt,
+    };
+
+    ok &= expect(manager.apply_managed_layout_snapshot(snapshot), "snapshot should apply");
+    manager.process_event_for_tests("movewindowv2>>0xbbb,2");
+
+    auto stored = manager.managed_layout_snapshot("1");
+    ok &= expect(stored.has_value(), "snapshot should remain after move transition");
+    if (stored.has_value()) {
+        ok &= expect(stored->rectangles_by_client_id.find("0xbbb") == stored->rectangles_by_client_id.end(),
+                     "moved client should be pruned from rectangles");
+        ok &= expect(std::find(stored->visible_client_ids.begin(), stored->visible_client_ids.end(), "0xbbb") ==
+                         stored->visible_client_ids.end(),
+                     "moved client should be pruned from visible_clients");
+        ok &= expect(std::find(stored->stacking_order.begin(), stored->stacking_order.end(), "0xbbb") ==
+                         stored->stacking_order.end(),
+                     "moved client should be pruned from stacking_order");
+        ok &= expect(std::find(stored->hidden_client_ids.begin(), stored->hidden_client_ids.end(), "0xbbb") ==
+                         stored->hidden_client_ids.end(),
+                     "moved client should be pruned from hidden_clients");
+        ok &= expect(stored->rectangles_by_client_id.find("0xaaa") != stored->rectangles_by_client_id.end(),
+                     "still-managed client should remain in rectangles");
+        ok &= expect(std::find(stored->visible_client_ids.begin(), stored->visible_client_ids.end(), "0xaaa") !=
+                         stored->visible_client_ids.end(),
+                     "still-managed client should remain visible");
+        ok &= expect(stored->selected_client.has_value() && *stored->selected_client == "0xaaa",
+                     "selection should remain coherent after pruning a different client");
+    }
+
+    return ok;
+}
+
 }  // namespace
 
 int main() {
@@ -763,5 +869,7 @@ int main() {
     ok &= test_controller_disconnect_clears_active_managed_layout_snapshot();
     ok &= test_managing_emacs_refresh_keeps_committed_snapshot_in_sync();
     ok &= test_activewindow_updates_committed_snapshot_selected_client();
+    ok &= test_committed_snapshot_prunes_closed_managed_clients();
+    ok &= test_committed_snapshot_prunes_moved_managed_clients();
     return ok ? 0 : 1;
 }
