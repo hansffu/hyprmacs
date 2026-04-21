@@ -734,12 +734,14 @@ void WorkspaceManager::refresh_managing_emacs_client_locked() {
 
     if (last_active_client_id_.has_value() && is_valid_for_managed_workspace(*last_active_client_id_)) {
         managing_emacs_client_id_ = *last_active_client_id_;
+        sync_committed_layout_snapshot_locked();
         return;
     }
 
     const auto snapshot = client_registry_.snapshot();
     if (snapshot.selected_client.has_value() && is_valid_for_managed_workspace(*snapshot.selected_client)) {
         managing_emacs_client_id_ = *snapshot.selected_client;
+        sync_committed_layout_snapshot_locked();
         return;
     }
 

@@ -639,6 +639,7 @@ bool test_managing_emacs_refresh_keeps_committed_snapshot_in_sync() {
 
     hyprmacs::WorkspaceManager manager;
     manager.process_event_for_tests("openwindowv2>>0xeee,1,emacs,emacs-main");
+    manager.process_event_for_tests("openwindowv2>>0xfff,1,emacs,emacs-alt");
     manager.process_event_for_tests("openwindowv2>>0xaaa,1,foot,foot-a");
     manager.process_event_for_tests("activewindowv2>>0xeee");
     ok &= expect(manager.manage_workspace("1"), "workspace 1 should become managed");
@@ -663,19 +664,35 @@ bool test_managing_emacs_refresh_keeps_committed_snapshot_in_sync() {
                      "snapshot should capture initial managing emacs");
     }
 
+    manager.process_event_for_tests("activewindowv2>>0xfff");
+    stored = manager.managed_layout_snapshot("1");
+    ok &= expect(stored.has_value(), "snapshot should stay present after fallback-prepping focus change");
+    if (stored.has_value()) {
+        ok &= expect(stored->managing_emacs_client_id.has_value() && *stored->managing_emacs_client_id == "0xeee",
+                     "snapshot should stay coherent before fallback assignment");
+    }
+
+    manager.process_event_for_tests("closewindow>>0xeee");
+    stored = manager.managed_layout_snapshot("1");
+    ok &= expect(stored.has_value(), "snapshot should stay present after managing emacs closes");
+    if (stored.has_value()) {
+        ok &= expect(stored->managing_emacs_client_id.has_value() && *stored->managing_emacs_client_id == "0xfff",
+                     "snapshot should update to last_active managing emacs on close fallback");
+    }
+
     manager.process_event_for_tests("activewindowv2>>0xaaa");
     stored = manager.managed_layout_snapshot("1");
     ok &= expect(stored.has_value(), "snapshot should stay present after focus change");
     if (stored.has_value()) {
-        ok &= expect(stored->managing_emacs_client_id.has_value() && *stored->managing_emacs_client_id == "0xeee",
+        ok &= expect(stored->managing_emacs_client_id.has_value() && *stored->managing_emacs_client_id == "0xfff",
                      "snapshot should remain coherent after non-emacs focus change");
     }
 
-    manager.process_event_for_tests("activewindowv2>>0xeee");
+    manager.process_event_for_tests("activewindowv2>>0xfff");
     stored = manager.managed_layout_snapshot("1");
     ok &= expect(stored.has_value(), "snapshot should stay present after emacs refocus");
     if (stored.has_value()) {
-        ok &= expect(stored->managing_emacs_client_id.has_value() && *stored->managing_emacs_client_id == "0xeee",
+        ok &= expect(stored->managing_emacs_client_id.has_value() && *stored->managing_emacs_client_id == "0xfff",
                      "snapshot should stay synchronized with managing emacs refresh");
     }
 
