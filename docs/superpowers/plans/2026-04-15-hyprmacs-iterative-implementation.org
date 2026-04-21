@@ -1117,7 +1117,7 @@ Validation:
   - Nested e2e expects managed client removal after kill request and subsequent close event/state update.
   - Manual smoke checklist documents kill-buffer closes client behavior.
 
-** NEXT Task 14: Package the prototype, document usage, and freeze the first demo flow
+** DONE Task 14: Package the prototype, document usage, and freeze the first demo flow
 Purpose:
 - Make the prototype repeatable and easy to evaluate.
 
@@ -1134,7 +1134,7 @@ Steps:
 - Explain how to start the demo, load the Emacs package, connect, manage a workspace, and switch modes.
 *** DONE Freeze a smoke-test checklist
 - Record the exact scenarios that must pass before any future refactor is considered safe.
-*** WAIT Review task 14 with user
+*** DONE Review task 14 with user
 - Use this checkpoint to decide whether to continue toward polish work or pause after the first usable prototype.
 
 Validation:
@@ -1245,6 +1245,13 @@ Validation:
   - removed app-specific wording in automated validation criteria.
   - added explicit interactive repositioning policy with prevent-first + corrective snapback model.
   - added loop-guard requirements (expected-box compare, version token, debounced scheduling, bounded retries/backoff, managed-target-only scope).
+
+*** DONE Session note: Task 14 WAIT checkpoint approval and final verification (2026-04-21)
+- User requested to wrap up the prototype and approved continuing past the Task 14 review checkpoint.
+- Re-ran verification before closeout:
+  - =just test= passed.
+  - =just e2e= passed with artifact bundle =artifacts/e2e/20260421-234020/=.
+- Task 14 review checkpoint is now closed and Task 14 is marked complete.
 
 * Execution Order
 - Start with task 0 and task 1 only.
