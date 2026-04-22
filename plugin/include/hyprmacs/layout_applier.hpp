@@ -3,7 +3,6 @@
 #include <functional>
 #include <string>
 #include <unordered_map>
-#include <unordered_set>
 #include <vector>
 
 #include "hyprmacs/plugin_state.hpp"
@@ -37,13 +36,9 @@ class LayoutApplier {
   private:
     static std::string normalize_client_id(const std::string& client_id);
     static bool rectangles_overlap(const LayoutRectangle& lhs, const LayoutRectangle& rhs);
-    bool ensure_positioning_mode(const std::string& normalized_client_id);
-    bool disable_positioning_mode(const std::string& normalized_client_id);
-    bool move_resize_client(const LayoutRectangle& rectangle);
 
     CommandExecutor executor_;
     std::unordered_map<std::string, std::string> hidden_workspace_by_client_;
-    std::unordered_set<std::string> positioning_mode_clients_;
 };
 
 }  // namespace hyprmacs

@@ -567,6 +567,11 @@ StateDumpPayload WorkspaceManager::build_state_dump(const WorkspaceId& workspace
     return out;
 }
 
+std::optional<int> WorkspaceManager::plugin_option_int(std::string_view option_name) const {
+    std::scoped_lock lock(mutex_);
+    return query_option_int_locked(option_name);
+}
+
 void WorkspaceManager::process_event_for_tests(const std::string& line) {
     handle_line(line);
 }

@@ -1309,11 +1309,11 @@ Steps:
   - ignore unmanaged and native floating targets
 - Ensure managing Emacs placement invariant survives workarea and lifecycle changes.
 
-*** NEXT Remove floating-dispatch geometry path from managed layout execution
+*** DONE Remove floating-dispatch geometry path from managed layout execution
 - Remove managed geometry reliance on =togglefloating=, =movewindowpixel=, and =resizewindowpixel= in =LayoutApplier=.
 - Keep =LayoutApplier= focused on hide/show/native-restore behavior only.
 
-*** TODO Enforce floating/non-floating transition semantics and layer ordering contract
+*** DONE Enforce floating/non-floating transition semantics and layer ordering contract
 - Preserve and harden transition flow:
   - managed -> floating: plugin drops managed membership immediately and notifies Emacs
   - floating -> non-floating: plugin re-evaluates eligibility and publishes updated state
@@ -1321,7 +1321,7 @@ Steps:
   - floating windows > managed non-floating windows > managing Emacs window.
 - Keep Emacs buffer removal on managed->floating driven by next authoritative =state-dump=.
 
-*** TODO Add debounced/coalesced plugin state-notify publishing with plugin setting
+*** DONE Add debounced/coalesced plugin state-notify publishing with plugin setting
 - Add plugin option lookup for =plugin:hyprmacs:state_notify_debounce_ms=.
 - Implement non-resetting coalescing timer behavior in =IpcServer= state-publish path.
 - Defaults/validation:
@@ -1389,6 +1389,61 @@ Validation:
   - code-quality reviewer: pass
 - Local verification run in this session:
   - =nix develop -c sh -lc 'cmake -S plugin -B build/plugin >/tmp/hyprmacs-cmake.log && cmake --build build/plugin --target hyprmacs_plugin_main_tests hyprmacs_ipc_server_tests hyprmacs_workspace_manager_tests hyprmacs_layout_applier_tests -j2 && ctest --test-dir build/plugin --output-on-failure -R "hyprmacs_(plugin_main_tests|ipc_server_tests|workspace_manager_tests|layout_applier_tests)"'=
+  - result: pass.
+
+*** DONE Session note: Task 15 step 4 implementation and review closure (2026-04-22)
+- Removed remaining managed floating-dispatch geometry path from =LayoutApplier=:
+  - deleted =togglefloating= positioning-mode state handling
+  - deleted =movewindowpixel= /=resizewindowpixel= execution path
+  - kept hide/show and workspace-restore behavior only.
+- Kept =apply_snapshot(...)= as a hide/show coordinator with overlap validation and visibility transitions, without geometry command execution.
+- Updated =layout_applier= unit coverage to match new responsibilities:
+  - hide/show roundtrip + id normalization + idempotency
+  - snapshot hide/show behavior without geometry commands
+  - native restore showing hidden clients only.
+- Review gates completed before moving on:
+  - spec-compliance reviewer: pass
+  - code-quality reviewer: pass
+- Local verification run in this session:
+  - =nix develop -c sh -lc 'cmake -S plugin -B build/plugin >/tmp/hyprmacs-cmake.log && cmake --build build/plugin --target hyprmacs_layout_applier_tests hyprmacs_ipc_server_tests hyprmacs_plugin_main_tests hyprmacs_workspace_manager_tests -j2 && ctest --test-dir build/plugin --output-on-failure -R "hyprmacs_(layout_applier_tests|ipc_server_tests|plugin_main_tests|workspace_manager_tests)"'=
+  - result: pass.
+
+*** DONE Session note: Task 15 step 5 implementation and review closure (2026-04-22)
+- Hardened managed/floating transition semantics with explicit transition-path coverage in =plugin/tests/ipc_server_tests.cpp=:
+  - managed -> floating removes client from managed membership immediately and restores native visibility
+  - floating -> tiled re-adopts client into managed membership and restores managed hide path.
+- Hardened recalc layering behavior by switching to explicit class-ordered processing in =CHyprmacsAlgorithm::recalculate()=:
+  - managing Emacs processed first (baseline)
+  - managed visible non-Emacs targets processed in snapshot =stacking_order=
+  - hidden managed targets processed in hidden pass.
+- Preserved floating-native behavior by keeping floating targets outside managed visibility/geometry application.
+- Review gates completed before moving on:
+  - spec-compliance reviewer: pass
+  - code-quality reviewer: pass
+- Local verification run in this session:
+  - =nix develop -c sh -lc 'cmake -S plugin -B build/plugin >/tmp/hyprmacs-cmake.log && cmake --build build/plugin --target hyprmacs_plugin_main_tests hyprmacs_ipc_server_tests hyprmacs_workspace_manager_tests hyprmacs_layout_applier_tests -j2 && ctest --test-dir build/plugin --output-on-failure -R "hyprmacs_(plugin_main_tests|ipc_server_tests|workspace_manager_tests|layout_applier_tests)"'=
+  - result: pass.
+
+*** DONE Session note: Task 15 step 6 implementation and review closure (2026-04-22)
+- Implemented debounced/coalesced plugin state-notify publishing in =IpcServer= with plugin setting lookup:
+  - setting =plugin:hyprmacs:state_notify_debounce_ms=
+  - default =30= ms when missing
+  - =0= means immediate publish
+  - values clamped to =0..1000= with warning on out-of-range input.
+- Added debounce normalization helper coverage in =plugin/tests/ipc_server_tests.cpp= for default, immediate, low clamp, and high clamp paths.
+- Implemented non-resetting workspace coalescing semantics:
+  - first state change opens debounce window per workspace
+  - subsequent state changes within the window coalesce without extending deadline.
+- Routed transition-triggered state-dump publishing through same state-notify path.
+- Fixed session-isolation race in debounce publishing with controller-generation tagging:
+  - queued publishes carry source controller generation
+  - publish path drops stale generations
+  - generation increments on connect/disconnect/stop and pending queue clears on connect/disconnect boundaries.
+- Review gates completed before WAIT checkpoint:
+  - spec-compliance reviewer: pass
+  - code-quality reviewer: pass
+- Local verification run in this session:
+  - =nix develop -c sh -lc 'cmake -S plugin -B build/plugin >/tmp/hyprmacs-cmake.log && cmake --build build/plugin --target hyprmacs_ipc_server_tests hyprmacs_plugin_main_tests hyprmacs_workspace_manager_tests hyprmacs_layout_applier_tests -j2 && ctest --test-dir build/plugin --output-on-failure -R "hyprmacs_(ipc_server_tests|plugin_main_tests|workspace_manager_tests|layout_applier_tests)"'=
   - result: pass.
 
 * Execution Order

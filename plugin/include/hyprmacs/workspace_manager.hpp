@@ -73,6 +73,7 @@ class WorkspaceManager {
     std::optional<ManagedWorkspaceLayoutSnapshot> managed_layout_snapshot(const WorkspaceId& workspace_id) const;
     void clear_managed_layout_snapshot(const WorkspaceId& workspace_id);
     StateDumpPayload build_state_dump(const WorkspaceId& workspace_id) const;
+    std::optional<int> plugin_option_int(std::string_view option_name) const;
     void process_event_for_tests(const std::string& line);
 
   private:

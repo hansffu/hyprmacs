@@ -5,7 +5,6 @@
 #include <cstdlib>
 #include <ctime>
 #include <fstream>
-#include <sstream>
 #include <unordered_set>
 
 namespace hyprmacs {
@@ -98,6 +97,7 @@ bool LayoutApplier::is_hidden(const std::string& client_id) const {
 
 bool LayoutApplier::restore_workspace_to_native(const WorkspaceId& workspace_id,
                                                 const std::vector<ClientId>& managed_clients) {
+    (void)managed_clients;
     bool ok = true;
     std::vector<std::string> hidden_in_workspace;
     hidden_in_workspace.reserve(hidden_workspace_by_client_.size());
@@ -112,15 +112,6 @@ bool LayoutApplier::restore_workspace_to_native(const WorkspaceId& workspace_id,
         if (!show_client(normalized_client_id)) {
             // Best-effort cleanup: drop stale hidden mapping so future sessions do not inherit it.
             hidden_workspace_by_client_.erase(normalized_client_id);
-            ok = false;
-        }
-    }
-
-    for (const auto& client_id : managed_clients) {
-        const std::string normalized_client_id = normalize_client_id(client_id);
-        if (!disable_positioning_mode(normalized_client_id)) {
-            // Best-effort cleanup: forget stale positioning entry even if dispatch failed.
-            positioning_mode_clients_.erase(normalized_client_id);
             ok = false;
         }
     }
@@ -162,84 +153,6 @@ bool LayoutApplier::validate_non_overlapping(const std::vector<LayoutRectangle>&
     return true;
 }
 
-bool LayoutApplier::move_resize_client(const LayoutRectangle& rectangle) {
-    const std::string normalized_client_id = normalize_client_id(rectangle.client_id);
-    if (!ensure_positioning_mode(normalized_client_id)) {
-        return false;
-    }
-
-    std::ostringstream move;
-    move << "dispatch movewindowpixel exact " << rectangle.x << ' ' << rectangle.y << ",address:" << normalized_client_id;
-    const int move_rc = executor_(move.str());
-    append_layout_debug_log(
-        "move command rc=" + std::to_string(move_rc) + " client=" + normalized_client_id + " command=" + move.str()
-    );
-    if (move_rc != 0) {
-        return false;
-    }
-
-    std::ostringstream resize;
-    resize << "dispatch resizewindowpixel exact " << rectangle.width << ' ' << rectangle.height << ",address:"
-           << normalized_client_id;
-    const int resize_rc = executor_(resize.str());
-    append_layout_debug_log(
-        "resize command rc=" + std::to_string(resize_rc) + " client=" + normalized_client_id + " command="
-        + resize.str()
-    );
-    if (resize_rc != 0) {
-        return false;
-    }
-
-    // Re-assert top-left anchor after resize. Some Hyprland resize paths can shift
-    // floating windows vertically, which causes minibuffer-driven geometry drift.
-    const int post_move_rc = executor_(move.str());
-    append_layout_debug_log(
-        "move-post-resize command rc=" + std::to_string(post_move_rc) + " client=" + normalized_client_id
-        + " command=" + move.str()
-    );
-    return post_move_rc == 0;
-}
-
-bool LayoutApplier::ensure_positioning_mode(const std::string& normalized_client_id) {
-    if (positioning_mode_clients_.find(normalized_client_id) != positioning_mode_clients_.end()) {
-        return true;
-    }
-
-    // Task 8 prototype path: switch managed clients into geometry-addressable mode
-    // before pixel moves/resizes. This is refined in later tasks.
-    const std::string command = "dispatch togglefloating address:" + normalized_client_id;
-    const int rc = executor_(command);
-    append_layout_debug_log(
-        "positioning-mode command rc=" + std::to_string(rc) + " client=" + normalized_client_id + " command=" + command
-    );
-    if (rc != 0) {
-        return false;
-    }
-
-    positioning_mode_clients_.insert(normalized_client_id);
-    return true;
-}
-
-bool LayoutApplier::disable_positioning_mode(const std::string& normalized_client_id) {
-    const auto it = positioning_mode_clients_.find(normalized_client_id);
-    if (it == positioning_mode_clients_.end()) {
-        return true;
-    }
-
-    const std::string command = "dispatch togglefloating address:" + normalized_client_id;
-    const int rc = executor_(command);
-    append_layout_debug_log(
-        "positioning-mode-disable command rc=" + std::to_string(rc) + " client=" + normalized_client_id
-        + " command=" + command
-    );
-    if (rc != 0) {
-        return false;
-    }
-
-    positioning_mode_clients_.erase(it);
-    return true;
-}
-
 bool LayoutApplier::apply_snapshot(const WorkspaceId& workspace_id, const std::vector<LayoutRectangle>& visible_rectangles,
                                    const std::vector<ClientId>& hidden_clients, const std::vector<ClientId>& stacking_order,
                                    std::string* error_out) {
@@ -275,13 +188,6 @@ bool LayoutApplier::apply_snapshot(const WorkspaceId& workspace_id, const std::v
         if (!show_client(normalized_client_id)) {
             if (error_out != nullptr) {
                 *error_out = "failed to show client " + normalized_client_id;
-            }
-            return false;
-        }
-
-        if (!move_resize_client(rectangle)) {
-            if (error_out != nullptr) {
-                *error_out = "failed to move/resize client " + normalized_client_id;
             }
             return false;
         }

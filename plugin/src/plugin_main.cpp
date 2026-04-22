@@ -510,6 +510,16 @@ class CHyprmacsAlgorithm final : public Layout::ITiledAlgorithm {
             return;
         }
 
+        struct TargetRecalcContext {
+            SP<Layout::ITarget> target;
+            std::string workspace_id;
+            std::string client_id;
+            CBox work_area;
+            bool floating = false;
+        };
+
+        std::vector<TargetRecalcContext> target_contexts;
+        target_contexts.reserve(m_targets_.size());
         for (const auto& weak_target : m_targets_) {
             const auto target = weak_target.lock();
             if (!target) {
@@ -523,18 +533,62 @@ class CHyprmacsAlgorithm final : public Layout::ITiledAlgorithm {
                 continue;
             }
 
-            const std::string normalized_target_client_id = hyprmacs::normalize_client_id_for_recalc(*target_client_id);
+            target_contexts.push_back(TargetRecalcContext {
+                .target = target,
+                .workspace_id = *target_workspace_id,
+                .client_id = *target_client_id,
+                .work_area = space->workArea(),
+                .floating = target->floating(),
+            });
+        }
+
+        const auto find_target_context = [&](std::string_view snapshot_client_id) -> const TargetRecalcContext* {
+            const auto it = std::find_if(target_contexts.begin(), target_contexts.end(), [&](const TargetRecalcContext& context) {
+                return hyprmacs::snapshot_client_ids_match(snapshot_client_id, context.client_id);
+            });
+            if (it == target_contexts.end()) {
+                return nullptr;
+            }
+            return &(*it);
+        };
+
+        // Process targets in explicit class order to preserve layering semantics:
+        // 1) managing Emacs baseline, 2) managed non-floating targets (stacking order),
+        // 3) hidden managed targets.
+        if (snapshot->managing_emacs_client_id.has_value()) {
+            const auto* emacs_context = find_target_context(*snapshot->managing_emacs_client_id);
+            if (emacs_context != nullptr) {
+                const auto emacs_box = hyprmacs::compute_managed_target_box_for_recalc(
+                    *snapshot,
+                    emacs_context->workspace_id,
+                    emacs_context->client_id,
+                    emacs_context->floating,
+                    emacs_context->work_area
+                );
+                if (emacs_box.has_value()) {
+                    emacs_context->target->setPositionGlobal(*emacs_box);
+                }
+            }
+        }
+
+        for (const auto& visible_client_id : snapshot->stacking_order) {
+            const auto* target_context = find_target_context(visible_client_id);
+            if (target_context == nullptr) {
+                continue;
+            }
+
+            const std::string normalized_target_client_id = hyprmacs::normalize_client_id_for_recalc(target_context->client_id);
             const bool target_is_hidden = g_layout_applier.is_hidden(normalized_target_client_id);
             const auto visibility_action = hyprmacs::compute_managed_target_visibility_action_for_recalc(
                 *snapshot,
-                *target_workspace_id,
-                *target_client_id,
-                target->floating(),
+                target_context->workspace_id,
+                target_context->client_id,
+                target_context->floating,
                 target_is_hidden
             );
             if (visibility_action == hyprmacs::ManagedTargetVisibilityAction::kHide) {
                 if (!target_is_hidden) {
-                    (void)g_layout_applier.hide_client(normalized_target_client_id, *target_workspace_id);
+                    (void)g_layout_applier.hide_client(normalized_target_client_id, target_context->workspace_id);
                 }
                 continue;
             }
@@ -546,19 +600,39 @@ class CHyprmacsAlgorithm final : public Layout::ITiledAlgorithm {
             const std::string workspace_id_for_geometry =
                 (visibility_action == hyprmacs::ManagedTargetVisibilityAction::kShow && target_is_hidden)
                 ? snapshot->workspace_id
-                : *target_workspace_id;
+                : target_context->workspace_id;
             const auto target_box = hyprmacs::compute_managed_target_box_for_recalc(
                 *snapshot,
                 workspace_id_for_geometry,
-                *target_client_id,
-                target->floating(),
-                space->workArea()
+                target_context->client_id,
+                target_context->floating,
+                target_context->work_area
             );
             if (!target_box.has_value()) {
                 continue;
             }
 
-            target->setPositionGlobal(*target_box);
+            target_context->target->setPositionGlobal(*target_box);
+        }
+
+        for (const auto& hidden_client_id : snapshot->hidden_client_ids) {
+            const auto* target_context = find_target_context(hidden_client_id);
+            if (target_context == nullptr) {
+                continue;
+            }
+
+            const std::string normalized_target_client_id = hyprmacs::normalize_client_id_for_recalc(target_context->client_id);
+            const bool target_is_hidden = g_layout_applier.is_hidden(normalized_target_client_id);
+            const auto visibility_action = hyprmacs::compute_managed_target_visibility_action_for_recalc(
+                *snapshot,
+                target_context->workspace_id,
+                target_context->client_id,
+                target_context->floating,
+                target_is_hidden
+            );
+            if (visibility_action == hyprmacs::ManagedTargetVisibilityAction::kHide && !target_is_hidden) {
+                (void)g_layout_applier.hide_client(normalized_target_client_id, target_context->workspace_id);
+            }
         }
     }
 

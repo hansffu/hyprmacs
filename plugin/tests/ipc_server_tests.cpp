@@ -44,6 +44,40 @@ struct RecordingRecalcRequester {
     }
 };
 
+bool test_normalize_state_notify_debounce_ms_defaults_and_clamps() {
+    bool ok = true;
+
+    bool used_default = false;
+    bool clamped = false;
+    int debounce_ms = hyprmacs::normalize_state_notify_debounce_ms(std::nullopt, &used_default, &clamped);
+    ok &= expect(debounce_ms == 30, "missing setting should use 30ms default");
+    ok &= expect(used_default, "missing setting should report default usage");
+    ok &= expect(!clamped, "missing setting should not report clamping");
+
+    used_default = false;
+    clamped = false;
+    debounce_ms = hyprmacs::normalize_state_notify_debounce_ms(0, &used_default, &clamped);
+    ok &= expect(debounce_ms == 0, "zero debounce should remain immediate");
+    ok &= expect(!used_default, "configured zero should not report default usage");
+    ok &= expect(!clamped, "configured zero should not report clamping");
+
+    used_default = false;
+    clamped = false;
+    debounce_ms = hyprmacs::normalize_state_notify_debounce_ms(-25, &used_default, &clamped);
+    ok &= expect(debounce_ms == 0, "negative debounce should clamp to zero");
+    ok &= expect(!used_default, "configured negative should not report default usage");
+    ok &= expect(clamped, "configured negative should report clamping");
+
+    used_default = false;
+    clamped = false;
+    debounce_ms = hyprmacs::normalize_state_notify_debounce_ms(3000, &used_default, &clamped);
+    ok &= expect(debounce_ms == 1000, "oversized debounce should clamp to 1000");
+    ok &= expect(!used_default, "configured oversized value should not report default usage");
+    ok &= expect(clamped, "configured oversized value should report clamping");
+
+    return ok;
+}
+
 bool test_route_manage_workspace() {
     hyprmacs::WorkspaceManager manager;
     auto applier = make_noop_applier();
@@ -439,6 +473,55 @@ bool test_route_set_layout_logs_warning_when_recalc_request_fails() {
                  "set-layout should still invoke recalc requester exactly once");
     ok &= expect(captured_err.str().find("set-layout recalc request failed workspace=1") != std::string::npos,
                  "recalc request failure should be logged");
+    return ok;
+}
+
+bool test_transition_events_update_managed_membership_and_visibility() {
+    hyprmacs::WorkspaceManager manager;
+    RecordingApplier recording;
+    auto applier = recording.make();
+    hyprmacs::IpcServer server(&manager, &applier, nullptr);
+
+    manager.manage_workspace("1");
+    manager.process_event_for_tests("openwindowv2>>0xaaa,1,foot,foot-a");
+
+    bool ok = true;
+    auto state = manager.build_state_dump("1");
+    ok &= expect(state.managed_clients == std::vector<std::string>({"0xaaa"}),
+                 "new tiled managed client should enter managed set");
+    ok &= expect(applier.is_hidden("0xaaa"), "new tiled managed client should be hidden by transition notifier");
+    ok &= expect(!recording.commands.empty(), "open managed transition should emit a hide command");
+    if (!recording.commands.empty()) {
+        ok &= expect(recording.commands.back().find("dispatch movetoworkspacesilent special:hyprmacs-hidden,address:0xaaa")
+                         != std::string::npos,
+                     "open managed transition should hide the managed client");
+    }
+
+    const size_t before_float = recording.commands.size();
+    manager.process_event_for_tests("changefloatingmodev2>>0xaaa,true");
+    state = manager.build_state_dump("1");
+    ok &= expect(state.managed_clients.empty(), "managed->floating transition should drop managed membership immediately");
+    ok &= expect(!applier.is_hidden("0xaaa"), "managed->floating transition should show the floating client");
+    ok &= expect(recording.commands.size() == before_float + 1, "managed->floating should emit one show command");
+    if (recording.commands.size() >= before_float + 1) {
+        ok &= expect(recording.commands[before_float].find("dispatch movetoworkspacesilent 1,address:0xaaa")
+                         != std::string::npos,
+                     "managed->floating should restore client to workspace");
+    }
+
+    const size_t before_tiled = recording.commands.size();
+    manager.process_event_for_tests("changefloatingmodev2>>0xaaa,false");
+    state = manager.build_state_dump("1");
+    ok &= expect(state.managed_clients == std::vector<std::string>({"0xaaa"}),
+                 "floating->tiled transition should re-enter managed membership");
+    ok &= expect(applier.is_hidden("0xaaa"), "floating->tiled transition should hide client for managed flow");
+    ok &= expect(recording.commands.size() == before_tiled + 1, "floating->tiled should emit one hide command");
+    if (recording.commands.size() >= before_tiled + 1) {
+        ok &= expect(recording.commands[before_tiled].find("dispatch movetoworkspacesilent special:hyprmacs-hidden,address:0xaaa")
+                         != std::string::npos,
+                     "floating->tiled should hide the managed client");
+    }
+
     return ok;
 }
 
@@ -872,6 +955,7 @@ bool test_route_unknown_type_returns_protocol_error() {
 
 int main() {
     bool ok = true;
+    ok &= test_normalize_state_notify_debounce_ms_defaults_and_clamps();
     ok &= test_route_manage_workspace();
     ok &= test_route_manage_workspace_hides_existing_managed_clients();
     ok &= test_route_unmanage_workspace();
@@ -893,6 +977,7 @@ int main() {
     ok &= test_route_set_layout_rejects_missing_required_arrays_before_commit();
     ok &= test_route_set_layout_rejects_missing_rectangle_for_visible_client_before_commit();
     ok &= test_route_set_layout_logs_warning_when_recalc_request_fails();
+    ok &= test_transition_events_update_managed_membership_and_visibility();
     ok &= test_route_set_layout_rejects_overlapping_rectangles();
     ok &= test_route_set_layout_ignores_non_managed_selected_client();
     ok &= test_route_set_layout_with_null_selected_client_does_not_pick_visible_client();

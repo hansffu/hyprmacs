@@ -20,6 +20,9 @@
 namespace hyprmacs {
 namespace {
 
+constexpr int kDefaultStateNotifyDebounceMs = 30;
+constexpr int kMaxStateNotifyDebounceMs = 1000;
+
 std::string now_rfc3339() {
     const auto now = std::chrono::system_clock::now();
     const std::time_t t = std::chrono::system_clock::to_time_t(now);
@@ -519,6 +522,33 @@ std::optional<InputMode> parse_input_mode_field_from_payload(std::string_view pa
 
 }  // namespace
 
+int normalize_state_notify_debounce_ms(std::optional<int> configured_value, bool* used_default_out, bool* clamped_out) {
+    bool used_default = false;
+    bool clamped = false;
+    int debounce_ms = kDefaultStateNotifyDebounceMs;
+
+    if (!configured_value.has_value()) {
+        used_default = true;
+    } else {
+        debounce_ms = *configured_value;
+        if (debounce_ms < 0) {
+            debounce_ms = 0;
+            clamped = true;
+        } else if (debounce_ms > kMaxStateNotifyDebounceMs) {
+            debounce_ms = kMaxStateNotifyDebounceMs;
+            clamped = true;
+        }
+    }
+
+    if (used_default_out != nullptr) {
+        *used_default_out = used_default;
+    }
+    if (clamped_out != nullptr) {
+        *clamped_out = clamped;
+    }
+    return debounce_ms;
+}
+
 std::optional<std::string> default_ipc_socket_path() {
     const char* runtime_dir = std::getenv("XDG_RUNTIME_DIR");
     const char* instance = std::getenv("HYPRLAND_INSTANCE_SIGNATURE");
@@ -886,6 +916,13 @@ bool IpcServer::start() {
 
     std::cerr << "[hyprmacs] ipc server listening at " << *socket_path_ << '\n';
 
+    state_notify_debounce_ms_ = resolve_state_notify_debounce_ms();
+    if (state_notify_debounce_ms_ > 0) {
+        state_notify_thread_ = std::thread([this]() {
+            state_notify_loop();
+        });
+    }
+
     accept_thread_ = std::thread([this]() {
         accept_loop();
     });
@@ -910,11 +947,21 @@ void IpcServer::stop() {
             ::shutdown(controller_fd_, SHUT_RDWR);
             ::close(controller_fd_);
             controller_fd_ = -1;
+            controller_generation_ += 1;
         }
     }
 
     if (accept_thread_.joinable()) {
         accept_thread_.join();
+    }
+
+    state_notify_cv_.notify_all();
+    if (state_notify_thread_.joinable()) {
+        state_notify_thread_.join();
+    }
+    {
+        std::scoped_lock lock(state_notify_mutex_);
+        pending_state_notify_deadlines_.clear();
     }
 
     if (socket_path_.has_value()) {
@@ -935,6 +982,135 @@ void IpcServer::publish_state_dump_for_workspace(const WorkspaceId& workspace_id
     on_workspace_state_changed(workspace_id);
 }
 
+int IpcServer::resolve_state_notify_debounce_ms() const {
+    std::optional<int> configured_value;
+    if (workspace_manager_ != nullptr) {
+        configured_value = workspace_manager_->plugin_option_int("plugin:hyprmacs:state_notify_debounce_ms");
+    }
+
+    bool used_default = false;
+    bool clamped = false;
+    const int debounce_ms = normalize_state_notify_debounce_ms(configured_value, &used_default, &clamped);
+    if (used_default) {
+        std::cerr << "[hyprmacs] state notify debounce setting missing; using default "
+                  << kDefaultStateNotifyDebounceMs << "ms\n";
+    } else if (clamped && configured_value.has_value()) {
+        std::cerr << "[hyprmacs] state notify debounce out of range (" << *configured_value
+                  << "); clamped to " << debounce_ms << "ms\n";
+    }
+    return debounce_ms;
+}
+
+void IpcServer::enqueue_debounced_state_dump(const WorkspaceId& workspace_id) {
+    if (!running_.load()) {
+        return;
+    }
+    if (state_notify_debounce_ms_ <= 0) {
+        publish_state_dump_now(workspace_id);
+        return;
+    }
+
+    std::uint64_t controller_generation = 0;
+    {
+        std::scoped_lock lock(controller_mutex_);
+        if (controller_fd_ < 0) {
+            return;
+        }
+        controller_generation = controller_generation_;
+    }
+
+    const auto deadline = std::chrono::steady_clock::now() + std::chrono::milliseconds(state_notify_debounce_ms_);
+    bool inserted = false;
+    {
+        std::scoped_lock lock(state_notify_mutex_);
+        auto it = pending_state_notify_deadlines_.find(workspace_id);
+        if (it == pending_state_notify_deadlines_.end()) {
+            pending_state_notify_deadlines_.emplace(
+                workspace_id,
+                PendingStateNotification {
+                    .deadline = deadline,
+                    .controller_generation = controller_generation,
+                }
+            );
+            inserted = true;
+        } else if (it->second.controller_generation != controller_generation) {
+            it->second = PendingStateNotification {
+                .deadline = deadline,
+                .controller_generation = controller_generation,
+            };
+            inserted = true;
+        }
+    }
+    if (inserted) {
+        state_notify_cv_.notify_one();
+    }
+}
+
+void IpcServer::publish_state_dump_now(const WorkspaceId& workspace_id, std::optional<std::uint64_t> expected_generation) {
+    int fd = -1;
+    std::uint64_t current_generation = 0;
+    {
+        std::scoped_lock lock(controller_mutex_);
+        fd = controller_fd_;
+        current_generation = controller_generation_;
+    }
+    if (!running_.load() || fd < 0 || workspace_manager_ == nullptr) {
+        return;
+    }
+    if (expected_generation.has_value() && *expected_generation != current_generation) {
+        return;
+    }
+
+    send_message(fd, make_message("state-dump", workspace_id, serialize_state_dump_payload(workspace_manager_->build_state_dump(workspace_id))));
+}
+
+void IpcServer::state_notify_loop() {
+    while (running_.load()) {
+        std::vector<std::pair<WorkspaceId, std::uint64_t>> due_workspaces;
+        {
+            std::unique_lock lock(state_notify_mutex_);
+            state_notify_cv_.wait(lock, [this]() {
+                return !running_.load() || !pending_state_notify_deadlines_.empty();
+            });
+            if (!running_.load()) {
+                break;
+            }
+
+            auto next_deadline_it = std::min_element(
+                pending_state_notify_deadlines_.begin(),
+                pending_state_notify_deadlines_.end(),
+                [](const auto& lhs, const auto& rhs) { return lhs.second.deadline < rhs.second.deadline; }
+            );
+            if (next_deadline_it == pending_state_notify_deadlines_.end()) {
+                continue;
+            }
+
+            const auto next_deadline = next_deadline_it->second.deadline;
+            state_notify_cv_.wait_until(lock, next_deadline, [this, next_deadline]() {
+                return !running_.load() || pending_state_notify_deadlines_.empty() ||
+                       std::chrono::steady_clock::now() >= next_deadline;
+            });
+            if (!running_.load()) {
+                break;
+            }
+
+            const auto now = std::chrono::steady_clock::now();
+            for (auto it = pending_state_notify_deadlines_.begin(); it != pending_state_notify_deadlines_.end();) {
+                if (it->second.deadline <= now) {
+                    due_workspaces.emplace_back(it->first, it->second.controller_generation);
+                    it = pending_state_notify_deadlines_.erase(it);
+                } else {
+                    ++it;
+                }
+            }
+        }
+
+        for (const auto& [workspace_id, controller_generation] : due_workspaces) {
+            publish_state_dump_now(workspace_id, controller_generation);
+        }
+    }
+}
+
 void IpcServer::accept_loop() {
     while (running_.load()) {
         int controller_fd = ::accept(listen_fd_, nullptr, nullptr);
@@ -951,7 +1127,13 @@ void IpcServer::accept_loop() {
         {
             std::scoped_lock lock(controller_mutex_);
             controller_fd_ = controller_fd;
+            controller_generation_ += 1;
         }
+        {
+            std::scoped_lock lock(state_notify_mutex_);
+            pending_state_notify_deadlines_.clear();
+        }
+        state_notify_cv_.notify_all();
         workspace_manager_->set_controller_connected(true);
         std::cerr << "[hyprmacs] ipc controller connected\n";
         serve_controller(controller_fd);
@@ -961,8 +1143,14 @@ void IpcServer::accept_loop() {
                 ::shutdown(controller_fd_, SHUT_RDWR);
                 ::close(controller_fd_);
                 controller_fd_ = -1;
+                controller_generation_ += 1;
             }
         }
+        {
+            std::scoped_lock lock(state_notify_mutex_);
+            pending_state_notify_deadlines_.clear();
+        }
+        state_notify_cv_.notify_all();
         restore_workspace_on_disconnect();
         workspace_manager_->set_controller_connected(false);
         std::cerr << "[hyprmacs] ipc controller disconnected\n";
@@ -1082,20 +1270,18 @@ void IpcServer::on_client_transition(const WorkspaceId& workspace_id, const Clie
 
     const char* type = floating ? "client-became-floating" : "client-became-tiled";
     send_message(fd, make_message(type, workspace_id, payload_for_client_transition(client_id, floating)));
-    send_message(fd, make_message("state-dump", workspace_id, serialize_state_dump_payload(workspace_manager_->build_state_dump(workspace_id))));
+    on_workspace_state_changed(workspace_id);
 }
 
 void IpcServer::on_workspace_state_changed(const WorkspaceId& workspace_id) {
-    int fd = -1;
-    {
-        std::scoped_lock lock(controller_mutex_);
-        fd = controller_fd_;
-    }
-    if (!running_.load() || fd < 0 || workspace_manager_ == nullptr) {
+    if (!running_.load()) {
         return;
     }
-
-    send_message(fd, make_message("state-dump", workspace_id, serialize_state_dump_payload(workspace_manager_->build_state_dump(workspace_id))));
+    if (state_notify_debounce_ms_ <= 0) {
+        publish_state_dump_now(workspace_id);
+    } else {
+        enqueue_debounced_state_dump(workspace_id);
+    }
 }
 
 }  // namespace hyprmacs

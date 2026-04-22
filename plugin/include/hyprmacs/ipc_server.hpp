@@ -1,11 +1,15 @@
 #pragma once
 
 #include <atomic>
+#include <cstdint>
+#include <chrono>
+#include <condition_variable>
 #include <functional>
 #include <mutex>
 #include <optional>
 #include <string>
 #include <thread>
+#include <unordered_map>
 #include <vector>
 
 #include "hyprmacs/focus_controller.hpp"
@@ -16,6 +20,9 @@
 namespace hyprmacs {
 
 using RecalcRequester = std::function<bool(const WorkspaceId&)>;
+
+int normalize_state_notify_debounce_ms(std::optional<int> configured_value, bool* used_default_out = nullptr,
+                                       bool* clamped_out = nullptr);
 
 std::optional<std::string> default_ipc_socket_path();
 std::vector<ProtocolMessage> route_command_for_tests(
@@ -50,19 +57,34 @@ class IpcServer {
     void restore_workspace_on_disconnect();
     void on_client_transition(const WorkspaceId& workspace_id, const ClientId& client_id, bool floating);
     void on_workspace_state_changed(const WorkspaceId& workspace_id);
+    int resolve_state_notify_debounce_ms() const;
+    void enqueue_debounced_state_dump(const WorkspaceId& workspace_id);
+    void publish_state_dump_now(const WorkspaceId& workspace_id, std::optional<std::uint64_t> expected_generation = std::nullopt);
+    void state_notify_loop();
+
+    struct PendingStateNotification {
+        std::chrono::steady_clock::time_point deadline;
+        std::uint64_t controller_generation = 0;
+    };
 
     WorkspaceManager* workspace_manager_ = nullptr;
     LayoutApplier* layout_applier_ = nullptr;
     FocusController* focus_controller_ = nullptr;
     RecalcRequester recalc_requester_;
     std::optional<std::string> socket_path_;
+    int state_notify_debounce_ms_ = 30;
 
     std::atomic<bool> running_ {false};
     int listen_fd_ = -1;
     int controller_fd_ = -1;
     std::thread accept_thread_;
+    std::thread state_notify_thread_;
     mutable std::mutex controller_mutex_;
+    std::uint64_t controller_generation_ = 0;
     mutable std::mutex send_mutex_;
+    mutable std::mutex state_notify_mutex_;
+    std::condition_variable state_notify_cv_;
+    std::unordered_map<WorkspaceId, PendingStateNotification> pending_state_notify_deadlines_;
 };
 
 }  // namespace hyprmacs
