@@ -11,6 +11,7 @@
 #include <ctime>
 #include <iostream>
 #include <sstream>
+#include <unordered_set>
 #include <unordered_map>
 #include <sys/socket.h>
 #include <sys/un.h>
@@ -418,6 +419,90 @@ std::optional<std::vector<LayoutRectangle>> build_visible_rectangles_for_set_lay
     return visible_rectangles;
 }
 
+std::unordered_set<std::string> managed_and_eligible_client_ids(const StateDumpPayload& state) {
+    std::unordered_set<std::string> managed_ids;
+    managed_ids.reserve(state.managed_clients.size());
+    for (const auto& client_id : state.managed_clients) {
+        managed_ids.insert(client_id);
+    }
+
+    std::unordered_set<std::string> allowed_ids;
+    allowed_ids.reserve(state.eligible_clients.size());
+    for (const auto& client : state.eligible_clients) {
+        if (managed_ids.find(client.client_id) != managed_ids.end()) {
+            allowed_ids.insert(client.client_id);
+        }
+    }
+
+    return allowed_ids;
+}
+
+bool validate_unique_client_list(std::string_view list_name, const std::vector<std::string>& client_ids, std::string* error_out) {
+    std::unordered_set<std::string> seen;
+    seen.reserve(client_ids.size());
+    for (const auto& client_id : client_ids) {
+        if (!seen.insert(client_id).second) {
+            if (error_out != nullptr) {
+                *error_out = "set-layout has duplicate client_id in " + std::string(list_name) + ": " + client_id;
+            }
+            return false;
+        }
+    }
+    return true;
+}
+
+bool validate_client_membership(std::string_view list_name, const std::vector<std::string>& client_ids,
+                                const std::unordered_set<std::string>& allowed_ids, std::string* error_out) {
+    for (const auto& client_id : client_ids) {
+        if (allowed_ids.find(client_id) == allowed_ids.end()) {
+            if (error_out != nullptr) {
+                *error_out = "set-layout references unmanaged or ineligible client " + client_id + " in "
+                             + std::string(list_name);
+            }
+            return false;
+        }
+    }
+    return true;
+}
+
+bool validate_stacking_order_is_visible_permutation(const std::vector<std::string>& visible_clients,
+                                                    const std::vector<std::string>& stacking_order,
+                                                    std::string* error_out) {
+    if (stacking_order.size() != visible_clients.size()) {
+        if (error_out != nullptr) {
+            *error_out = "set-layout stacking_order must list the same clients as visible_clients";
+        }
+        return false;
+    }
+
+    std::unordered_set<std::string> visible_set(visible_clients.begin(), visible_clients.end());
+    std::unordered_set<std::string> stacking_set;
+    stacking_set.reserve(stacking_order.size());
+    for (const auto& client_id : stacking_order) {
+        if (!stacking_set.insert(client_id).second) {
+            if (error_out != nullptr) {
+                *error_out = "set-layout has duplicate client_id in stacking_order: " + client_id;
+            }
+            return false;
+        }
+        if (visible_set.find(client_id) == visible_set.end()) {
+            if (error_out != nullptr) {
+                *error_out = "set-layout stacking_order references non-visible client " + client_id;
+            }
+            return false;
+        }
+    }
+
+    if (stacking_set.size() != visible_set.size()) {
+        if (error_out != nullptr) {
+            *error_out = "set-layout stacking_order must be a unique ordering of visible_clients";
+        }
+        return false;
+    }
+
+    return true;
+}
+
 std::optional<InputMode> parse_input_mode_field_from_payload(std::string_view payload_json, std::string_view key) {
     const auto mode = parse_string_field_from_payload(payload_json, key);
     if (!mode.has_value()) {
@@ -592,55 +677,86 @@ std::vector<ProtocolMessage> route_command_for_tests(
         }
 
         if (ok) {
-            const auto visible_rectangles = build_visible_rectangles_for_set_layout(*visible_clients_opt, *rectangles_opt, &error);
-            if (!visible_rectangles.has_value()) {
-                ok = false;
-            } else {
-                std::string overlap_error;
-                if (!LayoutApplier::validate_non_overlapping(*visible_rectangles, &overlap_error)) {
+            const auto state = workspace_manager.build_state_dump(incoming.workspace_id);
+            const auto allowed_ids = managed_and_eligible_client_ids(state);
+
+            ok = validate_unique_client_list("visible_clients", *visible_clients_opt, &error) &&
+                 validate_unique_client_list("hidden_clients", *hidden_clients_opt, &error) &&
+                 validate_unique_client_list("stacking_order", *stacking_order_opt, &error) &&
+                 validate_client_membership("visible_clients", *visible_clients_opt, allowed_ids, &error) &&
+                 validate_client_membership("hidden_clients", *hidden_clients_opt, allowed_ids, &error) &&
+                 validate_client_membership("stacking_order", *stacking_order_opt, allowed_ids, &error);
+
+            if (ok) {
+                std::unordered_set<std::string> visible_ids(visible_clients_opt->begin(), visible_clients_opt->end());
+                std::unordered_set<std::string> hidden_ids(hidden_clients_opt->begin(), hidden_clients_opt->end());
+                for (const auto& client_id : visible_ids) {
+                    if (hidden_ids.find(client_id) != hidden_ids.end()) {
+                        ok = false;
+                        error = "set-layout visible_clients and hidden_clients overlap at " + client_id;
+                        break;
+                    }
+                }
+            }
+
+            if (ok) {
+                ok = validate_stacking_order_is_visible_permutation(*visible_clients_opt, *stacking_order_opt, &error);
+            }
+
+            std::optional<std::vector<LayoutRectangle>> visible_rectangles;
+            if (ok) {
+                visible_rectangles = build_visible_rectangles_for_set_layout(*visible_clients_opt, *rectangles_opt, &error);
+                if (!visible_rectangles.has_value()) {
                     ok = false;
-                    error = overlap_error;
                 } else {
-                    if (selected_client.has_value() && !selected_client->empty()) {
-                        const bool selected_ok = workspace_manager.set_selected_client(incoming.workspace_id, *selected_client);
-                        if (!selected_ok) {
-                            std::cerr << "[hyprmacs] set-layout ignored non-managed selected_client workspace="
-                                      << incoming.workspace_id << " client=" << *selected_client << '\n';
-                        }
+                    std::string overlap_error;
+                    if (!LayoutApplier::validate_non_overlapping(*visible_rectangles, &overlap_error)) {
+                        ok = false;
+                        error = overlap_error;
+                    }
+                }
+            }
+
+            if (ok) {
+                if (selected_client.has_value() && !selected_client->empty()) {
+                    const bool selected_ok = workspace_manager.set_selected_client(incoming.workspace_id, *selected_client);
+                    if (!selected_ok) {
+                        std::cerr << "[hyprmacs] set-layout ignored non-managed selected_client workspace="
+                                  << incoming.workspace_id << " client=" << *selected_client << '\n';
+                    }
+                }
+
+                if (input_mode.has_value()) {
+                    ok = workspace_manager.set_input_mode(incoming.workspace_id, *input_mode);
+                    if (!ok) {
+                        error = "set-layout input_mode rejected";
+                    }
+                }
+
+                if (ok) {
+                    const auto committed_state = workspace_manager.build_state_dump(incoming.workspace_id);
+                    ManagedWorkspaceLayoutSnapshot snapshot {
+                        .workspace_id = incoming.workspace_id,
+                        .rectangles_by_client_id = {},
+                        .visible_client_ids = *visible_clients_opt,
+                        .hidden_client_ids = *hidden_clients_opt,
+                        .stacking_order = *stacking_order_opt,
+                        .selected_client = committed_state.selected_client,
+                        .input_mode = committed_state.input_mode,
+                        .managing_emacs_client_id = workspace_manager.emacs_client(incoming.workspace_id),
+                    };
+                    for (const auto& rectangle : *visible_rectangles) {
+                        snapshot.rectangles_by_client_id.emplace(rectangle.client_id, ClientRect {
+                            .x = rectangle.x,
+                            .y = rectangle.y,
+                            .width = rectangle.width,
+                            .height = rectangle.height,
+                        });
                     }
 
-                    if (input_mode.has_value()) {
-                        ok = workspace_manager.set_input_mode(incoming.workspace_id, *input_mode);
-                        if (!ok) {
-                            error = "set-layout input_mode rejected";
-                        }
-                    }
-
-                    if (ok) {
-                        const auto state = workspace_manager.build_state_dump(incoming.workspace_id);
-                        ManagedWorkspaceLayoutSnapshot snapshot {
-                            .workspace_id = incoming.workspace_id,
-                            .rectangles_by_client_id = {},
-                            .visible_client_ids = *visible_clients_opt,
-                            .hidden_client_ids = *hidden_clients_opt,
-                            .stacking_order = *stacking_order_opt,
-                            .selected_client = state.selected_client,
-                            .input_mode = state.input_mode,
-                            .managing_emacs_client_id = workspace_manager.emacs_client(incoming.workspace_id),
-                        };
-                        for (const auto& rectangle : *visible_rectangles) {
-                            snapshot.rectangles_by_client_id.emplace(rectangle.client_id, ClientRect {
-                                .x = rectangle.x,
-                                .y = rectangle.y,
-                                .width = rectangle.width,
-                                .height = rectangle.height,
-                            });
-                        }
-
-                        ok = workspace_manager.apply_managed_layout_snapshot(std::move(snapshot));
-                        if (!ok) {
-                            error = "set-layout snapshot commit rejected";
-                        }
+                    ok = workspace_manager.apply_managed_layout_snapshot(std::move(snapshot));
+                    if (!ok) {
+                        error = "set-layout snapshot commit rejected";
                     }
                 }
             }

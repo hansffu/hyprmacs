@@ -415,6 +415,265 @@ bool test_route_set_layout_rejects_missing_required_arrays_before_commit() {
     return ok;
 }
 
+bool test_route_set_layout_rejects_non_managed_or_non_eligible_members_before_commit() {
+    hyprmacs::WorkspaceManager manager;
+    RecordingApplier recording;
+    auto applier = recording.make();
+    manager.process_event_for_tests("openwindowv2>>0xaaa,1,foot,foot-a");
+    manager.process_event_for_tests("openwindowv2>>0xeee,1,emacs,emacs-main");
+    manager.manage_workspace("1");
+
+    const auto before_state = manager.build_state_dump("1");
+
+    const hyprmacs::ProtocolMessage set_layout {
+        .version = 1,
+        .type = "set-layout",
+        .workspace_id = "1",
+        .timestamp = "2026-04-16T00:00:00Z",
+        .payload_json =
+            "{\"selected_client\":\"0xaaa\",\"input_mode\":\"emacs-control\",\"visible_clients\":[\"0xaaa\",\"0xeee\"],"
+            "\"hidden_clients\":[],\"rectangles\":[{\"client_id\":\"0xaaa\",\"x\":0,\"y\":0,\"width\":100,\"height\":100},"
+            "{\"client_id\":\"0xeee\",\"x\":110,\"y\":0,\"width\":100,\"height\":100}],\"stacking_order\":[\"0xaaa\",\"0xeee\"]}",
+    };
+
+    const auto responses = hyprmacs::route_command_for_tests(set_layout, manager, applier);
+    bool ok = true;
+    ok &= expect(responses.size() == 2, "invalid membership should still produce layout-applied and state-dump");
+    if (responses.size() == 2) {
+        ok &= expect(responses[0].type == "layout-applied", "first response should be layout-applied");
+        ok &= expect(responses[0].payload_json.find("\"ok\":false") != std::string::npos,
+                     "layout-applied should report failure for non-managed/non-eligible members");
+    }
+    ok &= expect(recording.commands.empty(), "membership validation should not execute geometry commands");
+    ok &= expect(!manager.managed_layout_snapshot("1").has_value(), "invalid membership should not commit a snapshot");
+    const auto state = manager.build_state_dump("1");
+    ok &= expect(state.selected_client == before_state.selected_client, "membership failure should preserve selected_client");
+    ok &= expect(state.input_mode == before_state.input_mode, "membership failure should preserve input_mode");
+    return ok;
+}
+
+bool test_route_set_layout_rejects_non_managed_hidden_member_before_commit() {
+    hyprmacs::WorkspaceManager manager;
+    RecordingApplier recording;
+    auto applier = recording.make();
+    manager.process_event_for_tests("openwindowv2>>0xaaa,1,foot,foot-a");
+    manager.process_event_for_tests("openwindowv2>>0xeee,1,emacs,emacs-main");
+    manager.manage_workspace("1");
+
+    const hyprmacs::ProtocolMessage set_layout {
+        .version = 1,
+        .type = "set-layout",
+        .workspace_id = "1",
+        .timestamp = "2026-04-16T00:00:00Z",
+        .payload_json =
+            "{\"selected_client\":\"0xaaa\",\"input_mode\":\"emacs-control\",\"visible_clients\":[\"0xaaa\"],"
+            "\"hidden_clients\":[\"0xeee\"],\"rectangles\":[{\"client_id\":\"0xaaa\",\"x\":0,\"y\":0,\"width\":100,\"height\":100}],"
+            "\"stacking_order\":[\"0xaaa\"]}",
+    };
+
+    const auto responses = hyprmacs::route_command_for_tests(set_layout, manager, applier);
+    bool ok = true;
+    ok &= expect(responses.size() == 2, "invalid hidden member should still produce layout-applied and state-dump");
+    if (responses.size() == 2) {
+        ok &= expect(responses[0].type == "layout-applied", "first response should be layout-applied");
+        ok &= expect(responses[0].payload_json.find("\"ok\":false") != std::string::npos,
+                     "layout-applied should report failure for non-managed hidden members");
+    }
+    ok &= expect(recording.commands.empty(), "hidden membership validation should not execute geometry commands");
+    ok &= expect(!manager.managed_layout_snapshot("1").has_value(), "invalid hidden member should not commit a snapshot");
+    return ok;
+}
+
+bool test_route_set_layout_rejects_duplicate_visible_clients_before_commit() {
+    hyprmacs::WorkspaceManager manager;
+    RecordingApplier recording;
+    auto applier = recording.make();
+    manager.process_event_for_tests("openwindowv2>>0xaaa,1,foot,foot-a");
+    manager.manage_workspace("1");
+
+    const hyprmacs::ProtocolMessage set_layout {
+        .version = 1,
+        .type = "set-layout",
+        .workspace_id = "1",
+        .timestamp = "2026-04-16T00:00:00Z",
+        .payload_json =
+            "{\"selected_client\":\"0xaaa\",\"input_mode\":\"emacs-control\",\"visible_clients\":[\"0xaaa\",\"0xaaa\"],"
+            "\"hidden_clients\":[],\"rectangles\":[{\"client_id\":\"0xaaa\",\"x\":0,\"y\":0,\"width\":100,\"height\":100}],"
+            "\"stacking_order\":[\"0xaaa\"]}",
+    };
+
+    const auto responses = hyprmacs::route_command_for_tests(set_layout, manager, applier);
+    bool ok = true;
+    ok &= expect(responses.size() == 2, "duplicate visible IDs should still produce layout-applied and state-dump");
+    if (responses.size() == 2) {
+        ok &= expect(responses[0].type == "layout-applied", "first response should be layout-applied");
+        ok &= expect(responses[0].payload_json.find("\"ok\":false") != std::string::npos,
+                     "layout-applied should report failure for duplicate visible IDs");
+    }
+    ok &= expect(recording.commands.empty(), "duplicate visible IDs should not execute geometry commands");
+    ok &= expect(!manager.managed_layout_snapshot("1").has_value(), "duplicate visible IDs should not commit a snapshot");
+    return ok;
+}
+
+bool test_route_set_layout_rejects_duplicate_hidden_clients_before_commit() {
+    hyprmacs::WorkspaceManager manager;
+    RecordingApplier recording;
+    auto applier = recording.make();
+    manager.process_event_for_tests("openwindowv2>>0xaaa,1,foot,foot-a");
+    manager.manage_workspace("1");
+
+    const hyprmacs::ProtocolMessage set_layout {
+        .version = 1,
+        .type = "set-layout",
+        .workspace_id = "1",
+        .timestamp = "2026-04-16T00:00:00Z",
+        .payload_json =
+            "{\"selected_client\":\"0xaaa\",\"input_mode\":\"emacs-control\",\"visible_clients\":[\"0xaaa\"],"
+            "\"hidden_clients\":[\"0xaaa\",\"0xaaa\"],\"rectangles\":[{\"client_id\":\"0xaaa\",\"x\":0,\"y\":0,\"width\":100,\"height\":100}],"
+            "\"stacking_order\":[\"0xaaa\"]}",
+    };
+
+    const auto responses = hyprmacs::route_command_for_tests(set_layout, manager, applier);
+    bool ok = true;
+    ok &= expect(responses.size() == 2, "duplicate hidden IDs should still produce layout-applied and state-dump");
+    if (responses.size() == 2) {
+        ok &= expect(responses[0].type == "layout-applied", "first response should be layout-applied");
+        ok &= expect(responses[0].payload_json.find("\"ok\":false") != std::string::npos,
+                     "layout-applied should report failure for duplicate hidden IDs");
+    }
+    ok &= expect(recording.commands.empty(), "duplicate hidden IDs should not execute geometry commands");
+    ok &= expect(!manager.managed_layout_snapshot("1").has_value(), "duplicate hidden IDs should not commit a snapshot");
+    return ok;
+}
+
+bool test_route_set_layout_rejects_visible_hidden_overlap_before_commit() {
+    hyprmacs::WorkspaceManager manager;
+    RecordingApplier recording;
+    auto applier = recording.make();
+    manager.process_event_for_tests("openwindowv2>>0xaaa,1,foot,foot-a");
+    manager.process_event_for_tests("openwindowv2>>0xbbb,1,foot,foot-b");
+    manager.manage_workspace("1");
+
+    const hyprmacs::ProtocolMessage set_layout {
+        .version = 1,
+        .type = "set-layout",
+        .workspace_id = "1",
+        .timestamp = "2026-04-16T00:00:00Z",
+        .payload_json =
+            "{\"selected_client\":\"0xaaa\",\"input_mode\":\"emacs-control\",\"visible_clients\":[\"0xaaa\",\"0xbbb\"],"
+            "\"hidden_clients\":[\"0xbbb\"],\"rectangles\":[{\"client_id\":\"0xaaa\",\"x\":0,\"y\":0,\"width\":100,\"height\":100},"
+            "{\"client_id\":\"0xbbb\",\"x\":110,\"y\":0,\"width\":100,\"height\":100}],\"stacking_order\":[\"0xaaa\",\"0xbbb\"]}",
+    };
+
+    const auto responses = hyprmacs::route_command_for_tests(set_layout, manager, applier);
+    bool ok = true;
+    ok &= expect(responses.size() == 2, "visible/hidden overlap should still produce layout-applied and state-dump");
+    if (responses.size() == 2) {
+        ok &= expect(responses[0].type == "layout-applied", "first response should be layout-applied");
+        ok &= expect(responses[0].payload_json.find("\"ok\":false") != std::string::npos,
+                     "layout-applied should report failure for visible/hidden overlap");
+    }
+    ok &= expect(recording.commands.empty(), "visible/hidden overlap should not execute geometry commands");
+    ok &= expect(!manager.managed_layout_snapshot("1").has_value(), "visible/hidden overlap should not commit a snapshot");
+    return ok;
+}
+
+bool test_route_set_layout_rejects_duplicate_stacking_order_before_commit() {
+    hyprmacs::WorkspaceManager manager;
+    RecordingApplier recording;
+    auto applier = recording.make();
+    manager.process_event_for_tests("openwindowv2>>0xaaa,1,foot,foot-a");
+    manager.process_event_for_tests("openwindowv2>>0xbbb,1,foot,foot-b");
+    manager.manage_workspace("1");
+
+    const hyprmacs::ProtocolMessage set_layout {
+        .version = 1,
+        .type = "set-layout",
+        .workspace_id = "1",
+        .timestamp = "2026-04-16T00:00:00Z",
+        .payload_json =
+            "{\"selected_client\":\"0xaaa\",\"input_mode\":\"emacs-control\",\"visible_clients\":[\"0xaaa\",\"0xbbb\"],"
+            "\"hidden_clients\":[],\"rectangles\":[{\"client_id\":\"0xaaa\",\"x\":0,\"y\":0,\"width\":100,\"height\":100},"
+            "{\"client_id\":\"0xbbb\",\"x\":110,\"y\":0,\"width\":100,\"height\":100}],\"stacking_order\":[\"0xaaa\",\"0xaaa\"]}",
+    };
+
+    const auto responses = hyprmacs::route_command_for_tests(set_layout, manager, applier);
+    bool ok = true;
+    ok &= expect(responses.size() == 2, "duplicate stacking order should still produce layout-applied and state-dump");
+    if (responses.size() == 2) {
+        ok &= expect(responses[0].type == "layout-applied", "first response should be layout-applied");
+        ok &= expect(responses[0].payload_json.find("\"ok\":false") != std::string::npos,
+                     "layout-applied should report failure for duplicate stacking order");
+    }
+    ok &= expect(recording.commands.empty(), "duplicate stacking order should not execute geometry commands");
+    ok &= expect(!manager.managed_layout_snapshot("1").has_value(), "duplicate stacking order should not commit a snapshot");
+    return ok;
+}
+
+bool test_route_set_layout_rejects_stacking_order_outside_visible_before_commit() {
+    hyprmacs::WorkspaceManager manager;
+    RecordingApplier recording;
+    auto applier = recording.make();
+    manager.process_event_for_tests("openwindowv2>>0xaaa,1,foot,foot-a");
+    manager.process_event_for_tests("openwindowv2>>0xbbb,1,foot,foot-b");
+    manager.manage_workspace("1");
+
+    const hyprmacs::ProtocolMessage set_layout {
+        .version = 1,
+        .type = "set-layout",
+        .workspace_id = "1",
+        .timestamp = "2026-04-16T00:00:00Z",
+        .payload_json =
+            "{\"selected_client\":\"0xaaa\",\"input_mode\":\"emacs-control\",\"visible_clients\":[\"0xaaa\"],"
+            "\"hidden_clients\":[\"0xbbb\"],\"rectangles\":[{\"client_id\":\"0xaaa\",\"x\":0,\"y\":0,\"width\":100,\"height\":100}],"
+            "\"stacking_order\":[\"0xaaa\",\"0xbbb\"]}",
+    };
+
+    const auto responses = hyprmacs::route_command_for_tests(set_layout, manager, applier);
+    bool ok = true;
+    ok &= expect(responses.size() == 2, "stacking outside visible should still produce layout-applied and state-dump");
+    if (responses.size() == 2) {
+        ok &= expect(responses[0].type == "layout-applied", "first response should be layout-applied");
+        ok &= expect(responses[0].payload_json.find("\"ok\":false") != std::string::npos,
+                     "layout-applied should report failure for stacking order outside visible");
+    }
+    ok &= expect(recording.commands.empty(), "stacking outside visible should not execute geometry commands");
+    ok &= expect(!manager.managed_layout_snapshot("1").has_value(), "stacking outside visible should not commit a snapshot");
+    return ok;
+}
+
+bool test_route_set_layout_rejects_non_visible_rectangle_client_before_commit() {
+    hyprmacs::WorkspaceManager manager;
+    RecordingApplier recording;
+    auto applier = recording.make();
+    manager.process_event_for_tests("openwindowv2>>0xaaa,1,foot,foot-a");
+    manager.process_event_for_tests("openwindowv2>>0xbbb,1,foot,foot-b");
+    manager.manage_workspace("1");
+
+    const hyprmacs::ProtocolMessage set_layout {
+        .version = 1,
+        .type = "set-layout",
+        .workspace_id = "1",
+        .timestamp = "2026-04-16T00:00:00Z",
+        .payload_json =
+            "{\"selected_client\":\"0xaaa\",\"input_mode\":\"emacs-control\",\"visible_clients\":[\"0xaaa\"],"
+            "\"hidden_clients\":[\"0xbbb\"],\"rectangles\":[{\"client_id\":\"0xaaa\",\"x\":0,\"y\":0,\"width\":100,\"height\":100},"
+            "{\"client_id\":\"0xbbb\",\"x\":110,\"y\":0,\"width\":100,\"height\":100}],\"stacking_order\":[\"0xaaa\"]}",
+    };
+
+    const auto responses = hyprmacs::route_command_for_tests(set_layout, manager, applier);
+    bool ok = true;
+    ok &= expect(responses.size() == 2, "non-visible rectangle client should still produce layout-applied and state-dump");
+    if (responses.size() == 2) {
+        ok &= expect(responses[0].type == "layout-applied", "first response should be layout-applied");
+        ok &= expect(responses[0].payload_json.find("\"ok\":false") != std::string::npos,
+                     "layout-applied should report failure for non-visible rectangle client");
+    }
+    ok &= expect(recording.commands.empty(), "non-visible rectangle client should not execute geometry commands");
+    ok &= expect(!manager.managed_layout_snapshot("1").has_value(), "non-visible rectangle client should not commit a snapshot");
+    return ok;
+}
+
 bool test_route_set_layout_rejects_overlapping_rectangles() {
     hyprmacs::WorkspaceManager manager;
     RecordingApplier recording;
@@ -559,6 +818,14 @@ int main() {
     ok &= test_route_set_input_mode_updates_state_dump();
     ok &= test_route_set_input_mode_emacs_control_focuses_managing_frame();
     ok &= test_route_seed_client_adopts_existing_window();
+    ok &= test_route_set_layout_rejects_non_managed_or_non_eligible_members_before_commit();
+    ok &= test_route_set_layout_rejects_non_managed_hidden_member_before_commit();
+    ok &= test_route_set_layout_rejects_duplicate_visible_clients_before_commit();
+    ok &= test_route_set_layout_rejects_duplicate_hidden_clients_before_commit();
+    ok &= test_route_set_layout_rejects_visible_hidden_overlap_before_commit();
+    ok &= test_route_set_layout_rejects_duplicate_stacking_order_before_commit();
+    ok &= test_route_set_layout_rejects_stacking_order_outside_visible_before_commit();
+    ok &= test_route_set_layout_rejects_non_visible_rectangle_client_before_commit();
     ok &= test_route_set_layout_commits_snapshot_without_geometry_application();
     ok &= test_route_set_layout_rejects_missing_required_arrays_before_commit();
     ok &= test_route_set_layout_rejects_missing_rectangle_for_visible_client_before_commit();
