@@ -160,9 +160,7 @@ std::optional<std::string> send_hypr_command_via_socket(const std::string& comma
         return std::nullopt;
     }
 
-    std::string command_with_newline = command;
-    command_with_newline.push_back('\n');
-    if (::send(fd, command_with_newline.c_str(), command_with_newline.size(), 0) < 0) {
+    if (::send(fd, command.c_str(), command.size(), 0) < 0) {
         std::cerr << "[hyprmacs] dispatch failed: send() errno=" << errno << '\n';
         ::close(fd);
         return std::nullopt;

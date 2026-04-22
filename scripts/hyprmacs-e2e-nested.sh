@@ -14,6 +14,7 @@ emacs_daemon_log="$run_dir/emacs-daemon.log"
 emacs_eval_log="$run_dir/emacs-eval.log"
 session_log="$run_dir/session-e2e.log"
 summary_log="$run_dir/summary.log"
+layout_payload_log="$run_dir/layout-payloads.log"
 
 nested_pid=""
 signature=""
@@ -125,6 +126,7 @@ cat >"$run_dir/e2e-driver.el" <<ELISP
 (setq load-prefer-newer t)
 (add-to-list 'load-path "$repo_root/emacs")
 (require 'hyprmacs)
+(setq hyprmacs-layout-debug-log-file "$layout_payload_log")
 (hyprmacs-run-full-e2e-test "$session_log")
 ELISP
 
@@ -147,4 +149,5 @@ grep -q "result: PASS" "$session_log"
   echo "emacs-daemon-log: $emacs_daemon_log"
   echo "emacs-eval-log: $emacs_eval_log"
   echo "session-log: $session_log"
+  echo "layout-payload-log: $layout_payload_log"
 } | tee -a "$summary_log"

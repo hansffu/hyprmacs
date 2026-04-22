@@ -72,6 +72,7 @@ class WorkspaceManager {
     bool apply_managed_layout_snapshot(ManagedWorkspaceLayoutSnapshot snapshot);
     std::optional<ManagedWorkspaceLayoutSnapshot> managed_layout_snapshot(const WorkspaceId& workspace_id) const;
     void clear_managed_layout_snapshot(const WorkspaceId& workspace_id);
+    bool refresh_workspace_floating_state_from_query(const WorkspaceId& workspace_id);
     StateDumpPayload build_state_dump(const WorkspaceId& workspace_id) const;
     std::optional<int> plugin_option_int(std::string_view option_name) const;
     void process_event_for_tests(const std::string& line);

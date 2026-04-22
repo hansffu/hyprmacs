@@ -450,6 +450,18 @@ switch modes, and collect state plus `hyprctl clients` output."
     (when name
       (format "%s" name))))
 
+(defun hyprmacs--client-center (client-id)
+  "Return center point for CLIENT-ID as (X . Y), or nil when unavailable."
+  (let* ((record (hyprmacs--find-client-record client-id))
+         (at (alist-get 'at record nil nil #'equal))
+         (size (alist-get 'size record nil nil #'equal)))
+    (when (and (listp at) (>= (length at) 2)
+               (listp size) (>= (length size) 2)
+               (numberp (nth 0 at)) (numberp (nth 1 at))
+               (numberp (nth 0 size)) (numberp (nth 1 size)))
+      (cons (+ (nth 0 at) (/ (nth 0 size) 2))
+            (+ (nth 1 at) (/ (nth 1 size) 2))))))
+
 (defun hyprmacs--wait-until (predicate timeout-seconds &optional interval-seconds)
   "Poll PREDICATE until true or TIMEOUT-SECONDS elapses."
   (let* ((deadline (+ (float-time) timeout-seconds))
@@ -630,6 +642,37 @@ This covers the implemented runtime contract through Task 11."
                          (not (string= workspace-name "special:hyprmacs-hidden")))))
                 5.0 0.20)
                path "managed client is visible when managed buffer is shown")
+              (pcase-let ((`(:exit ,focus-exit :out ,focus-out)
+                           (hyprmacs--run-command "hyprctl dispatch hyprmacs:set-emacs-control-mode")))
+                (append-to-file (format "focus-emacs-out:\n%s\n" focus-out) nil path)
+                (hyprmacs--e2e-assert
+                 (zerop focus-exit)
+                 path
+                 "dispatcher hyprmacs:set-emacs-control-mode succeeded for layering assertion"))
+              (hyprmacs--wait-seconds 0.30)
+              (append-to-file (format "active-before-layering-click: %S\n" (hyprmacs--hyprctl-activewindow)) nil path)
+              (let ((center (hyprmacs--client-center target-client)))
+                (hyprmacs--e2e-assert center path "target client center available for layering click assertion")
+                (when center
+                  (pcase-let ((`(:exit ,move-exit :out ,move-out)
+                               (hyprmacs--run-command
+                                (format "hyprctl dispatch movecursor %d %d" (car center) (cdr center)))))
+                    (append-to-file (format "movecursor-out:\n%s\n" move-out) nil path)
+                    (hyprmacs--e2e-assert (zerop move-exit) path "movecursor succeeded for layering assertion"))
+                  (pcase-let ((`(:exit ,click-exit :out ,click-out)
+                               (hyprmacs--run-command "hyprctl dispatch mouse 1")))
+                    (append-to-file (format "mouse-click-out:\n%s\n" click-out) nil path)
+                    (hyprmacs--e2e-assert (zerop click-exit) path "mouse click dispatch succeeded for layering assertion"))))
+              (hyprmacs--wait-seconds 0.30)
+              (hyprmacs--e2e-assert
+               (hyprmacs--wait-until
+                (lambda ()
+                  (let ((aw (hyprmacs--hyprctl-activewindow)))
+                    (and aw
+                         (string= (format "%s" (alist-get 'address aw nil nil #'equal))
+                                  target-client))))
+                4.0 0.10)
+               path "managed client receives click while emacs focused (layer ordering)")
               (switch-to-buffer (get-buffer-create "*hyprmacs-e2e-scratch*"))
               (hyprmacs-sync-layout workspace-id t)
               (hyprmacs--wait-seconds 0.25)
@@ -689,6 +732,13 @@ This covers the implemented runtime contract through Task 11."
                (let ((record (hyprmacs--find-client-record transition-client)))
                  (and record (hyprmacs--json-bool (alist-get 'floating record nil nil #'equal))))
                path "compositor marks transition client floating after toggle")
+              (hyprmacs--e2e-assert
+               (hyprmacs--wait-until
+                (lambda ()
+                  (refresh-state)
+                  (not (member transition-client (managed-ids))))
+                5.0 0.20)
+               path "floating client is removed from managed set after togglefloating")
               (pcase-let ((`(:exit ,tile-exit :out ,tile-out)
                            (hyprmacs--run-command
                             (format "hyprctl dispatch togglefloating address:%s" transition-client))))

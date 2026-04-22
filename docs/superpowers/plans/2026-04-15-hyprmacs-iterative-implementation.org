@@ -1272,7 +1272,7 @@ Validation:
   - debounced/coalesced state notifications are configurable via plugin setting =plugin:hyprmacs:state_notify_debounce_ms= (not env var).
   - default =30= ms, =0= means immediate publish, with bounded validation/fallback.
 
-** NEXT Task 15: Implement authoritative non-floating managed layout contract
+** DONE Task 15: Implement authoritative non-floating managed layout contract
 Purpose:
 - Replace managed floating-dispatch geometry path with tiled-algorithm execution while preserving Emacs-owned layout planning and native floating window behavior.
 
@@ -1329,7 +1329,12 @@ Steps:
   - 0ms means immediate publish
   - clamp 0..1000 with warning on invalid/missing value
 
-*** WAIT Review task 15 with user
+*** DONE Fix review feedback regression: =just run= must start nested Hyprland session
+- Investigate root cause for =just run= no longer launching nested Hyprland runtime required for manual validation.
+- Restore nested-session startup behavior without regressing Task 15 runtime wiring.
+- Add/update coverage or smoke-validation notes for the restored launch path.
+
+*** DONE Review task 15 with user
 - Stop when tiled recalc owns managed geometry, floating windows remain fully native/top-layer, and state-notify debounce behavior is observable and configurable via plugin setting.
 
 Validation:
@@ -1445,6 +1450,56 @@ Validation:
 - Local verification run in this session:
   - =nix develop -c sh -lc 'cmake -S plugin -B build/plugin >/tmp/hyprmacs-cmake.log && cmake --build build/plugin --target hyprmacs_ipc_server_tests hyprmacs_plugin_main_tests hyprmacs_workspace_manager_tests hyprmacs_layout_applier_tests -j2 && ctest --test-dir build/plugin --output-on-failure -R "hyprmacs_(ipc_server_tests|plugin_main_tests|workspace_manager_tests|layout_applier_tests)"'=
   - result: pass.
+
+*** DONE Session note: Task 15 review feedback intake (2026-04-22)
+- User reported runtime regression at WAIT checkpoint: =just run= no longer starts the nested Hyprland session used for manual testing.
+- Follow-up step added before WAIT closure to restore nested runtime launch path.
+- Runtime launch wiring now uses =start-hyprland= for the nested app path in =flake.nix= (kept standard =hyprland= package; debug-override experiment was reverted).
+- Verification status after this change:
+  - =just run= launches nested Hyprland and emits a valid instance signature.
+  - Initial =just e2e= failure during nested bootstrap (exit code =6= at first =hyprctl dispatch exec foot=) was traced to plugin startup stall.
+  - Root cause: =IpcServer::start()= queried =plugin:hyprmacs:state_notify_debounce_ms= via Hyprland command socket during =PLUGIN_INIT= on compositor startup.
+  - Fix applied: defer debounce-setting resolution until controller connect in =accept_loop= and keep startup default in =start()=; also removed mutex lock around =WorkspaceManager::plugin_option_int= to avoid command-socket/manager-lock inversion during runtime option reads.
+  - Added a defensive non-blocking read in =WorkspaceManager::managed_workspace()= (used by tiled recalc on the compositor thread) to avoid waiting on manager mutex during command-socket dispatch paths.
+  - Post-fix probes: nested startup + direct =hyprctl -j monitors= now succeeds with plugin loaded.
+  - Additional fix: =manage-workspace= now focuses the managing Emacs client when available, restoring the =manage captured emacs as active class= E2E assertion path.
+  - Root cause of late E2E visibility failure: successful =set-layout= snapshots did not explicitly restore hidden clients from =special:hyprmacs-hidden=, so visible clients could remain hidden because tiled recalc target iteration does not reliably include hidden-workspace targets.
+  - Fix applied: on successful =set-layout= commit, run visibility reconciliation in =IpcServer= using =LayoutApplier= (=hide_client= for =hidden_clients= and =show_client= for =visible_clients=), then request recalc for geometry application.
+  - Guardrail fix: =set-selected-client= now only shows selected client when committed snapshot marks it visible and provides an authoritative rectangle; otherwise it keeps the client hidden until a valid =set-layout= snapshot arrives.
+  - Added/updated unit coverage in =plugin/tests/ipc_server_tests.cpp= for:
+    - manage-workspace focusing managing Emacs frame
+    - set-selected-client behavior with and without snapshot geometry
+    - set-layout restoring visible clients from hidden workspace and preserving no-floating-geometry invariant.
+  - Verification now passes:
+    - targeted plugin tests: =hyprmacs_ipc_server_tests=
+    - full runtime: =just e2e= pass with artifact =artifacts/e2e/20260422-184856=.
+
+*** DONE Session note: Task 15 review-followup red E2E reproduction before fix (2026-04-22)
+- User requested reproducing the reported runtime regressions as a red E2E before any further fix work.
+- Expanded =hyprmacs-run-full-e2e-test= assertions in =emacs/hyprmacs.el= to cover:
+  - layering/click behavior while Emacs is focused (managed client must receive click at its rectangle center)
+  - managed -> floating transition after =togglefloating= (client must leave =managed_clients= on next state observation).
+- Verification run in this session:
+  - =just e2e= fails red as intended with assertion:
+    - =floating client is removed from managed set after togglefloating=
+  - artifact: =artifacts/e2e/20260422-214702=
+
+*** DONE Session note: Task 15 review-followup floating-transition runtime fix and checkpoint closure (2026-04-22)
+- User approved continuing from the Task 15 review checkpoint, so the checkpoint is now closed.
+- Root cause for persistent managed-membership on floating clients:
+  - plugin command-socket requests were sent with a trailing newline in =send_hypr_command_via_socket(...)=.
+  - HyprCtl exact query commands (for example =j/clients= and =j/getoption=) returned =unknown request= with newline-terminated input.
+  - As a result, floating-state refresh queries returned no client records, leaving managed membership stale after =togglefloating=.
+- Fixes applied:
+  - removed trailing newline from plugin command-socket sends in =plugin/src/plugin_main.cpp=.
+  - retained request-state refresh hook in =plugin/src/ipc_server.cpp= that re-queries floating state via =WorkspaceManager::refresh_workspace_floating_state_from_query(...)= before serializing state.
+  - added regression coverage in =plugin/tests/ipc_server_tests.cpp=:
+    - =request-state= refresh drops floating clients from managed set, including address-shape normalization coverage.
+- Additional E2E assertion hardening in =emacs/hyprmacs.el=:
+  - assert compositor floating state immediately after first =togglefloating= before asserting managed-set removal.
+- Verification after fix:
+  - =nix develop -c sh -lc 'cmake -S plugin -B build/plugin >/tmp/hyprmacs-cmake.log && cmake --build build/plugin --target hyprmacs_ipc_server_tests hyprmacs_workspace_manager_tests -j2 && ctest --test-dir build/plugin --output-on-failure -R "hyprmacs_(ipc_server_tests|workspace_manager_tests)"'=: pass.
+  - =just e2e=: pass with artifact =artifacts/e2e/20260422-222733=.
 
 * Execution Order
 - Start with task 0 and task 1 only.

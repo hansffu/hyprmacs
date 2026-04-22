@@ -581,6 +581,12 @@ std::vector<ProtocolMessage> route_command_for_tests(
         for (const auto& managed_client : state.managed_clients) {
             (void)layout_applier.hide_client(managed_client, incoming.workspace_id);
         }
+        if (focus_controller != nullptr) {
+            const auto emacs_client = workspace_manager.emacs_client(incoming.workspace_id);
+            if (emacs_client.has_value()) {
+                (void)focus_controller->focus_client(*emacs_client);
+            }
+        }
         out.push_back(make_message("workspace-managed", incoming.workspace_id, payload_for_workspace_managed(true)));
         out.push_back(make_message("state-dump", incoming.workspace_id, serialize_state_dump_payload(state)));
         return out;
@@ -596,6 +602,7 @@ std::vector<ProtocolMessage> route_command_for_tests(
     }
 
     if (incoming.type == "request-state") {
+        workspace_manager.refresh_workspace_floating_state_from_query(incoming.workspace_id);
         out.push_back(make_message(
             "state-dump", incoming.workspace_id, serialize_state_dump_payload(workspace_manager.build_state_dump(incoming.workspace_id))
         ));
@@ -636,9 +643,25 @@ std::vector<ProtocolMessage> route_command_for_tests(
             const bool ok = workspace_manager.set_selected_client(incoming.workspace_id, *client_id);
             if (ok) {
                 const auto state = workspace_manager.build_state_dump(incoming.workspace_id);
+                bool selected_can_be_shown = false;
+                if (state.selected_client.has_value()) {
+                    const auto snapshot = workspace_manager.managed_layout_snapshot(incoming.workspace_id);
+                    if (snapshot.has_value()) {
+                        const auto visible_it = std::find(
+                            snapshot->visible_client_ids.begin(),
+                            snapshot->visible_client_ids.end(),
+                            *state.selected_client
+                        );
+                        if (visible_it != snapshot->visible_client_ids.end()) {
+                            selected_can_be_shown =
+                                snapshot->rectangles_by_client_id.find(*state.selected_client) !=
+                                snapshot->rectangles_by_client_id.end();
+                        }
+                    }
+                }
                 if (state.selected_client.has_value()) {
                     for (const auto& managed_client : state.managed_clients) {
-                        if (managed_client == *state.selected_client) {
+                        if (managed_client == *state.selected_client && selected_can_be_shown) {
                             (void)layout_applier.show_client(managed_client);
                         } else {
                             (void)layout_applier.hide_client(managed_client, incoming.workspace_id);
@@ -773,6 +796,19 @@ std::vector<ProtocolMessage> route_command_for_tests(
                 if (!ok) {
                     error = "set-layout snapshot commit rejected";
                 } else {
+                    for (const auto& hidden_client : *hidden_clients_opt) {
+                        if (!layout_applier.hide_client(hidden_client, incoming.workspace_id)) {
+                            std::cerr << "[hyprmacs] set-layout hide failed workspace=" << incoming.workspace_id
+                                      << " client=" << hidden_client << '\n';
+                        }
+                    }
+                    for (const auto& visible_client : *visible_clients_opt) {
+                        if (!layout_applier.show_client(visible_client)) {
+                            std::cerr << "[hyprmacs] set-layout show failed workspace=" << incoming.workspace_id
+                                      << " client=" << visible_client << '\n';
+                        }
+                    }
+
                     if (recalc_requester) {
                         const bool recalc_requested = recalc_requester(incoming.workspace_id);
                         if (!recalc_requested) {
@@ -916,7 +952,9 @@ bool IpcServer::start() {
 
     std::cerr << "[hyprmacs] ipc server listening at " << *socket_path_ << '\n';
 
-    state_notify_debounce_ms_ = resolve_state_notify_debounce_ms();
+    // Resolve plugin setting after startup to avoid querying Hyprland command socket
+    // from PLUGIN_INIT on the compositor thread.
+    state_notify_debounce_ms_ = kDefaultStateNotifyDebounceMs;
     if (state_notify_debounce_ms_ > 0) {
         state_notify_thread_ = std::thread([this]() {
             state_notify_loop();
@@ -1134,6 +1172,7 @@ void IpcServer::accept_loop() {
             pending_state_notify_deadlines_.clear();
         }
         state_notify_cv_.notify_all();
+        state_notify_debounce_ms_ = resolve_state_notify_debounce_ms();
         workspace_manager_->set_controller_connected(true);
         std::cerr << "[hyprmacs] ipc controller connected\n";
         serve_controller(controller_fd);

@@ -126,6 +126,7 @@
           # Nested debug-friendly binds using ALT instead of SUPER
           bind = ALT, Return, exec, ${pkgs.foot}/bin/foot
           bind = ALT, E, hyprmacs:set-emacs-control-mode
+          bind = ALT, F, togglefloating
           bind = ALT, Q, killactive,
           bind = ALT_SHIFT, E, exit,
           bind = ALT, H, movefocus, l
@@ -156,7 +157,7 @@
             export XDG_SESSION_DESKTOP=Hyprland
             export XDG_SESSION_TYPE=wayland
 
-            exec ${hyprPkg}/bin/Hyprland --config ${hyprDebugConfig}
+            exec ${hyprPkg}/bin/start-hyprland --path ${hyprPkg}/bin/Hyprland -- --config ${hyprDebugConfig}
           '';
         };
 
