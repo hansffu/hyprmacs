@@ -66,6 +66,11 @@ struct PLUGIN_DESCRIPTION_INFO {
 static constexpr const char* HYPRLAND_API_VERSION = "bootstrap-fallback";
 #endif
 
+namespace hyprmacs {
+std::optional<std::string> build_workspace_recalc_dispatch_command(std::string_view workspace_id);
+bool request_workspace_recalc_marshaled(const WorkspaceId& workspace_id, const std::function<int(const std::string&)>& dispatcher);
+}
+
 namespace {
 constexpr auto kPluginName = "hyprmacs";
 constexpr auto kPluginDescription =
@@ -196,6 +201,20 @@ int dispatch_hypr_command_via_socket(const std::string& command) {
     return 0;
 }
 
+std::string trim_ascii_copy(std::string_view text) {
+    size_t start = 0;
+    while (start < text.size() && std::isspace(static_cast<unsigned char>(text[start])) != 0) {
+        ++start;
+    }
+
+    size_t end = text.size();
+    while (end > start && std::isspace(static_cast<unsigned char>(text[end - 1])) != 0) {
+        --end;
+    }
+
+    return std::string(text.substr(start, end - start));
+}
+
 #ifndef HYPRMACS_PLUGIN_MAIN_UNIT_TEST
 void request_workspace_recalc(const hyprmacs::WorkspaceId& workspace_id) {
 #if HYPRMACS_HAS_REAL_PLUGIN_API
@@ -238,7 +257,16 @@ hyprmacs::LayoutApplier g_layout_applier([](const std::string& command) {
 hyprmacs::FocusController g_focus_controller([](const std::string& command) {
     return dispatch_hypr_command_via_socket(command);
 });
-hyprmacs::IpcServer g_ipc_server(&g_workspace_manager, &g_layout_applier, &g_focus_controller, request_workspace_recalc);
+hyprmacs::IpcServer g_ipc_server(
+    &g_workspace_manager,
+    &g_layout_applier,
+    &g_focus_controller,
+    [](const hyprmacs::WorkspaceId& workspace_id) {
+        (void)hyprmacs::request_workspace_recalc_marshaled(workspace_id, [](const std::string& command) {
+            return dispatch_hypr_command_via_socket(command);
+        });
+    }
+);
 #endif
 }
 
@@ -249,6 +277,28 @@ enum class ManagedTargetVisibilityAction {
     kShow,
     kHide,
 };
+
+std::optional<std::string> build_workspace_recalc_dispatch_command(std::string_view workspace_id) {
+    const std::string trimmed_workspace_id = trim_ascii_copy(workspace_id);
+    if (trimmed_workspace_id.empty()) {
+        return std::nullopt;
+    }
+
+    return "dispatch hyprmacs:request-recalc " + trimmed_workspace_id;
+}
+
+bool request_workspace_recalc_marshaled(const WorkspaceId& workspace_id, const std::function<int(const std::string&)>& dispatcher) {
+    if (!dispatcher) {
+        return false;
+    }
+
+    const auto command = build_workspace_recalc_dispatch_command(workspace_id);
+    if (!command.has_value()) {
+        return false;
+    }
+
+    return dispatcher(*command) == 0;
+}
 
 namespace {
 
@@ -566,6 +616,7 @@ class CHyprmacsAlgorithm final : public Layout::ITiledAlgorithm {
 
 bool g_hyprmacs_layout_registered = false;
 bool g_set_emacs_control_dispatcher_registered = false;
+bool g_request_recalc_dispatcher_registered = false;
 
 std::function<UP<Layout::ITiledAlgorithm>()> make_hyprmacs_tiled_factory() {
     return [] {
@@ -642,6 +693,36 @@ APICALL EXPORT PLUGIN_DESCRIPTION_INFO PLUGIN_INIT(HANDLE handle) {
         );
     }
 
+    g_request_recalc_dispatcher_registered = HyprlandAPI::addDispatcherV2(
+        PHANDLE,
+        "hyprmacs:request-recalc",
+        [](std::string arg) -> SDispatchResult {
+            const std::string workspace_id = trim_ascii_copy(arg);
+            if (workspace_id.empty()) {
+                return {
+                    .passEvent = false,
+                    .success = false,
+                    .error = "workspace id required",
+                };
+            }
+
+            request_workspace_recalc(workspace_id);
+            return {
+                .passEvent = false,
+                .success = true,
+                .error = "",
+            };
+        }
+    );
+    if (!g_request_recalc_dispatcher_registered) {
+        HyprlandAPI::addNotification(
+            PHANDLE,
+            "[hyprmacs] failed to register dispatcher hyprmacs:request-recalc",
+            CHyprColor {1.0, 0.2, 0.2, 1.0},
+            5000
+        );
+    }
+
     g_workspace_manager.start_event_tap();
     g_ipc_server.start();
 
@@ -657,6 +738,10 @@ APICALL EXPORT PLUGIN_DESCRIPTION_INFO PLUGIN_INIT(HANDLE handle) {
 
 APICALL EXPORT void PLUGIN_EXIT() {
 #if HYPRMACS_HAS_REAL_PLUGIN_API
+    if (g_request_recalc_dispatcher_registered) {
+        (void)HyprlandAPI::removeDispatcher(PHANDLE, "hyprmacs:request-recalc");
+        g_request_recalc_dispatcher_registered = false;
+    }
     if (g_set_emacs_control_dispatcher_registered) {
         (void)HyprlandAPI::removeDispatcher(PHANDLE, "hyprmacs:set-emacs-control-mode");
         g_set_emacs_control_dispatcher_registered = false;

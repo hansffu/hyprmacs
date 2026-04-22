@@ -3,9 +3,11 @@
 #include <hyprland/src/helpers/math/Math.hpp>
 
 #include <iostream>
+#include <functional>
 #include <optional>
 #include <string>
 #include <string_view>
+#include <vector>
 
 namespace hyprmacs {
 
@@ -20,6 +22,8 @@ std::optional<CBox> compute_managed_target_box_for_recalc(const ManagedWorkspace
                                                           std::string_view target_client_id,
                                                           bool target_floating,
                                                           const CBox& work_area);
+std::optional<std::string> build_workspace_recalc_dispatch_command(std::string_view workspace_id);
+bool request_workspace_recalc_marshaled(const WorkspaceId& workspace_id, const std::function<int(const std::string&)>& dispatcher);
 ManagedTargetVisibilityAction compute_managed_target_visibility_action_for_recalc(
     const ManagedWorkspaceLayoutSnapshot& snapshot,
     std::string_view target_workspace_id,
@@ -159,6 +163,53 @@ bool test_recalc_visibility_ignores_emacs_unmanaged_floating_and_wrong_workspace
     return ok;
 }
 
+bool test_build_workspace_recalc_dispatch_command_normalizes_input() {
+    bool ok = true;
+
+    const auto command = hyprmacs::build_workspace_recalc_dispatch_command(" 1 ");
+    ok &= expect(command.has_value(), "non-empty workspace id should build recalc dispatch command");
+    if (command.has_value()) {
+        ok &= expect(*command == "dispatch hyprmacs:request-recalc 1",
+                     "recalc dispatch command should target hyprmacs:request-recalc");
+    }
+
+    ok &= expect(!hyprmacs::build_workspace_recalc_dispatch_command("   ").has_value(),
+                 "blank workspace id should not build recalc dispatch command");
+
+    return ok;
+}
+
+bool test_request_workspace_recalc_marshaled_dispatches_via_injected_executor() {
+    bool ok = true;
+    std::vector<std::string> commands;
+
+    const bool dispatched = hyprmacs::request_workspace_recalc_marshaled(
+        "1",
+        [&commands](const std::string& command) {
+            commands.push_back(command);
+            return 0;
+        }
+    );
+    ok &= expect(dispatched, "valid workspace id should dispatch recalc marshal command");
+    ok &= expect(commands == std::vector<std::string>({"dispatch hyprmacs:request-recalc 1"}),
+                 "marshalled recalc should use dispatcher command socket path");
+
+    commands.clear();
+    ok &= expect(
+        !hyprmacs::request_workspace_recalc_marshaled(
+            "   ",
+            [&commands](const std::string& command) {
+                commands.push_back(command);
+                return 0;
+            }
+        ),
+        "blank workspace id should not dispatch recalc marshal command"
+    );
+    ok &= expect(commands.empty(), "blank workspace id should not invoke dispatcher");
+
+    return ok;
+}
+
 }  // namespace
 
 int main() {
@@ -169,6 +220,8 @@ int main() {
     ok &= test_recalc_box_ignores_hidden_unmanaged_floating_and_wrong_workspace_targets();
     ok &= test_recalc_visibility_shows_visible_targets_and_hides_hidden_targets();
     ok &= test_recalc_visibility_ignores_emacs_unmanaged_floating_and_wrong_workspace_targets();
+    ok &= test_build_workspace_recalc_dispatch_command_normalizes_input();
+    ok &= test_request_workspace_recalc_marshaled_dispatches_via_injected_executor();
 
     return ok ? 0 : 1;
 }
