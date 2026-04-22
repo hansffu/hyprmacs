@@ -1501,6 +1501,62 @@ Validation:
   - =nix develop -c sh -lc 'cmake -S plugin -B build/plugin >/tmp/hyprmacs-cmake.log && cmake --build build/plugin --target hyprmacs_ipc_server_tests hyprmacs_workspace_manager_tests -j2 && ctest --test-dir build/plugin --output-on-failure -R "hyprmacs_(ipc_server_tests|workspace_manager_tests)"'=: pass.
   - =just e2e=: pass with artifact =artifacts/e2e/20260422-222733=.
 
+** NEXT Task 16: Reproduce and fix layering + single-window geometry regressions
+Purpose:
+- Reproduce the reported runtime regressions in E2E first, then fix:
+  - managed clients rendering behind Emacs in emacs-control mode
+  - managed client geometry covering Emacs modeline in single-window layout
+  - floating clients rendering behind Emacs.
+
+Files:
+- Modify =emacs/hyprmacs.el=
+- Modify =emacs/hyprmacs-layout.el=
+- Modify =plugin/src/plugin_main.cpp=
+- Modify =plugin/tests/plugin_main_tests.cpp=
+- Modify =tests/emacs/layout-tests.el=
+- Modify =docs/superpowers/plans/2026-04-15-hyprmacs-iterative-implementation.org=
+
+Steps:
+*** DONE Add red E2E assertions for all three regressions
+- Extend full E2E flow to assert:
+  - managed client click/focus handoff while Emacs is focused in emacs-control mode
+  - single-window managed geometry does not overlap Emacs modeline area
+  - floating client click/focus handoff while Emacs is focused.
+- Verify =just e2e= fails red with these assertions before applying fixes.
+
+*** DONE Fix single-window managed rectangle sizing at Emacs layout source
+- Ensure layout rectangle extraction uses Emacs window body area so managed clients do not cover mode line/header UI.
+- Add/update Emacs layout unit tests to capture this body-area contract.
+
+*** BLOCKED Fix compositor layering enforcement for managed/floating vs managing Emacs
+- Enforce stacking contract at runtime:
+  - floating windows above managed
+  - managed above managing Emacs
+  - keeping emacs-control behavior intact.
+- Add/update plugin-side regression tests around any new ordering helper/path.
+
+*** WAIT Review task 16 with user
+- Stop after E2E reproduces red first and then passes green with all three assertions.
+
+Validation:
+- =just test=
+- =just e2e=
+- Manual nested checks:
+  - in emacs-control, managed windows remain visible above Emacs without requiring click-to-raise side effect.
+  - in single-window Emacs layout, managed client no longer covers modeline.
+  - native floating windows remain unmanaged and visibly above Emacs + managed windows.
+
+*** Session note: Task 16 layering blocker from compositor focus/render semantics (2026-04-22)
+- Task 16 single-window geometry regression is now fixed in E2E (client rectangle aligns with Emacs body area).
+- Remaining failing E2E assertions are the two managed layering/click assertions while Emacs is focused.
+- Investigation against Hyprland source for this runtime shows:
+  - non-floating workspace render path draws the focused tiled window after other tiled windows (=renderWorkspaceWindows=, active-window last branch).
+  - pointer hit-testing for tiled windows iterates compositor window list in forward order, which does not align with “focused tiled window rendered last”.
+- Current consequence: with Emacs focused and tiled, managed tiled clients cannot be both visibly above Emacs and receive immediate click handoff under current approach.
+- Next step requires design choice:
+  - keep managed clients tiled and relax focus/visibility expectation, or
+  - change managed presentation strategy (for example managed-overlay/floating treatment while preserving unmanaged native floating behavior).
+
 * Execution Order
 - Start with task 0 and task 1 only.
 - Do not start task 2 until the repo builds cleanly.

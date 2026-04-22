@@ -24,6 +24,8 @@ std::optional<CBox> compute_managed_target_box_for_recalc(const ManagedWorkspace
                                                           const CBox& work_area);
 std::optional<std::string> build_workspace_recalc_dispatch_command(std::string_view workspace_id);
 bool request_workspace_recalc_marshaled(const WorkspaceId& workspace_id, const std::function<int(const std::string&)>& dispatcher);
+std::optional<std::string> build_client_zorder_dispatch_command(std::string_view client_id, bool top);
+bool request_client_zorder_marshaled(std::string_view client_id, bool top, const std::function<int(const std::string&)>& dispatcher);
 ManagedTargetVisibilityAction compute_managed_target_visibility_action_for_recalc(
     const ManagedWorkspaceLayoutSnapshot& snapshot,
     std::string_view target_workspace_id,
@@ -234,6 +236,62 @@ bool test_request_workspace_recalc_marshaled_dispatches_via_injected_executor() 
     return ok;
 }
 
+bool test_build_client_zorder_dispatch_command_normalizes_input() {
+    bool ok = true;
+
+    const auto top_command = hyprmacs::build_client_zorder_dispatch_command(" address:abc ", true);
+    ok &= expect(top_command.has_value(), "non-empty client id should build top z-order dispatch command");
+    if (top_command.has_value()) {
+        ok &= expect(*top_command == "dispatch alterzorder top,address:0xabc",
+                     "z-order top command should normalize address and prefix");
+    }
+
+    const auto bottom_command = hyprmacs::build_client_zorder_dispatch_command("0xdef", false);
+    ok &= expect(bottom_command.has_value(), "non-empty client id should build bottom z-order dispatch command");
+    if (bottom_command.has_value()) {
+        ok &= expect(*bottom_command == "dispatch alterzorder bottom,address:0xdef",
+                     "z-order bottom command should preserve normalized id");
+    }
+
+    ok &= expect(!hyprmacs::build_client_zorder_dispatch_command("   ", true).has_value(),
+                 "blank client id should not build z-order dispatch command");
+
+    return ok;
+}
+
+bool test_request_client_zorder_marshaled_dispatches_via_injected_executor() {
+    bool ok = true;
+    std::vector<std::string> commands;
+
+    const bool dispatched = hyprmacs::request_client_zorder_marshaled(
+        "abc",
+        true,
+        [&commands](const std::string& command) {
+            commands.push_back(command);
+            return 0;
+        }
+    );
+    ok &= expect(dispatched, "valid client id should dispatch z-order marshal command");
+    ok &= expect(commands == std::vector<std::string>({"dispatch alterzorder top,address:0xabc"}),
+                 "marshalled z-order should use alterzorder top with normalized client id");
+
+    commands.clear();
+    ok &= expect(
+        !hyprmacs::request_client_zorder_marshaled(
+            "   ",
+            false,
+            [&commands](const std::string& command) {
+                commands.push_back(command);
+                return 0;
+            }
+        ),
+        "blank client id should not dispatch z-order marshal command"
+    );
+    ok &= expect(commands.empty(), "blank client id should not invoke z-order dispatcher");
+
+    return ok;
+}
+
 }  // namespace
 
 int main() {
@@ -247,6 +305,8 @@ int main() {
     ok &= test_recalc_visibility_restores_hidden_clients_marked_visible_by_snapshot();
     ok &= test_build_workspace_recalc_dispatch_command_normalizes_input();
     ok &= test_request_workspace_recalc_marshaled_dispatches_via_injected_executor();
+    ok &= test_build_client_zorder_dispatch_command_normalizes_input();
+    ok &= test_request_client_zorder_marshaled_dispatches_via_injected_executor();
 
     return ok ? 0 : 1;
 }

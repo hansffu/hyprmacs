@@ -702,6 +702,10 @@ std::vector<ProtocolMessage> route_command_for_tests(
                     const auto emacs_client = workspace_manager.emacs_client(incoming.workspace_id);
                     if (emacs_client.has_value()) {
                         (void)focus_controller->focus_client(*emacs_client);
+                        if (!focus_controller->alter_zorder(*emacs_client, false)) {
+                            std::cerr << "[hyprmacs] set-input-mode emacs-control z-order lower failed workspace="
+                                      << incoming.workspace_id << " client=" << *emacs_client << '\n';
+                        }
                     }
                 }
             }
@@ -816,6 +820,16 @@ std::vector<ProtocolMessage> route_command_for_tests(
                         }
                     }
 
+                    if (focus_controller != nullptr) {
+                        const auto emacs_client = workspace_manager.emacs_client(incoming.workspace_id);
+                        if (emacs_client.has_value()) {
+                            if (!focus_controller->alter_zorder(*emacs_client, false)) {
+                                std::cerr << "[hyprmacs] set-layout z-order lower failed workspace=" << incoming.workspace_id
+                                          << " client=" << *emacs_client << '\n';
+                            }
+                        }
+                    }
+
                     if (selected_client.has_value() && !selected_client->empty()) {
                         const bool selected_ok = workspace_manager.set_selected_client(incoming.workspace_id, *selected_client);
                         if (!selected_ok) {
@@ -828,6 +842,15 @@ std::vector<ProtocolMessage> route_command_for_tests(
                         ok = workspace_manager.set_input_mode(incoming.workspace_id, *input_mode);
                         if (!ok) {
                             error = "set-layout input_mode rejected";
+                        } else if (focus_controller != nullptr && *input_mode == InputMode::kEmacsControl) {
+                            const auto emacs_client = workspace_manager.emacs_client(incoming.workspace_id);
+                            if (emacs_client.has_value()) {
+                                (void)focus_controller->focus_client(*emacs_client);
+                                if (!focus_controller->alter_zorder(*emacs_client, false)) {
+                                    std::cerr << "[hyprmacs] set-layout emacs-control z-order lower failed workspace="
+                                              << incoming.workspace_id << " client=" << *emacs_client << '\n';
+                                }
+                            }
                         }
                     }
                 }

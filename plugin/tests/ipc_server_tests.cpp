@@ -382,9 +382,9 @@ bool test_route_set_input_mode_updates_state_dump() {
 bool test_route_set_input_mode_emacs_control_focuses_managing_frame() {
     hyprmacs::WorkspaceManager manager;
     auto applier = make_noop_applier();
-    std::string focused_command;
-    hyprmacs::FocusController focus_controller([&focused_command](const std::string& command) {
-        focused_command = command;
+    std::vector<std::string> commands;
+    hyprmacs::FocusController focus_controller([&commands](const std::string& command) {
+        commands.push_back(command);
         return 0;
     });
 
@@ -405,8 +405,10 @@ bool test_route_set_input_mode_emacs_control_focuses_managing_frame() {
     const auto responses = hyprmacs::route_command_for_tests(incoming, manager, applier, &focus_controller);
     bool ok = true;
     ok &= expect(responses.size() == 2, "set-input-mode should produce two responses");
-    ok &= expect(focused_command == "dispatch focuswindow address:0xfff",
+    ok &= expect(std::find(commands.begin(), commands.end(), "dispatch focuswindow address:0xfff") != commands.end(),
                  "emacs-control should focus the managing emacs frame");
+    ok &= expect(std::find(commands.begin(), commands.end(), "dispatch alterzorder bottom,address:0xfff") != commands.end(),
+                 "emacs-control should lower managing emacs frame z-order");
     return ok;
 }
 
@@ -643,6 +645,42 @@ bool test_route_set_layout_logs_warning_when_recalc_request_fails() {
                  "set-layout should still invoke recalc requester exactly once");
     ok &= expect(captured_err.str().find("set-layout recalc request failed workspace=1") != std::string::npos,
                  "recalc request failure should be logged");
+    return ok;
+}
+
+bool test_route_set_layout_emacs_control_focuses_and_lowers_managing_frame() {
+    hyprmacs::WorkspaceManager manager;
+    RecordingApplier recording;
+    auto applier = recording.make();
+    std::vector<std::string> commands;
+    hyprmacs::FocusController focus_controller([&commands](const std::string& command) {
+        commands.push_back(command);
+        return 0;
+    });
+
+    manager.process_event_for_tests("openwindowv2>>0xeee,1,emacs,emacs-main");
+    manager.process_event_for_tests("openwindowv2>>0xaaa,1,foot,foot-a");
+    manager.process_event_for_tests("activewindowv2>>0xeee");
+    manager.manage_workspace("1");
+
+    const hyprmacs::ProtocolMessage set_layout {
+        .version = 1,
+        .type = "set-layout",
+        .workspace_id = "1",
+        .timestamp = "2026-04-23T00:00:00Z",
+        .payload_json =
+            "{\"selected_client\":\"0xaaa\",\"input_mode\":\"emacs-control\",\"visible_clients\":[\"0xaaa\"],"
+            "\"hidden_clients\":[],\"rectangles\":[{\"client_id\":\"0xaaa\",\"x\":10,\"y\":20,\"width\":300,\"height\":400}],"
+            "\"stacking_order\":[\"0xaaa\"]}",
+    };
+
+    const auto responses = hyprmacs::route_command_for_tests(set_layout, manager, applier, &focus_controller);
+    bool ok = true;
+    ok &= expect(responses.size() == 2, "set-layout should produce two responses");
+    ok &= expect(std::find(commands.begin(), commands.end(), "dispatch focuswindow address:0xeee") != commands.end(),
+                 "set-layout emacs-control should focus the managing emacs frame");
+    ok &= expect(std::find(commands.begin(), commands.end(), "dispatch alterzorder bottom,address:0xeee") != commands.end(),
+                 "set-layout emacs-control should lower managing emacs frame z-order");
     return ok;
 }
 
@@ -1151,6 +1189,7 @@ int main() {
     ok &= test_route_set_layout_rejects_missing_required_arrays_before_commit();
     ok &= test_route_set_layout_rejects_missing_rectangle_for_visible_client_before_commit();
     ok &= test_route_set_layout_logs_warning_when_recalc_request_fails();
+    ok &= test_route_set_layout_emacs_control_focuses_and_lowers_managing_frame();
     ok &= test_transition_events_update_managed_membership_and_visibility();
     ok &= test_route_set_layout_rejects_overlapping_rectangles();
     ok &= test_route_set_layout_ignores_non_managed_selected_client();

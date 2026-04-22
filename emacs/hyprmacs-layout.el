@@ -96,7 +96,7 @@
 
 (defun hyprmacs-layout--window-rectangle (window)
   "Return WINDOW geometry as an alist with x/y/width/height."
-  (let* ((edges (window-inside-pixel-edges window))
+  (let* ((edges (window-body-pixel-edges window))
          (origin (condition-case nil
                      (hyprmacs-layout--frame-inner-origin (window-frame window))
                    (error '(0 . 0))))

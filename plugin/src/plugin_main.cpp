@@ -69,6 +69,8 @@ static constexpr const char* HYPRLAND_API_VERSION = "bootstrap-fallback";
 namespace hyprmacs {
 std::optional<std::string> build_workspace_recalc_dispatch_command(std::string_view workspace_id);
 bool request_workspace_recalc_marshaled(const WorkspaceId& workspace_id, const std::function<int(const std::string&)>& dispatcher);
+std::optional<std::string> build_client_zorder_dispatch_command(std::string_view client_id, bool top);
+bool request_client_zorder_marshaled(std::string_view client_id, bool top, const std::function<int(const std::string&)>& dispatcher);
 }
 
 namespace {
@@ -213,6 +215,26 @@ std::string trim_ascii_copy(std::string_view text) {
     return std::string(text.substr(start, end - start));
 }
 
+std::string normalize_client_id_for_dispatch(std::string_view client_id) {
+    constexpr std::string_view kAddressPrefix = "address:";
+
+    std::string normalized = trim_ascii_copy(client_id);
+    if (normalized.rfind(kAddressPrefix.data(), 0) == 0) {
+        normalized.erase(0, kAddressPrefix.size());
+        normalized = trim_ascii_copy(normalized);
+    }
+
+    if (normalized.empty()) {
+        return normalized;
+    }
+
+    if (normalized.rfind("0x", 0) != 0) {
+        normalized = "0x" + normalized;
+    }
+
+    return normalized;
+}
+
 #ifndef HYPRMACS_PLUGIN_MAIN_UNIT_TEST
 void request_workspace_recalc(const hyprmacs::WorkspaceId& workspace_id) {
 #if HYPRMACS_HAS_REAL_PLUGIN_API
@@ -291,6 +313,28 @@ bool request_workspace_recalc_marshaled(const WorkspaceId& workspace_id, const s
     }
 
     const auto command = build_workspace_recalc_dispatch_command(workspace_id);
+    if (!command.has_value()) {
+        return false;
+    }
+
+    return dispatcher(*command) == 0;
+}
+
+std::optional<std::string> build_client_zorder_dispatch_command(std::string_view client_id, bool top) {
+    const std::string normalized_client_id = normalize_client_id_for_dispatch(client_id);
+    if (normalized_client_id.empty()) {
+        return std::nullopt;
+    }
+
+    return std::string("dispatch alterzorder ") + (top ? "top" : "bottom") + ",address:" + normalized_client_id;
+}
+
+bool request_client_zorder_marshaled(std::string_view client_id, bool top, const std::function<int(const std::string&)>& dispatcher) {
+    if (!dispatcher) {
+        return false;
+    }
+
+    const auto command = build_client_zorder_dispatch_command(client_id, top);
     if (!command.has_value()) {
         return false;
     }
@@ -564,14 +608,21 @@ class CHyprmacsAlgorithm final : public Layout::ITiledAlgorithm {
                     emacs_context->work_area
                 );
                 if (emacs_box.has_value()) {
-                    emacs_context->target->setPositionGlobal(*emacs_box);
+                    emacs_context->target->setPositionGlobal(Layout::STargetBox {
+                        .logicalBox = *emacs_box,
+                        .visualBox = *emacs_box,
+                    });
                 }
+            } else {
+                std::cerr << "[hyprmacs] recalc missing managing emacs target context id="
+                          << *snapshot->managing_emacs_client_id << '\n';
             }
         }
 
         for (const auto& visible_client_id : snapshot->stacking_order) {
             const auto* target_context = find_target_context(visible_client_id);
             if (target_context == nullptr) {
+                std::cerr << "[hyprmacs] recalc missing visible target context id=" << visible_client_id << '\n';
                 continue;
             }
 
@@ -610,7 +661,10 @@ class CHyprmacsAlgorithm final : public Layout::ITiledAlgorithm {
                 continue;
             }
 
-            target_context->target->setPositionGlobal(*target_box);
+            target_context->target->setPositionGlobal(Layout::STargetBox {
+                .logicalBox = *target_box,
+                .visualBox = *target_box,
+            });
         }
 
         for (const auto& hidden_client_id : snapshot->hidden_client_ids) {
@@ -631,6 +685,29 @@ class CHyprmacsAlgorithm final : public Layout::ITiledAlgorithm {
             if (visibility_action == hyprmacs::ManagedTargetVisibilityAction::kHide && !target_is_hidden) {
                 (void)g_layout_applier.hide_client(normalized_target_client_id, target_context->workspace_id);
             }
+        }
+
+        const auto apply_target_zorder = [&](const TargetRecalcContext* target_context, bool top) {
+            if (target_context == nullptr) {
+                return;
+            }
+
+#if HYPRMACS_HAS_REAL_PLUGIN_API
+            const auto window = target_context->target ? target_context->target->window() : nullptr;
+            if (!window) {
+                return;
+            }
+            g_pCompositor->changeWindowZOrder(window, top);
+#else
+            (void)top;
+#endif
+        };
+
+        for (const auto& visible_client_id : snapshot->stacking_order) {
+            apply_target_zorder(find_target_context(visible_client_id), true);
+        }
+        if (snapshot->managing_emacs_client_id.has_value()) {
+            apply_target_zorder(find_target_context(*snapshot->managing_emacs_client_id), false);
         }
     }
 
@@ -756,9 +833,33 @@ APICALL EXPORT PLUGIN_DESCRIPTION_INFO PLUGIN_INIT(HANDLE handle) {
             const auto outcome = hyprmacs::dispatch_set_emacs_control_mode(arg, g_workspace_manager);
             if (outcome.success && outcome.focus_client_id.has_value()) {
                 const auto focus_target = *outcome.focus_client_id;
-                std::thread([focus_target]() {
-                    std::this_thread::sleep_for(std::chrono::milliseconds(1));
-                    (void)g_focus_controller.focus_client(focus_target);
+                const auto workspace_id = outcome.workspace_id.value_or("");
+                std::thread([focus_target, workspace_id]() {
+                    for (int attempt = 0; attempt < 5; ++attempt) {
+                        std::this_thread::sleep_for(std::chrono::milliseconds(10));
+                        const bool focused = g_focus_controller.focus_client(focus_target);
+                        const bool lowered = g_focus_controller.alter_zorder(focus_target, false);
+                        if (!lowered) {
+                            std::cerr << "[hyprmacs] dispatcher emacs-control z-order lower failed client="
+                                      << focus_target << " attempt=" << attempt << '\n';
+                        }
+                        bool recalc_requested = true;
+                        if (!workspace_id.empty()) {
+                            recalc_requested = hyprmacs::request_workspace_recalc_marshaled(
+                                workspace_id,
+                                [](const std::string& command) {
+                                    return dispatch_hypr_command_via_socket(command);
+                                }
+                            );
+                            if (!recalc_requested) {
+                                std::cerr << "[hyprmacs] dispatcher emacs-control recalc request failed workspace="
+                                          << workspace_id << " attempt=" << attempt << '\n';
+                            }
+                        }
+                        if (focused && recalc_requested) {
+                            break;
+                        }
+                    }
                 }).detach();
             }
             if (outcome.workspace_id.has_value()) {

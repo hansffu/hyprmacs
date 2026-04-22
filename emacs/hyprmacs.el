@@ -462,6 +462,38 @@ switch modes, and collect state plus `hyprctl clients` output."
       (cons (+ (nth 0 at) (/ (nth 0 size) 2))
             (+ (nth 1 at) (/ (nth 1 size) 2))))))
 
+(defun hyprmacs--client-rectangle (client-id)
+  "Return absolute rectangle alist for CLIENT-ID, or nil when unavailable."
+  (let* ((record (hyprmacs--find-client-record client-id))
+         (at (alist-get 'at record nil nil #'equal))
+         (size (alist-get 'size record nil nil #'equal)))
+    (when (and (listp at) (>= (length at) 2)
+               (listp size) (>= (length size) 2)
+               (numberp (nth 0 at)) (numberp (nth 1 at))
+               (numberp (nth 0 size)) (numberp (nth 1 size)))
+      `((x . ,(nth 0 at))
+        (y . ,(nth 1 at))
+        (width . ,(nth 0 size))
+        (height . ,(nth 1 size))))))
+
+(defun hyprmacs--window-body-rectangle (&optional window)
+  "Return absolute body rectangle alist for WINDOW (or selected window)."
+  (let* ((window (or window (selected-window)))
+         (edges (window-body-pixel-edges window))
+         (origin (condition-case nil
+                     (hyprmacs-layout--frame-inner-origin (window-frame window))
+                   (error '(0 . 0))))
+         (origin-x (car origin))
+         (origin-y (cdr origin))
+         (left (nth 0 edges))
+         (top (nth 1 edges))
+         (right (nth 2 edges))
+         (bottom (nth 3 edges)))
+    `((x . ,(+ origin-x left))
+      (y . ,(+ origin-y top))
+      (width . ,(max 0 (- right left)))
+      (height . ,(max 0 (- bottom top))))))
+
 (defun hyprmacs--wait-until (predicate timeout-seconds &optional interval-seconds)
   "Poll PREDICATE until true or TIMEOUT-SECONDS elapses."
   (let* ((deadline (+ (float-time) timeout-seconds))
@@ -510,7 +542,8 @@ This covers the implemented runtime contract through Task 11."
   (interactive)
   (let* ((path (or log-path "logs-e2e.txt"))
          (workspace-id (hyprmacs--default-workspace-id))
-         (layout-before (or (hyprmacs--activeworkspace-layout) "")))
+         (layout-before (or (hyprmacs--activeworkspace-layout) ""))
+         (regression-failures nil))
     (hyprmacs--ensure-hyprland-instance-signature)
     (with-temp-file path
       (insert "hyprmacs nested e2e\n"))
@@ -539,9 +572,15 @@ This covers the implemented runtime contract through Task 11."
     (hyprmacs--wait-seconds 0.50)
     (hyprmacs--e2e-assert (plist-get hyprmacs-session-state :managed) path "workspace marked managed")
     (hyprmacs--e2e-assert (plist-get hyprmacs-session-state :controller-connected) path "controller connected true")
-    (hyprmacs--e2e-assert
-     (equal (hyprmacs--activeworkspace-layout) "hyprmacs")
-     path "active workspace layout switched to hyprmacs")
+    (let ((layout-after-manage (or (hyprmacs--activeworkspace-layout) "")))
+      (pcase-let ((`(:exit ,layout-exit :out ,layout-out)
+                   (hyprmacs--run-command "hyprctl -j activeworkspace")))
+        (append-to-file (format "hyprctl-activeworkspace-after-manage-exit: %s\n" layout-exit) nil path)
+        (append-to-file (format "hyprctl-activeworkspace-after-manage-out:\n%s\n" layout-out) nil path))
+      (append-to-file (format "layout-after-manage: %s\n" layout-after-manage) nil path)
+      (hyprmacs--e2e-assert
+       (equal layout-after-manage "hyprmacs")
+       path "active workspace layout switched to hyprmacs"))
     (hyprmacs--e2e-assert
      (= (or (hyprmacs--hyprctl-option-int "animations:enabled") -1) 0)
      path "animations:enabled forced to 0 while managed")
@@ -642,6 +681,29 @@ This covers the implemented runtime contract through Task 11."
                          (not (string= workspace-name "special:hyprmacs-hidden")))))
                 5.0 0.20)
                path "managed client is visible when managed buffer is shown")
+              (let* ((window-body (hyprmacs--window-body-rectangle (selected-window)))
+                     (window-bottom (+ (alist-get 'y window-body)
+                                       (alist-get 'height window-body)))
+                     (client-rect nil)
+                     (geometry-ok
+                      (hyprmacs--wait-until
+                       (lambda ()
+                         (setq client-rect (hyprmacs--client-rectangle target-client))
+                         (let ((client-bottom (and client-rect
+                                                   (+ (alist-get 'y client-rect)
+                                                      (alist-get 'height client-rect)))))
+                           (and client-rect
+                                (<= client-bottom (+ window-bottom 1)))))
+                       3.0 0.10)))
+                (append-to-file (format "single-window-body-rect: %S\n" window-body) nil path)
+                (append-to-file (format "single-window-client-rect: %S\n" client-rect) nil path)
+                (condition-case err
+                    (hyprmacs--e2e-assert
+                     geometry-ok
+                     path
+                     "single-window managed client does not cover modeline/body bottom")
+                  (error (push (error-message-string err) regression-failures)))
+                )
               (pcase-let ((`(:exit ,focus-exit :out ,focus-out)
                            (hyprmacs--run-command "hyprctl dispatch hyprmacs:set-emacs-control-mode")))
                 (append-to-file (format "focus-emacs-out:\n%s\n" focus-out) nil path)
@@ -650,7 +712,15 @@ This covers the implemented runtime contract through Task 11."
                  path
                  "dispatcher hyprmacs:set-emacs-control-mode succeeded for layering assertion"))
               (hyprmacs--wait-seconds 0.30)
-              (append-to-file (format "active-before-layering-click: %S\n" (hyprmacs--hyprctl-activewindow)) nil path)
+              (let ((active-before-layering-click (hyprmacs--hyprctl-activewindow)))
+                (append-to-file (format "active-before-layering-click: %S\n" active-before-layering-click) nil path)
+                (condition-case err
+                    (hyprmacs--e2e-assert
+                     (and active-before-layering-click
+                          (string= (format "%s" (alist-get 'class active-before-layering-click nil nil #'equal)) "emacs"))
+                     path
+                     "managed layering assertion starts with emacs focused")
+                  (error (push (error-message-string err) regression-failures))))
               (let ((center (hyprmacs--client-center target-client)))
                 (hyprmacs--e2e-assert center path "target client center available for layering click assertion")
                 (when center
@@ -662,17 +732,29 @@ This covers the implemented runtime contract through Task 11."
                   (pcase-let ((`(:exit ,click-exit :out ,click-out)
                                (hyprmacs--run-command "hyprctl dispatch mouse 1")))
                     (append-to-file (format "mouse-click-out:\n%s\n" click-out) nil path)
-                    (hyprmacs--e2e-assert (zerop click-exit) path "mouse click dispatch succeeded for layering assertion"))))
-              (hyprmacs--wait-seconds 0.30)
-              (hyprmacs--e2e-assert
-               (hyprmacs--wait-until
-                (lambda ()
-                  (let ((aw (hyprmacs--hyprctl-activewindow)))
-                    (and aw
-                         (string= (format "%s" (alist-get 'address aw nil nil #'equal))
-                                  target-client))))
-                4.0 0.10)
-               path "managed client receives click while emacs focused (layer ordering)")
+                    (hyprmacs--e2e-assert (zerop click-exit) path "mouse click dispatch succeeded for layering assertion")))
+                (let ((active-immediate (hyprmacs--hyprctl-activewindow)))
+                  (append-to-file (format "active-immediate-after-managed-click: %S\n" active-immediate) nil path)
+                  (condition-case err
+                      (hyprmacs--e2e-assert
+                       (and active-immediate
+                            (string= (format "%s" (alist-get 'address active-immediate nil nil #'equal))
+                                     target-client))
+                       path
+                       "managed client is on top and receives click immediately while emacs focused")
+                    (error (push (error-message-string err) regression-failures)))))
+              (hyprmacs--wait-seconds 0.20)
+              (condition-case err
+                  (hyprmacs--e2e-assert
+                   (hyprmacs--wait-until
+                    (lambda ()
+                      (let ((aw (hyprmacs--hyprctl-activewindow)))
+                        (and aw
+                             (string= (format "%s" (alist-get 'address aw nil nil #'equal))
+                                      target-client))))
+                    4.0 0.10)
+                   path "managed client receives click while emacs focused (layer ordering)")
+                (error (push (error-message-string err) regression-failures)))
               (switch-to-buffer (get-buffer-create "*hyprmacs-e2e-scratch*"))
               (hyprmacs-sync-layout workspace-id t)
               (hyprmacs--wait-seconds 0.25)
@@ -720,6 +802,15 @@ This covers the implemented runtime contract through Task 11."
             ;; Managed -> floating -> managed transition scenario.
             (let ((transition-client (or close-client target-client)))
               (append-to-file (format "transition-client: %s\n" transition-client) nil path)
+              (let ((transition-buffer (hyprmacs-buffer-for-client transition-client)))
+                (hyprmacs--e2e-assert
+                 (buffer-live-p transition-buffer)
+                 path
+                 "transition client buffer exists before floating transition assertion")
+                (when (buffer-live-p transition-buffer)
+                  (switch-to-buffer transition-buffer)
+                  (hyprmacs-sync-layout workspace-id t)
+                  (hyprmacs--wait-seconds 0.25)))
               (pcase-let ((`(:exit ,float-exit :out ,float-out)
                            (hyprmacs--run-command
                             (format "hyprctl dispatch togglefloating address:%s" transition-client))))
@@ -734,11 +825,64 @@ This covers the implemented runtime contract through Task 11."
                path "compositor marks transition client floating after toggle")
               (hyprmacs--e2e-assert
                (hyprmacs--wait-until
-                (lambda ()
+               (lambda ()
                   (refresh-state)
                   (not (member transition-client (managed-ids))))
                 5.0 0.20)
                path "floating client is removed from managed set after togglefloating")
+              (pcase-let ((`(:exit ,focus-emacs-exit :out ,focus-emacs-out)
+                           (hyprmacs--run-command "hyprctl dispatch hyprmacs:set-emacs-control-mode")))
+                (append-to-file (format "focus-emacs-before-floating-click-out:\n%s\n" focus-emacs-out) nil path)
+                (hyprmacs--e2e-assert
+                 (zerop focus-emacs-exit)
+                 path
+                 "dispatcher hyprmacs:set-emacs-control-mode succeeded for floating layering assertion"))
+              (hyprmacs--wait-seconds 0.25)
+              (let ((active-before-floating-click (hyprmacs--hyprctl-activewindow)))
+                (append-to-file (format "active-before-floating-click: %S\n" active-before-floating-click) nil path)
+                (condition-case err
+                    (hyprmacs--e2e-assert
+                     (and active-before-floating-click
+                          (string= (format "%s" (alist-get 'class active-before-floating-click nil nil #'equal)) "emacs"))
+                     path
+                     "floating layering assertion starts with emacs focused")
+                  (error (push (error-message-string err) regression-failures))))
+              (let ((floating-center (hyprmacs--client-center transition-client)))
+                (hyprmacs--e2e-assert
+                 floating-center
+                 path
+                 "floating transition client center available for layering click assertion")
+                (when floating-center
+                  (pcase-let ((`(:exit ,move-exit :out ,move-out)
+                               (hyprmacs--run-command
+                                (format "hyprctl dispatch movecursor %d %d"
+                                        (car floating-center)
+                                        (cdr floating-center)))))
+                    (append-to-file (format "movecursor-floating-out:\n%s\n" move-out) nil path)
+                    (hyprmacs--e2e-assert
+                     (zerop move-exit)
+                     path
+                     "movecursor succeeded for floating layering assertion"))
+                  (pcase-let ((`(:exit ,click-exit :out ,click-out)
+                               (hyprmacs--run-command "hyprctl dispatch mouse 1")))
+                    (append-to-file (format "mouse-click-floating-out:\n%s\n" click-out) nil path)
+                    (hyprmacs--e2e-assert
+                     (zerop click-exit)
+                     path
+                     "mouse click dispatch succeeded for floating layering assertion"))))
+              (let ((active-immediate-after-floating-click (hyprmacs--hyprctl-activewindow)))
+                (append-to-file
+                 (format "active-immediate-after-floating-click: %S\n"
+                         active-immediate-after-floating-click)
+                 nil path)
+                (condition-case err
+                    (hyprmacs--e2e-assert
+                     (and active-immediate-after-floating-click
+                          (string= (format "%s" (alist-get 'address active-immediate-after-floating-click nil nil #'equal))
+                                   transition-client))
+                     path
+                     "floating client is on top and receives click immediately while emacs focused")
+                  (error (push (error-message-string err) regression-failures))))
               (pcase-let ((`(:exit ,tile-exit :out ,tile-out)
                            (hyprmacs--run-command
                             (format "hyprctl dispatch togglefloating address:%s" transition-client))))
@@ -787,7 +931,10 @@ This covers the implemented runtime contract through Task 11."
                        (string= (format "%s" (alist-get 'address aw nil nil #'equal))
                                 managing-emacs-address))))
               4.0 0.10)
-             path "emacs-control focuses the managing emacs frame")))))
+             path "emacs-control focuses the managing emacs frame"))
+          (when regression-failures
+            (error "hyprmacs e2e regression assertions failed: %s"
+                   (string-join (nreverse regression-failures) " | "))))))
 
     (hyprmacs-unmanage-workspace workspace-id)
     (hyprmacs--wait-seconds 0.50)
