@@ -1,5 +1,6 @@
 #include <cstdlib>
 #include <cstring>
+#include <cstdint>
 #include <cerrno>
 #include <iostream>
 #include <optional>
@@ -7,8 +8,10 @@
 #include <array>
 #include <algorithm>
 #include <chrono>
+#include <sstream>
 #include <string_view>
 #include <thread>
+#include <unordered_set>
 #include <vector>
 #include <cctype>
 #include <sys/socket.h>
@@ -21,7 +24,11 @@
 #include "hyprmacs/dispatchers.hpp"
 #include "hyprmacs/workspace_manager.hpp"
 
-#if __has_include(<hyprland/src/plugins/PluginAPI.hpp>) && __has_include(<hyprgraphics/color/Color.hpp>)
+#ifdef HYPRMACS_PLUGIN_MAIN_UNIT_TEST
+#define HYPRMACS_HAS_REAL_PLUGIN_API 0
+#define HYPRMACS_CAN_REGISTER_TILED_ALGO 0
+#include <hyprland/src/helpers/math/Math.hpp>
+#elif __has_include(<hyprland/src/plugins/PluginAPI.hpp>) && __has_include(<hyprgraphics/color/Color.hpp>)
 #define HYPRMACS_HAS_REAL_PLUGIN_API 1
 #include <hyprland/src/plugins/PluginAPI.hpp>
 #if __has_include(<hyprland/src/layout/algorithm/TiledAlgorithm.hpp>) && __has_include(<hyprland/src/layout/space/Space.hpp>) && \
@@ -187,6 +194,7 @@ int dispatch_hypr_command_via_socket(const std::string& command) {
     return 0;
 }
 
+#ifndef HYPRMACS_PLUGIN_MAIN_UNIT_TEST
 hyprmacs::WorkspaceManager g_workspace_manager(
     [](const std::string& command) {
         return dispatch_hypr_command_via_socket(command);
@@ -202,11 +210,126 @@ hyprmacs::FocusController g_focus_controller([](const std::string& command) {
     return dispatch_hypr_command_via_socket(command);
 });
 hyprmacs::IpcServer g_ipc_server(&g_workspace_manager, &g_layout_applier, &g_focus_controller);
+#endif
 }
 
+namespace hyprmacs {
+
+namespace {
+
+std::string normalize_client_id_for_recalc(std::string_view client_id) {
+    constexpr std::string_view kAddressPrefix = "address:";
+
+    std::string normalized(client_id);
+    if (normalized.rfind(kAddressPrefix.data(), 0) == 0) {
+        normalized.erase(0, kAddressPrefix.size());
+    }
+
+    if (normalized.empty()) {
+        return normalized;
+    }
+
+    if (normalized.rfind("0x", 0) != 0) {
+        normalized = "0x" + normalized;
+    }
+
+    return normalized;
+}
+
+bool snapshot_client_ids_match(std::string_view lhs, std::string_view rhs) {
+    return normalize_client_id_for_recalc(lhs) == normalize_client_id_for_recalc(rhs);
+}
+
+}  // namespace
+
+std::optional<CBox> compute_managed_target_box_for_recalc(const ManagedWorkspaceLayoutSnapshot& snapshot,
+                                                          std::string_view target_workspace_id,
+                                                          std::string_view target_client_id,
+                                                          bool target_floating,
+                                                          const CBox& work_area) {
+    if (snapshot.workspace_id.empty() || target_workspace_id.empty() || snapshot.workspace_id != target_workspace_id) {
+        return std::nullopt;
+    }
+
+    const std::string normalized_target_client_id = normalize_client_id_for_recalc(target_client_id);
+    if (normalized_target_client_id.empty()) {
+        return std::nullopt;
+    }
+
+    if (snapshot.managing_emacs_client_id.has_value() &&
+        snapshot_client_ids_match(*snapshot.managing_emacs_client_id, normalized_target_client_id)) {
+        return work_area;
+    }
+
+    if (target_floating) {
+        return std::nullopt;
+    }
+
+    const auto visible_it = std::find_if(
+        snapshot.visible_client_ids.begin(),
+        snapshot.visible_client_ids.end(),
+        [&](const ClientId& client_id) { return snapshot_client_ids_match(client_id, normalized_target_client_id); }
+    );
+    if (visible_it == snapshot.visible_client_ids.end()) {
+        return std::nullopt;
+    }
+
+    const auto rectangle_it = std::find_if(
+        snapshot.rectangles_by_client_id.begin(),
+        snapshot.rectangles_by_client_id.end(),
+        [&](const auto& entry) { return snapshot_client_ids_match(entry.first, normalized_target_client_id); }
+    );
+    if (rectangle_it == snapshot.rectangles_by_client_id.end()) {
+        return std::nullopt;
+    }
+
+    const auto& rectangle = rectangle_it->second;
+    return CBox {
+        static_cast<double>(rectangle.x),
+        static_cast<double>(rectangle.y),
+        static_cast<double>(rectangle.width),
+        static_cast<double>(rectangle.height),
+    };
+}
+
+}  // namespace hyprmacs
+
+#ifndef HYPRMACS_PLUGIN_MAIN_UNIT_TEST
 #if HYPRMACS_HAS_REAL_PLUGIN_API
 inline HANDLE PHANDLE = nullptr;
 #if HYPRMACS_CAN_REGISTER_TILED_ALGO
+
+namespace {
+
+std::optional<std::string> target_client_id_for_recalc(const SP<Layout::ITarget>& target) {
+    if (!target) {
+        return std::nullopt;
+    }
+
+    const auto window = target->window();
+    if (!window) {
+        return std::nullopt;
+    }
+
+    std::ostringstream out;
+    out << "0x" << std::hex << std::nouppercase << reinterpret_cast<std::uintptr_t>(window.get());
+    return out.str();
+}
+
+std::optional<std::string> target_workspace_id_for_recalc(const SP<Layout::ITarget>& target) {
+    if (!target) {
+        return std::nullopt;
+    }
+
+    const auto workspace = target->workspace();
+    if (!valid(workspace)) {
+        return std::nullopt;
+    }
+
+    return std::to_string(workspace->m_id);
+}
+
+}  // namespace
 
 class CHyprmacsAlgorithm final : public Layout::ITiledAlgorithm {
   public:
@@ -239,9 +362,42 @@ class CHyprmacsAlgorithm final : public Layout::ITiledAlgorithm {
 
     void recalculate() override {
         compact();
-        // Keep this layout non-intrusive: hyprmacs-managed client geometry is
-        // controlled by LayoutApplier, and we avoid compositor-side fallback
-        // tiling mutations that can cause overlap/input confusion.
+        const auto managed_workspace_id = g_workspace_manager.managed_workspace();
+        if (!managed_workspace_id.has_value()) {
+            return;
+        }
+
+        const auto snapshot = g_workspace_manager.managed_layout_snapshot(*managed_workspace_id);
+        if (!snapshot.has_value()) {
+            return;
+        }
+
+        for (const auto& weak_target : m_targets_) {
+            const auto target = weak_target.lock();
+            if (!target) {
+                continue;
+            }
+
+            const auto target_workspace_id = target_workspace_id_for_recalc(target);
+            const auto target_client_id = target_client_id_for_recalc(target);
+            const auto space = target->space();
+            if (!target_workspace_id.has_value() || !target_client_id.has_value() || !space) {
+                continue;
+            }
+
+            const auto target_box = hyprmacs::compute_managed_target_box_for_recalc(
+                *snapshot,
+                *target_workspace_id,
+                *target_client_id,
+                target->floating(),
+                space->workArea()
+            );
+            if (!target_box.has_value()) {
+                continue;
+            }
+
+            target->setPositionGlobal(*target_box);
+        }
     }
 
     SP<Layout::ITarget> getNextCandidate(SP<Layout::ITarget> old) override {
@@ -441,4 +597,5 @@ APICALL EXPORT void PLUGIN_EXIT() {
     g_ipc_server.stop();
     g_workspace_manager.stop_event_tap();
 }
+#endif
 #endif
