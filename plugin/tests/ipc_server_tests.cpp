@@ -2,6 +2,7 @@
 
 #include <iostream>
 #include <string>
+#include <vector>
 
 namespace {
 
@@ -18,6 +19,17 @@ hyprmacs::LayoutApplier make_noop_applier() {
         return 0;
     });
 }
+
+struct RecordingApplier {
+    std::vector<std::string> commands;
+
+    hyprmacs::LayoutApplier make() {
+        return hyprmacs::LayoutApplier([this](const std::string& command) {
+            commands.push_back(command);
+            return 0;
+        });
+    }
+};
 
 bool test_route_manage_workspace() {
     hyprmacs::WorkspaceManager manager;
@@ -264,9 +276,10 @@ bool test_route_seed_client_adopts_existing_window() {
     return ok;
 }
 
-bool test_route_set_layout_applies_visibility_and_geometry() {
+bool test_route_set_layout_commits_snapshot_without_geometry_application() {
     hyprmacs::WorkspaceManager manager;
-    auto applier = make_noop_applier();
+    RecordingApplier recording;
+    auto applier = recording.make();
     manager.process_event_for_tests("openwindowv2>>0xaaa,1,foot,foot-a");
     manager.process_event_for_tests("openwindowv2>>0xbbb,1,foot,foot-b");
     manager.manage_workspace("1");
@@ -303,18 +316,114 @@ bool test_route_set_layout_applies_visibility_and_geometry() {
         }
     }
 
-    ok &= expect(applier.is_hidden("0xaaa"), "hidden client should be hidden after set-layout");
-    ok &= expect(!applier.is_hidden("0xbbb"), "visible client should not be hidden after set-layout");
+    ok &= expect(recording.commands.empty(), "set-layout should not execute geometry commands");
 
+    const auto snapshot = manager.managed_layout_snapshot("1");
+    ok &= expect(snapshot.has_value(), "set-layout should commit a managed snapshot");
+    if (snapshot.has_value()) {
+        ok &= expect(snapshot->layout_version == 1, "first committed snapshot should have version 1");
+        ok &= expect(snapshot->workspace_id == "1", "snapshot workspace should match route workspace");
+        ok &= expect(snapshot->selected_client.has_value(), "snapshot should capture selected_client");
+        if (snapshot->selected_client.has_value()) {
+            ok &= expect(*snapshot->selected_client == "0xbbb", "snapshot selected client should be 0xbbb");
+        }
+        ok &= expect(snapshot->input_mode.has_value(), "snapshot should capture input_mode");
+        if (snapshot->input_mode.has_value()) {
+            ok &= expect(*snapshot->input_mode == hyprmacs::InputMode::kClientControl,
+                         "snapshot input mode should be client-control");
+        }
+        ok &= expect(snapshot->visible_client_ids == std::vector<std::string>({"0xbbb"}),
+                     "snapshot should preserve visible client list");
+        ok &= expect(snapshot->hidden_client_ids == std::vector<std::string>({"0xaaa"}),
+                     "snapshot should preserve hidden client list");
+        ok &= expect(snapshot->stacking_order == std::vector<std::string>({"0xbbb"}),
+                     "snapshot should preserve stacking order");
+        ok &= expect(snapshot->rectangles_by_client_id.size() == 1, "snapshot should store one rectangle");
+        if (snapshot->rectangles_by_client_id.size() == 1) {
+            const auto it = snapshot->rectangles_by_client_id.find("0xbbb");
+            ok &= expect(it != snapshot->rectangles_by_client_id.end(), "snapshot should store rectangle for 0xbbb");
+            if (it != snapshot->rectangles_by_client_id.end()) {
+                ok &= expect(it->second.x == 10 && it->second.y == 20 && it->second.width == 300 && it->second.height == 400,
+                             "snapshot should preserve rectangle geometry");
+            }
+        }
+    }
+
+    return ok;
+}
+
+bool test_route_set_layout_rejects_missing_rectangle_for_visible_client_before_commit() {
+    hyprmacs::WorkspaceManager manager;
+    RecordingApplier recording;
+    auto applier = recording.make();
+    manager.process_event_for_tests("openwindowv2>>0xaaa,1,foot,foot-a");
+    manager.process_event_for_tests("openwindowv2>>0xbbb,1,foot,foot-b");
+    manager.manage_workspace("1");
+
+    const hyprmacs::ProtocolMessage set_layout {
+        .version = 1,
+        .type = "set-layout",
+        .workspace_id = "1",
+        .timestamp = "2026-04-16T00:00:00Z",
+        .payload_json =
+            "{\"selected_client\":\"0xaaa\",\"input_mode\":\"emacs-control\",\"visible_clients\":[\"0xaaa\",\"0xbbb\"],"
+            "\"hidden_clients\":[],\"rectangles\":[{\"client_id\":\"0xaaa\",\"x\":0,\"y\":0,\"width\":100,\"height\":100}],"
+            "\"stacking_order\":[\"0xaaa\",\"0xbbb\"]}",
+    };
+
+    const auto responses = hyprmacs::route_command_for_tests(set_layout, manager, applier);
+    bool ok = true;
+    ok &= expect(responses.size() == 2, "set-layout should still produce layout-applied and state-dump");
+    if (responses.size() == 2) {
+        ok &= expect(responses[0].type == "layout-applied", "first response should be layout-applied");
+        ok &= expect(responses[0].payload_json.find("\"ok\":false") != std::string::npos,
+                     "layout-applied should report failure when a visible client has no rectangle");
+    }
+    ok &= expect(recording.commands.empty(), "missing-rectangle validation should run before any geometry commands");
+    ok &= expect(!manager.managed_layout_snapshot("1").has_value(), "failed validation should not commit a snapshot");
+    return ok;
+}
+
+bool test_route_set_layout_rejects_missing_required_arrays_before_commit() {
+    hyprmacs::WorkspaceManager manager;
+    RecordingApplier recording;
+    auto applier = recording.make();
+    manager.process_event_for_tests("openwindowv2>>0xaaa,1,foot,foot-a");
+    manager.manage_workspace("1");
+
+    const hyprmacs::ProtocolMessage set_layout {
+        .version = 1,
+        .type = "set-layout",
+        .workspace_id = "1",
+        .timestamp = "2026-04-16T00:00:00Z",
+        .payload_json =
+            "{\"selected_client\":\"0xaaa\",\"input_mode\":\"emacs-control\",\"visible_clients\":[\"0xaaa\"],"
+            "\"rectangles\":[{\"client_id\":\"0xaaa\",\"x\":0,\"y\":0,\"width\":100,\"height\":100}],"
+            "\"stacking_order\":[\"0xaaa\"]}",
+    };
+
+    const auto responses = hyprmacs::route_command_for_tests(set_layout, manager, applier);
+    bool ok = true;
+    ok &= expect(responses.size() == 2, "missing required arrays should still produce layout-applied and state-dump");
+    if (responses.size() == 2) {
+        ok &= expect(responses[0].type == "layout-applied", "first response should be layout-applied");
+        ok &= expect(responses[0].payload_json.find("\"ok\":false") != std::string::npos,
+                     "layout-applied should report failure when required arrays are missing");
+    }
+    ok &= expect(recording.commands.empty(), "missing-required-arrays validation should not execute geometry commands");
+    ok &= expect(!manager.managed_layout_snapshot("1").has_value(), "missing required arrays should not commit a snapshot");
     return ok;
 }
 
 bool test_route_set_layout_rejects_overlapping_rectangles() {
     hyprmacs::WorkspaceManager manager;
-    auto applier = make_noop_applier();
+    RecordingApplier recording;
+    auto applier = recording.make();
     manager.process_event_for_tests("openwindowv2>>0xaaa,1,foot,foot-a");
     manager.process_event_for_tests("openwindowv2>>0xbbb,1,foot,foot-b");
     manager.manage_workspace("1");
+
+    const auto before_state = manager.build_state_dump("1");
 
     const hyprmacs::ProtocolMessage set_layout {
         .version = 1,
@@ -335,8 +444,11 @@ bool test_route_set_layout_rejects_overlapping_rectangles() {
         ok &= expect(responses[0].payload_json.find("\"ok\":false") != std::string::npos,
                      "layout-applied should report failure for overlap");
     }
-    ok &= expect(!applier.is_hidden("0xaaa"), "overlap failure should not mutate visibility");
-    ok &= expect(!applier.is_hidden("0xbbb"), "overlap failure should not mutate visibility");
+    ok &= expect(recording.commands.empty(), "overlap failure should not execute geometry commands");
+    ok &= expect(!manager.managed_layout_snapshot("1").has_value(), "overlap failure should not commit a snapshot");
+    const auto state = manager.build_state_dump("1");
+    ok &= expect(state.selected_client == before_state.selected_client, "overlap failure should not mutate selected_client");
+    ok &= expect(state.input_mode == before_state.input_mode, "overlap failure should not mutate input_mode");
     return ok;
 }
 
@@ -447,7 +559,9 @@ int main() {
     ok &= test_route_set_input_mode_updates_state_dump();
     ok &= test_route_set_input_mode_emacs_control_focuses_managing_frame();
     ok &= test_route_seed_client_adopts_existing_window();
-    ok &= test_route_set_layout_applies_visibility_and_geometry();
+    ok &= test_route_set_layout_commits_snapshot_without_geometry_application();
+    ok &= test_route_set_layout_rejects_missing_required_arrays_before_commit();
+    ok &= test_route_set_layout_rejects_missing_rectangle_for_visible_client_before_commit();
     ok &= test_route_set_layout_rejects_overlapping_rectangles();
     ok &= test_route_set_layout_ignores_non_managed_selected_client();
     ok &= test_route_set_layout_with_null_selected_client_does_not_pick_visible_client();

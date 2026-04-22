@@ -1,5 +1,6 @@
 #include "hyprmacs/ipc_server.hpp"
 
+#include <algorithm>
 #include <array>
 #include <cctype>
 #include <cerrno>
@@ -10,6 +11,7 @@
 #include <ctime>
 #include <iostream>
 #include <sstream>
+#include <unordered_map>
 #include <sys/socket.h>
 #include <sys/un.h>
 #include <unistd.h>
@@ -371,6 +373,51 @@ std::optional<std::vector<LayoutRectangle>> parse_rectangles_field_from_payload(
     return out;
 }
 
+std::optional<std::vector<LayoutRectangle>> build_visible_rectangles_for_set_layout(
+    const std::vector<std::string>& visible_clients,
+    const std::vector<LayoutRectangle>& rectangles,
+    std::string* error_out
+) {
+    std::unordered_map<std::string, LayoutRectangle> rectangles_by_client_id;
+    rectangles_by_client_id.reserve(rectangles.size());
+
+    for (const auto& rectangle : rectangles) {
+        const auto [it, inserted] = rectangles_by_client_id.emplace(rectangle.client_id, rectangle);
+        if (!inserted) {
+            if (error_out != nullptr) {
+                *error_out = "set-layout has multiple rectangles for client " + rectangle.client_id;
+            }
+            return std::nullopt;
+        }
+    }
+
+    std::vector<LayoutRectangle> visible_rectangles;
+    visible_rectangles.reserve(visible_clients.size());
+    for (const auto& visible_client : visible_clients) {
+        const auto it = rectangles_by_client_id.find(visible_client);
+        if (it == rectangles_by_client_id.end()) {
+            if (error_out != nullptr) {
+                *error_out = "set-layout missing rectangle for visible client " + visible_client;
+            }
+            return std::nullopt;
+        }
+        visible_rectangles.push_back(it->second);
+    }
+
+    if (rectangles_by_client_id.size() != visible_clients.size()) {
+        for (const auto& [client_id, _] : rectangles_by_client_id) {
+            if (std::find(visible_clients.begin(), visible_clients.end(), client_id) == visible_clients.end()) {
+                if (error_out != nullptr) {
+                    *error_out = "set-layout has rectangle for non-visible client " + client_id;
+                }
+                return std::nullopt;
+            }
+        }
+    }
+
+    return visible_rectangles;
+}
+
 std::optional<InputMode> parse_input_mode_field_from_payload(std::string_view payload_json, std::string_view key) {
     const auto mode = parse_string_field_from_payload(payload_json, key);
     if (!mode.has_value()) {
@@ -544,46 +591,58 @@ std::vector<ProtocolMessage> route_command_for_tests(
             error = "set-layout missing required fields";
         }
 
-        if (ok && selected_client.has_value() && !selected_client->empty()) {
-            const bool selected_ok = workspace_manager.set_selected_client(incoming.workspace_id, *selected_client);
-            if (!selected_ok) {
-                std::cerr << "[hyprmacs] set-layout ignored non-managed selected_client workspace=" << incoming.workspace_id
-                          << " client=" << *selected_client << '\n';
-            }
-        }
-
-        if (ok && input_mode.has_value()) {
-            ok = workspace_manager.set_input_mode(incoming.workspace_id, *input_mode);
-            if (!ok) {
-                error = "set-layout input_mode rejected";
-            }
-        }
-
         if (ok) {
-            std::vector<LayoutRectangle> visible_rectangles;
-            visible_rectangles.reserve(visible_clients_opt->size());
+            const auto visible_rectangles = build_visible_rectangles_for_set_layout(*visible_clients_opt, *rectangles_opt, &error);
+            if (!visible_rectangles.has_value()) {
+                ok = false;
+            } else {
+                std::string overlap_error;
+                if (!LayoutApplier::validate_non_overlapping(*visible_rectangles, &overlap_error)) {
+                    ok = false;
+                    error = overlap_error;
+                } else {
+                    if (selected_client.has_value() && !selected_client->empty()) {
+                        const bool selected_ok = workspace_manager.set_selected_client(incoming.workspace_id, *selected_client);
+                        if (!selected_ok) {
+                            std::cerr << "[hyprmacs] set-layout ignored non-managed selected_client workspace="
+                                      << incoming.workspace_id << " client=" << *selected_client << '\n';
+                        }
+                    }
 
-            for (const auto& visible_client : *visible_clients_opt) {
-                bool found = false;
-                for (const auto& rectangle : *rectangles_opt) {
-                    if (rectangle.client_id == visible_client) {
-                        visible_rectangles.push_back(rectangle);
-                        found = true;
-                        break;
+                    if (input_mode.has_value()) {
+                        ok = workspace_manager.set_input_mode(incoming.workspace_id, *input_mode);
+                        if (!ok) {
+                            error = "set-layout input_mode rejected";
+                        }
+                    }
+
+                    if (ok) {
+                        const auto state = workspace_manager.build_state_dump(incoming.workspace_id);
+                        ManagedWorkspaceLayoutSnapshot snapshot {
+                            .workspace_id = incoming.workspace_id,
+                            .rectangles_by_client_id = {},
+                            .visible_client_ids = *visible_clients_opt,
+                            .hidden_client_ids = *hidden_clients_opt,
+                            .stacking_order = *stacking_order_opt,
+                            .selected_client = state.selected_client,
+                            .input_mode = state.input_mode,
+                            .managing_emacs_client_id = workspace_manager.emacs_client(incoming.workspace_id),
+                        };
+                        for (const auto& rectangle : *visible_rectangles) {
+                            snapshot.rectangles_by_client_id.emplace(rectangle.client_id, ClientRect {
+                                .x = rectangle.x,
+                                .y = rectangle.y,
+                                .width = rectangle.width,
+                                .height = rectangle.height,
+                            });
+                        }
+
+                        ok = workspace_manager.apply_managed_layout_snapshot(std::move(snapshot));
+                        if (!ok) {
+                            error = "set-layout snapshot commit rejected";
+                        }
                     }
                 }
-
-                if (!found) {
-                    ok = false;
-                    error = "set-layout missing rectangle for visible client " + visible_client;
-                    break;
-                }
-            }
-
-            if (ok) {
-                ok = layout_applier.apply_snapshot(
-                    incoming.workspace_id, visible_rectangles, *hidden_clients_opt, *stacking_order_opt, &error
-                );
             }
         }
 
