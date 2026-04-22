@@ -9,11 +9,23 @@
 
 namespace hyprmacs {
 
+enum class ManagedTargetVisibilityAction {
+    kIgnore,
+    kShow,
+    kHide,
+};
+
 std::optional<CBox> compute_managed_target_box_for_recalc(const ManagedWorkspaceLayoutSnapshot& snapshot,
                                                           std::string_view target_workspace_id,
                                                           std::string_view target_client_id,
                                                           bool target_floating,
                                                           const CBox& work_area);
+ManagedTargetVisibilityAction compute_managed_target_visibility_action_for_recalc(
+    const ManagedWorkspaceLayoutSnapshot& snapshot,
+    std::string_view target_workspace_id,
+    std::string_view target_client_id,
+    bool target_floating
+);
 
 }
 
@@ -101,6 +113,52 @@ bool test_recalc_box_ignores_hidden_unmanaged_floating_and_wrong_workspace_targe
     return ok;
 }
 
+bool test_recalc_visibility_shows_visible_targets_and_hides_hidden_targets() {
+    bool ok = true;
+    const auto snapshot = sample_snapshot();
+
+    ok &= expect(
+        hyprmacs::compute_managed_target_visibility_action_for_recalc(snapshot, "1", "0xaaa", false) ==
+            hyprmacs::ManagedTargetVisibilityAction::kShow,
+        "visible managed client should request show action"
+    );
+    ok &= expect(
+        hyprmacs::compute_managed_target_visibility_action_for_recalc(snapshot, "1", "bbb", false) ==
+            hyprmacs::ManagedTargetVisibilityAction::kHide,
+        "hidden managed client should request hide action"
+    );
+
+    return ok;
+}
+
+bool test_recalc_visibility_ignores_emacs_unmanaged_floating_and_wrong_workspace_targets() {
+    bool ok = true;
+    const auto snapshot = sample_snapshot();
+
+    ok &= expect(
+        hyprmacs::compute_managed_target_visibility_action_for_recalc(snapshot, "1", "0xeee", false) ==
+            hyprmacs::ManagedTargetVisibilityAction::kIgnore,
+        "managing emacs target should not be hide/show managed"
+    );
+    ok &= expect(
+        hyprmacs::compute_managed_target_visibility_action_for_recalc(snapshot, "1", "0xccc", false) ==
+            hyprmacs::ManagedTargetVisibilityAction::kIgnore,
+        "unmanaged target should not be hide/show managed"
+    );
+    ok &= expect(
+        hyprmacs::compute_managed_target_visibility_action_for_recalc(snapshot, "1", "0xaaa", true) ==
+            hyprmacs::ManagedTargetVisibilityAction::kIgnore,
+        "floating target should not be hide/show managed"
+    );
+    ok &= expect(
+        hyprmacs::compute_managed_target_visibility_action_for_recalc(snapshot, "2", "0xaaa", false) ==
+            hyprmacs::ManagedTargetVisibilityAction::kIgnore,
+        "wrong-workspace target should not be hide/show managed"
+    );
+
+    return ok;
+}
+
 }  // namespace
 
 int main() {
@@ -109,6 +167,8 @@ int main() {
     ok &= test_recalc_box_pins_managing_emacs_to_work_area();
     ok &= test_recalc_box_places_visible_managed_client_from_snapshot_rectangle();
     ok &= test_recalc_box_ignores_hidden_unmanaged_floating_and_wrong_workspace_targets();
+    ok &= test_recalc_visibility_shows_visible_targets_and_hides_hidden_targets();
+    ok &= test_recalc_visibility_ignores_emacs_unmanaged_floating_and_wrong_workspace_targets();
 
     return ok ? 0 : 1;
 }

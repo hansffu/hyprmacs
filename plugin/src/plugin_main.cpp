@@ -244,6 +244,12 @@ hyprmacs::IpcServer g_ipc_server(&g_workspace_manager, &g_layout_applier, &g_foc
 
 namespace hyprmacs {
 
+enum class ManagedTargetVisibilityAction {
+    kIgnore,
+    kShow,
+    kHide,
+};
+
 namespace {
 
 std::string normalize_client_id_for_recalc(std::string_view client_id) {
@@ -270,6 +276,49 @@ bool snapshot_client_ids_match(std::string_view lhs, std::string_view rhs) {
 }
 
 }  // namespace
+
+ManagedTargetVisibilityAction compute_managed_target_visibility_action_for_recalc(const ManagedWorkspaceLayoutSnapshot& snapshot,
+                                                                                  std::string_view target_workspace_id,
+                                                                                  std::string_view target_client_id,
+                                                                                  bool target_floating) {
+    if (snapshot.workspace_id.empty() || target_workspace_id.empty() || snapshot.workspace_id != target_workspace_id) {
+        return ManagedTargetVisibilityAction::kIgnore;
+    }
+
+    const std::string normalized_target_client_id = normalize_client_id_for_recalc(target_client_id);
+    if (normalized_target_client_id.empty()) {
+        return ManagedTargetVisibilityAction::kIgnore;
+    }
+
+    if (snapshot.managing_emacs_client_id.has_value() &&
+        snapshot_client_ids_match(*snapshot.managing_emacs_client_id, normalized_target_client_id)) {
+        return ManagedTargetVisibilityAction::kIgnore;
+    }
+
+    if (target_floating) {
+        return ManagedTargetVisibilityAction::kIgnore;
+    }
+
+    const auto visible_it = std::find_if(
+        snapshot.visible_client_ids.begin(),
+        snapshot.visible_client_ids.end(),
+        [&](const ClientId& client_id) { return snapshot_client_ids_match(client_id, normalized_target_client_id); }
+    );
+    if (visible_it != snapshot.visible_client_ids.end()) {
+        return ManagedTargetVisibilityAction::kShow;
+    }
+
+    const auto hidden_it = std::find_if(
+        snapshot.hidden_client_ids.begin(),
+        snapshot.hidden_client_ids.end(),
+        [&](const ClientId& client_id) { return snapshot_client_ids_match(client_id, normalized_target_client_id); }
+    );
+    if (hidden_it != snapshot.hidden_client_ids.end()) {
+        return ManagedTargetVisibilityAction::kHide;
+    }
+
+    return ManagedTargetVisibilityAction::kIgnore;
+}
 
 std::optional<CBox> compute_managed_target_box_for_recalc(const ManagedWorkspaceLayoutSnapshot& snapshot,
                                                           std::string_view target_workspace_id,
@@ -412,6 +461,25 @@ class CHyprmacsAlgorithm final : public Layout::ITiledAlgorithm {
             const auto space = target->space();
             if (!target_workspace_id.has_value() || !target_client_id.has_value() || !space) {
                 continue;
+            }
+
+            const auto visibility_action = hyprmacs::compute_managed_target_visibility_action_for_recalc(
+                *snapshot,
+                *target_workspace_id,
+                *target_client_id,
+                target->floating()
+            );
+            const std::string normalized_target_client_id = hyprmacs::normalize_client_id_for_recalc(*target_client_id);
+            if (visibility_action == hyprmacs::ManagedTargetVisibilityAction::kHide) {
+                if (!g_layout_applier.is_hidden(normalized_target_client_id)) {
+                    (void)g_layout_applier.hide_client(normalized_target_client_id, *target_workspace_id);
+                }
+                continue;
+            }
+
+            if (visibility_action == hyprmacs::ManagedTargetVisibilityAction::kShow &&
+                g_layout_applier.is_hidden(normalized_target_client_id)) {
+                (void)g_layout_applier.show_client(normalized_target_client_id);
             }
 
             const auto target_box = hyprmacs::compute_managed_target_box_for_recalc(
