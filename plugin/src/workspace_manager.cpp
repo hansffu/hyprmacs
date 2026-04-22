@@ -743,6 +743,22 @@ void WorkspaceManager::sync_committed_layout_snapshot_locked() {
     prune_client_vector(committed_snapshot.hidden_client_ids);
     prune_client_vector(committed_snapshot.stacking_order);
 
+    auto snapshot_contains_client = [&](const ClientId& client_id) {
+        return committed_snapshot.rectangles_by_client_id.find(client_id) != committed_snapshot.rectangles_by_client_id.end() ||
+               std::find(committed_snapshot.visible_client_ids.begin(), committed_snapshot.visible_client_ids.end(), client_id) !=
+                   committed_snapshot.visible_client_ids.end() ||
+               std::find(committed_snapshot.hidden_client_ids.begin(), committed_snapshot.hidden_client_ids.end(), client_id) !=
+                   committed_snapshot.hidden_client_ids.end() ||
+               std::find(committed_snapshot.stacking_order.begin(), committed_snapshot.stacking_order.end(), client_id) !=
+                   committed_snapshot.stacking_order.end();
+    };
+
+    for (const auto& client_id : active_managed_client_ids) {
+        if (!snapshot_contains_client(client_id)) {
+            committed_snapshot.hidden_client_ids.push_back(client_id);
+        }
+    }
+
     managed_layout_snapshot_->selected_client = selected_managed_client_locked(*managed_workspace_id_);
     managed_layout_snapshot_->input_mode = input_mode_;
     managed_layout_snapshot_->managing_emacs_client_id = managing_emacs_client_id_;

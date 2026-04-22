@@ -916,6 +916,55 @@ bool test_seed_client_refreshes_committed_snapshot_coherence() {
     return ok;
 }
 
+bool test_seed_client_inserts_new_managed_client_hidden_by_default() {
+    bool ok = true;
+
+    hyprmacs::WorkspaceManager manager;
+    manager.process_event_for_tests("openwindowv2>>0xeee,1,emacs,emacs-main");
+    manager.process_event_for_tests("openwindowv2>>0xaaa,1,foot,foot-a");
+    manager.process_event_for_tests("activewindowv2>>0xeee");
+    ok &= expect(manager.manage_workspace("1"), "workspace 1 should become managed");
+    ok &= expect(manager.set_selected_client("1", "0xaaa"), "workspace 1 should start with a managed selected client");
+
+    hyprmacs::ManagedWorkspaceLayoutSnapshot snapshot {
+        .workspace_id = "1",
+        .layout_version = 0,
+        .rectangles_by_client_id = {
+            {"0xaaa", hyprmacs::ClientRect {.x = 0, .y = 0, .width = 100, .height = 100}},
+        },
+        .visible_client_ids = {"0xaaa"},
+        .hidden_client_ids = {},
+        .stacking_order = {"0xaaa"},
+        .selected_client = std::nullopt,
+        .input_mode = std::nullopt,
+        .managing_emacs_client_id = std::nullopt,
+    };
+
+    ok &= expect(manager.apply_managed_layout_snapshot(snapshot), "snapshot should apply");
+
+    manager.seed_client("0xbbb", "1", "foot", "foot-b", false);
+
+    auto stored = manager.managed_layout_snapshot("1");
+    ok &= expect(stored.has_value(), "snapshot should remain after new managed client seed");
+    if (stored.has_value()) {
+        ok &= expect(stored->rectangles_by_client_id.find("0xbbb") == stored->rectangles_by_client_id.end(),
+                     "newly managed client should not have a rectangle until replanned");
+        ok &= expect(std::find(stored->hidden_client_ids.begin(), stored->hidden_client_ids.end(), "0xbbb") !=
+                         stored->hidden_client_ids.end(),
+                     "newly managed client should be inserted hidden by default");
+        ok &= expect(std::find(stored->visible_client_ids.begin(), stored->visible_client_ids.end(), "0xbbb") ==
+                         stored->visible_client_ids.end(),
+                     "newly managed client should not be visible before replanning");
+        ok &= expect(std::find(stored->stacking_order.begin(), stored->stacking_order.end(), "0xbbb") ==
+                         stored->stacking_order.end(),
+                     "newly managed client should not be stacked before replanning");
+        ok &= expect(stored->selected_client.has_value() && *stored->selected_client == "0xaaa",
+                     "selection should stay coherent after inserting a new managed client");
+    }
+
+    return ok;
+}
+
 }  // namespace
 
 int main() {
@@ -941,5 +990,6 @@ int main() {
     ok &= test_committed_snapshot_prunes_closed_managed_clients();
     ok &= test_committed_snapshot_prunes_moved_managed_clients();
     ok &= test_seed_client_refreshes_committed_snapshot_coherence();
+    ok &= test_seed_client_inserts_new_managed_client_hidden_by_default();
     return ok ? 0 : 1;
 }
