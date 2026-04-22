@@ -847,6 +847,75 @@ bool test_committed_snapshot_prunes_moved_managed_clients() {
     return ok;
 }
 
+bool test_seed_client_refreshes_committed_snapshot_coherence() {
+    bool ok = true;
+
+    hyprmacs::WorkspaceManager manager;
+    manager.process_event_for_tests("openwindowv2>>0xeee,1,emacs,emacs-main");
+    manager.process_event_for_tests("openwindowv2>>0xfff,1,emacs,emacs-alt");
+    manager.process_event_for_tests("openwindowv2>>0xaaa,1,foot,foot-a");
+    manager.process_event_for_tests("openwindowv2>>0xbbb,1,foot,foot-b");
+    manager.process_event_for_tests("activewindowv2>>0xeee");
+    ok &= expect(manager.manage_workspace("1"), "workspace 1 should become managed");
+    ok &= expect(manager.set_selected_client("1", "0xaaa"), "workspace 1 should start with a managed selected client");
+
+    hyprmacs::ManagedWorkspaceLayoutSnapshot snapshot {
+        .workspace_id = "1",
+        .layout_version = 0,
+        .rectangles_by_client_id = {
+            {"0xaaa", hyprmacs::ClientRect {.x = 0, .y = 0, .width = 100, .height = 100}},
+            {"0xbbb", hyprmacs::ClientRect {.x = 100, .y = 0, .width = 100, .height = 100}},
+        },
+        .visible_client_ids = {"0xaaa", "0xbbb"},
+        .hidden_client_ids = {},
+        .stacking_order = {"0xbbb", "0xaaa"},
+        .selected_client = std::nullopt,
+        .input_mode = std::nullopt,
+        .managing_emacs_client_id = std::nullopt,
+    };
+
+    ok &= expect(manager.apply_managed_layout_snapshot(snapshot), "snapshot should apply");
+
+    manager.seed_client("0xbbb", "1", "foot", "foot-b", true);
+
+    auto stored = manager.managed_layout_snapshot("1");
+    ok &= expect(stored.has_value(), "snapshot should remain after seed client prune");
+    if (stored.has_value()) {
+        ok &= expect(stored->rectangles_by_client_id.find("0xbbb") == stored->rectangles_by_client_id.end(),
+                     "seeded floating client should be pruned from rectangles");
+        ok &= expect(std::find(stored->visible_client_ids.begin(), stored->visible_client_ids.end(), "0xbbb") ==
+                         stored->visible_client_ids.end(),
+                     "seeded floating client should be pruned from visible clients");
+        ok &= expect(std::find(stored->stacking_order.begin(), stored->stacking_order.end(), "0xbbb") ==
+                         stored->stacking_order.end(),
+                     "seeded floating client should be pruned from stacking order");
+        ok &= expect(std::find(stored->hidden_client_ids.begin(), stored->hidden_client_ids.end(), "0xbbb") ==
+                         stored->hidden_client_ids.end(),
+                     "seeded floating client should be pruned from hidden clients");
+        ok &= expect(stored->selected_client.has_value() && *stored->selected_client == "0xaaa",
+                     "selected client should stay coherent after seed client prune");
+        ok &= expect(stored->managing_emacs_client_id.has_value() && *stored->managing_emacs_client_id == "0xeee",
+                     "managing emacs should stay coherent after seed client prune");
+    }
+
+    manager.seed_client("0xeee", "1", "foot", "foot-main", false);
+
+    stored = manager.managed_layout_snapshot("1");
+    ok &= expect(stored.has_value(), "snapshot should remain after managing emacs reseed");
+    if (stored.has_value()) {
+        ok &= expect(stored->managing_emacs_client_id.has_value() && *stored->managing_emacs_client_id == "0xfff",
+                     "seed client should refresh managing emacs resolution");
+        ok &= expect(stored->selected_client.has_value() && *stored->selected_client == "0xaaa",
+                     "selected client should remain coherent after managing emacs reseed");
+        ok &= expect(stored->rectangles_by_client_id.find("0xaaa") != stored->rectangles_by_client_id.end(),
+                     "still-managed client should remain in rectangles");
+        ok &= expect(stored->rectangles_by_client_id.find("0xbbb") == stored->rectangles_by_client_id.end(),
+                     "pruned client should stay removed from rectangles");
+    }
+
+    return ok;
+}
+
 }  // namespace
 
 int main() {
@@ -871,5 +940,6 @@ int main() {
     ok &= test_activewindow_updates_committed_snapshot_selected_client();
     ok &= test_committed_snapshot_prunes_closed_managed_clients();
     ok &= test_committed_snapshot_prunes_moved_managed_clients();
+    ok &= test_seed_client_refreshes_committed_snapshot_coherence();
     return ok ? 0 : 1;
 }

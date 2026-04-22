@@ -436,6 +436,8 @@ void WorkspaceManager::seed_client(
     client_registry_.upsert_open(client_id, workspace_id, app_id, title);
     client_registry_.set_floating(client_id, floating);
     client_registry_.reconcile_management(managed_workspace_id_);
+    refresh_managing_emacs_client_locked();
+    sync_committed_layout_snapshot_locked();
 }
 
 std::optional<WorkspaceId> WorkspaceManager::managed_workspace() const {
