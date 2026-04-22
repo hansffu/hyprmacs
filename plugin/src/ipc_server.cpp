@@ -718,45 +718,43 @@ std::vector<ProtocolMessage> route_command_for_tests(
             }
 
             if (ok) {
-                if (selected_client.has_value() && !selected_client->empty()) {
-                    const bool selected_ok = workspace_manager.set_selected_client(incoming.workspace_id, *selected_client);
-                    if (!selected_ok) {
-                        std::cerr << "[hyprmacs] set-layout ignored non-managed selected_client workspace="
-                                  << incoming.workspace_id << " client=" << *selected_client << '\n';
-                    }
+                const auto committed_state = workspace_manager.build_state_dump(incoming.workspace_id);
+                ManagedWorkspaceLayoutSnapshot snapshot {
+                    .workspace_id = incoming.workspace_id,
+                    .rectangles_by_client_id = {},
+                    .visible_client_ids = *visible_clients_opt,
+                    .hidden_client_ids = *hidden_clients_opt,
+                    .stacking_order = *stacking_order_opt,
+                    .selected_client = committed_state.selected_client,
+                    .input_mode = committed_state.input_mode,
+                    .managing_emacs_client_id = workspace_manager.emacs_client(incoming.workspace_id),
+                };
+                for (const auto& rectangle : *visible_rectangles) {
+                    snapshot.rectangles_by_client_id.emplace(rectangle.client_id, ClientRect {
+                        .x = rectangle.x,
+                        .y = rectangle.y,
+                        .width = rectangle.width,
+                        .height = rectangle.height,
+                    });
                 }
 
-                if (input_mode.has_value()) {
-                    ok = workspace_manager.set_input_mode(incoming.workspace_id, *input_mode);
-                    if (!ok) {
-                        error = "set-layout input_mode rejected";
-                    }
-                }
-
-                if (ok) {
-                    const auto committed_state = workspace_manager.build_state_dump(incoming.workspace_id);
-                    ManagedWorkspaceLayoutSnapshot snapshot {
-                        .workspace_id = incoming.workspace_id,
-                        .rectangles_by_client_id = {},
-                        .visible_client_ids = *visible_clients_opt,
-                        .hidden_client_ids = *hidden_clients_opt,
-                        .stacking_order = *stacking_order_opt,
-                        .selected_client = committed_state.selected_client,
-                        .input_mode = committed_state.input_mode,
-                        .managing_emacs_client_id = workspace_manager.emacs_client(incoming.workspace_id),
-                    };
-                    for (const auto& rectangle : *visible_rectangles) {
-                        snapshot.rectangles_by_client_id.emplace(rectangle.client_id, ClientRect {
-                            .x = rectangle.x,
-                            .y = rectangle.y,
-                            .width = rectangle.width,
-                            .height = rectangle.height,
-                        });
+                ok = workspace_manager.apply_managed_layout_snapshot(std::move(snapshot));
+                if (!ok) {
+                    error = "set-layout snapshot commit rejected";
+                } else {
+                    if (selected_client.has_value() && !selected_client->empty()) {
+                        const bool selected_ok = workspace_manager.set_selected_client(incoming.workspace_id, *selected_client);
+                        if (!selected_ok) {
+                            std::cerr << "[hyprmacs] set-layout ignored non-managed selected_client workspace="
+                                      << incoming.workspace_id << " client=" << *selected_client << '\n';
+                        }
                     }
 
-                    ok = workspace_manager.apply_managed_layout_snapshot(std::move(snapshot));
-                    if (!ok) {
-                        error = "set-layout snapshot commit rejected";
+                    if (input_mode.has_value()) {
+                        ok = workspace_manager.set_input_mode(incoming.workspace_id, *input_mode);
+                        if (!ok) {
+                            error = "set-layout input_mode rejected";
+                        }
                     }
                 }
             }
