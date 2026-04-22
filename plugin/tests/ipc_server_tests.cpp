@@ -391,6 +391,8 @@ bool test_route_set_layout_rejects_missing_required_arrays_before_commit() {
     manager.process_event_for_tests("openwindowv2>>0xaaa,1,foot,foot-a");
     manager.manage_workspace("1");
 
+    const auto before_state = manager.build_state_dump("1");
+
     const hyprmacs::ProtocolMessage set_layout {
         .version = 1,
         .type = "set-layout",
@@ -412,6 +414,9 @@ bool test_route_set_layout_rejects_missing_required_arrays_before_commit() {
     }
     ok &= expect(recording.commands.empty(), "missing-required-arrays validation should not execute geometry commands");
     ok &= expect(!manager.managed_layout_snapshot("1").has_value(), "missing required arrays should not commit a snapshot");
+    const auto state = manager.build_state_dump("1");
+    ok &= expect(state.selected_client == before_state.selected_client, "missing required arrays should preserve selected_client");
+    ok &= expect(state.input_mode == before_state.input_mode, "missing required arrays should preserve input_mode");
     return ok;
 }
 
