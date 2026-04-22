@@ -1,5 +1,6 @@
 #include <cstdlib>
 #include <cstring>
+#include <charconv>
 #include <cstdint>
 #include <cerrno>
 #include <iostream>
@@ -30,6 +31,7 @@
 #include <hyprland/src/helpers/math/Math.hpp>
 #elif __has_include(<hyprland/src/plugins/PluginAPI.hpp>) && __has_include(<hyprgraphics/color/Color.hpp>)
 #define HYPRMACS_HAS_REAL_PLUGIN_API 1
+#include <hyprland/src/Compositor.hpp>
 #include <hyprland/src/plugins/PluginAPI.hpp>
 #if __has_include(<hyprland/src/layout/algorithm/TiledAlgorithm.hpp>) && __has_include(<hyprland/src/layout/space/Space.hpp>) && \
     __has_include(<hyprland/src/layout/target/Target.hpp>)
@@ -195,6 +197,33 @@ int dispatch_hypr_command_via_socket(const std::string& command) {
 }
 
 #ifndef HYPRMACS_PLUGIN_MAIN_UNIT_TEST
+void request_workspace_recalc(const hyprmacs::WorkspaceId& workspace_id) {
+#if HYPRMACS_HAS_REAL_PLUGIN_API
+    if (workspace_id.empty() || !g_pCompositor) {
+        return;
+    }
+
+    auto workspace = g_pCompositor->getWorkspaceByString(workspace_id);
+    if (!workspace) {
+        WORKSPACEID numeric_workspace_id = WORKSPACE_INVALID;
+        const char* begin = workspace_id.data();
+        const char* end = begin + workspace_id.size();
+        const auto parsed = std::from_chars(begin, end, numeric_workspace_id);
+        if (parsed.ec == std::errc {} && parsed.ptr == end) {
+            workspace = g_pCompositor->getWorkspaceByID(numeric_workspace_id);
+        }
+    }
+
+    if (!workspace || !workspace->m_space) {
+        return;
+    }
+
+    workspace->m_space->recalculate();
+#else
+    (void)workspace_id;
+#endif
+}
+
 hyprmacs::WorkspaceManager g_workspace_manager(
     [](const std::string& command) {
         return dispatch_hypr_command_via_socket(command);
@@ -209,7 +238,7 @@ hyprmacs::LayoutApplier g_layout_applier([](const std::string& command) {
 hyprmacs::FocusController g_focus_controller([](const std::string& command) {
     return dispatch_hypr_command_via_socket(command);
 });
-hyprmacs::IpcServer g_ipc_server(&g_workspace_manager, &g_layout_applier, &g_focus_controller);
+hyprmacs::IpcServer g_ipc_server(&g_workspace_manager, &g_layout_applier, &g_focus_controller, request_workspace_recalc);
 #endif
 }
 

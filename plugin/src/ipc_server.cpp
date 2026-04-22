@@ -540,7 +540,8 @@ std::vector<ProtocolMessage> route_command_for_tests(
     const ProtocolMessage& incoming,
     WorkspaceManager& workspace_manager,
     LayoutApplier& layout_applier,
-    FocusController* focus_controller
+    FocusController* focus_controller,
+    RecalcRequester recalc_requester
 ) {
     std::vector<ProtocolMessage> out;
 
@@ -742,6 +743,10 @@ std::vector<ProtocolMessage> route_command_for_tests(
                 if (!ok) {
                     error = "set-layout snapshot commit rejected";
                 } else {
+                    if (recalc_requester) {
+                        recalc_requester(incoming.workspace_id);
+                    }
+
                     if (selected_client.has_value() && !selected_client->empty()) {
                         const bool selected_ok = workspace_manager.set_selected_client(incoming.workspace_id, *selected_client);
                         if (!selected_ok) {
@@ -794,10 +799,12 @@ std::vector<ProtocolMessage> route_command_for_tests(
     return out;
 }
 
-IpcServer::IpcServer(WorkspaceManager* workspace_manager, LayoutApplier* layout_applier, FocusController* focus_controller)
+IpcServer::IpcServer(WorkspaceManager* workspace_manager, LayoutApplier* layout_applier, FocusController* focus_controller,
+                     RecalcRequester recalc_requester)
     : workspace_manager_(workspace_manager)
     , layout_applier_(layout_applier)
-    , focus_controller_(focus_controller) {
+    , focus_controller_(focus_controller)
+    , recalc_requester_(std::move(recalc_requester)) {
     if (workspace_manager_ != nullptr) {
         workspace_manager_->set_client_transition_notifier(
             [this](const WorkspaceId& workspace_id, const ClientId& client_id, bool floating) {
@@ -1005,7 +1012,13 @@ void IpcServer::serve_controller(int controller_fd) {
                     );
                 } else {
                     std::cerr << "[hyprmacs] ipc recv type=" << incoming->type << " workspace=" << incoming->workspace_id << '\n';
-                    const auto responses = route_command_for_tests(*incoming, *workspace_manager_, *layout_applier_, focus_controller_);
+                    const auto responses = route_command_for_tests(
+                        *incoming,
+                        *workspace_manager_,
+                        *layout_applier_,
+                        focus_controller_,
+                        recalc_requester_
+                    );
                     for (const auto& response : responses) {
                         send_message(controller_fd, response);
                     }

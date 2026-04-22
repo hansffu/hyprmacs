@@ -31,6 +31,16 @@ struct RecordingApplier {
     }
 };
 
+struct RecordingRecalcRequester {
+    std::vector<std::string> workspaces;
+
+    hyprmacs::IpcServer::RecalcRequester make() {
+        return [this](const hyprmacs::WorkspaceId& workspace_id) {
+            workspaces.push_back(workspace_id);
+        };
+    }
+};
+
 bool test_route_manage_workspace() {
     hyprmacs::WorkspaceManager manager;
     auto applier = make_noop_applier();
@@ -279,6 +289,7 @@ bool test_route_seed_client_adopts_existing_window() {
 bool test_route_set_layout_commits_snapshot_without_geometry_application() {
     hyprmacs::WorkspaceManager manager;
     RecordingApplier recording;
+    RecordingRecalcRequester recalc;
     auto applier = recording.make();
     manager.process_event_for_tests("openwindowv2>>0xaaa,1,foot,foot-a");
     manager.process_event_for_tests("openwindowv2>>0xbbb,1,foot,foot-b");
@@ -295,7 +306,7 @@ bool test_route_set_layout_commits_snapshot_without_geometry_application() {
             "\"stacking_order\":[\"0xbbb\"]}",
     };
 
-    const auto responses = hyprmacs::route_command_for_tests(set_layout, manager, applier);
+    const auto responses = hyprmacs::route_command_for_tests(set_layout, manager, applier, nullptr, recalc.make());
     bool ok = true;
     ok &= expect(responses.size() == 2, "set-layout should produce two responses");
     if (responses.size() == 2) {
@@ -317,6 +328,8 @@ bool test_route_set_layout_commits_snapshot_without_geometry_application() {
     }
 
     ok &= expect(recording.commands.empty(), "set-layout should not execute geometry commands");
+    ok &= expect(recalc.workspaces == std::vector<std::string>({"1"}),
+                 "successful set-layout commit should request one recalc for the workspace");
 
     const auto snapshot = manager.managed_layout_snapshot("1");
     ok &= expect(snapshot.has_value(), "set-layout should commit a managed snapshot");
@@ -355,6 +368,7 @@ bool test_route_set_layout_commits_snapshot_without_geometry_application() {
 bool test_route_set_layout_rejects_missing_rectangle_for_visible_client_before_commit() {
     hyprmacs::WorkspaceManager manager;
     RecordingApplier recording;
+    RecordingRecalcRequester recalc;
     auto applier = recording.make();
     manager.process_event_for_tests("openwindowv2>>0xaaa,1,foot,foot-a");
     manager.process_event_for_tests("openwindowv2>>0xbbb,1,foot,foot-b");
@@ -371,7 +385,7 @@ bool test_route_set_layout_rejects_missing_rectangle_for_visible_client_before_c
             "\"stacking_order\":[\"0xaaa\",\"0xbbb\"]}",
     };
 
-    const auto responses = hyprmacs::route_command_for_tests(set_layout, manager, applier);
+    const auto responses = hyprmacs::route_command_for_tests(set_layout, manager, applier, nullptr, recalc.make());
     bool ok = true;
     ok &= expect(responses.size() == 2, "set-layout should still produce layout-applied and state-dump");
     if (responses.size() == 2) {
@@ -381,6 +395,7 @@ bool test_route_set_layout_rejects_missing_rectangle_for_visible_client_before_c
     }
     ok &= expect(recording.commands.empty(), "missing-rectangle validation should run before any geometry commands");
     ok &= expect(!manager.managed_layout_snapshot("1").has_value(), "failed validation should not commit a snapshot");
+    ok &= expect(recalc.workspaces.empty(), "failed set-layout should not request recalc");
     return ok;
 }
 

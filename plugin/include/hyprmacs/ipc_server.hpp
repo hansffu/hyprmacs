@@ -1,6 +1,7 @@
 #pragma once
 
 #include <atomic>
+#include <functional>
 #include <mutex>
 #include <optional>
 #include <string>
@@ -14,17 +15,23 @@
 
 namespace hyprmacs {
 
+using RecalcRequester = std::function<void(const WorkspaceId&)>;
+
 std::optional<std::string> default_ipc_socket_path();
 std::vector<ProtocolMessage> route_command_for_tests(
     const ProtocolMessage& incoming,
     WorkspaceManager& workspace_manager,
     LayoutApplier& layout_applier,
-    FocusController* focus_controller = nullptr
+    FocusController* focus_controller = nullptr,
+    RecalcRequester recalc_requester = {}
 );
 
 class IpcServer {
   public:
-    IpcServer(WorkspaceManager* workspace_manager, LayoutApplier* layout_applier, FocusController* focus_controller);
+    using RecalcRequester = hyprmacs::RecalcRequester;
+
+    IpcServer(WorkspaceManager* workspace_manager, LayoutApplier* layout_applier, FocusController* focus_controller,
+              RecalcRequester recalc_requester = {});
     ~IpcServer();
 
     IpcServer(const IpcServer&) = delete;
@@ -47,6 +54,7 @@ class IpcServer {
     WorkspaceManager* workspace_manager_ = nullptr;
     LayoutApplier* layout_applier_ = nullptr;
     FocusController* focus_controller_ = nullptr;
+    RecalcRequester recalc_requester_;
     std::optional<std::string> socket_path_;
 
     std::atomic<bool> running_ {false};
