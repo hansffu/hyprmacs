@@ -28,7 +28,8 @@ ManagedTargetVisibilityAction compute_managed_target_visibility_action_for_recal
     const ManagedWorkspaceLayoutSnapshot& snapshot,
     std::string_view target_workspace_id,
     std::string_view target_client_id,
-    bool target_floating
+    bool target_floating,
+    bool target_is_hidden
 );
 
 }
@@ -122,12 +123,12 @@ bool test_recalc_visibility_shows_visible_targets_and_hides_hidden_targets() {
     const auto snapshot = sample_snapshot();
 
     ok &= expect(
-        hyprmacs::compute_managed_target_visibility_action_for_recalc(snapshot, "1", "0xaaa", false) ==
+        hyprmacs::compute_managed_target_visibility_action_for_recalc(snapshot, "1", "0xaaa", false, false) ==
             hyprmacs::ManagedTargetVisibilityAction::kShow,
         "visible managed client should request show action"
     );
     ok &= expect(
-        hyprmacs::compute_managed_target_visibility_action_for_recalc(snapshot, "1", "bbb", false) ==
+        hyprmacs::compute_managed_target_visibility_action_for_recalc(snapshot, "1", "bbb", false, false) ==
             hyprmacs::ManagedTargetVisibilityAction::kHide,
         "hidden managed client should request hide action"
     );
@@ -140,24 +141,47 @@ bool test_recalc_visibility_ignores_emacs_unmanaged_floating_and_wrong_workspace
     const auto snapshot = sample_snapshot();
 
     ok &= expect(
-        hyprmacs::compute_managed_target_visibility_action_for_recalc(snapshot, "1", "0xeee", false) ==
+        hyprmacs::compute_managed_target_visibility_action_for_recalc(snapshot, "1", "0xeee", false, false) ==
             hyprmacs::ManagedTargetVisibilityAction::kIgnore,
         "managing emacs target should not be hide/show managed"
     );
     ok &= expect(
-        hyprmacs::compute_managed_target_visibility_action_for_recalc(snapshot, "1", "0xccc", false) ==
+        hyprmacs::compute_managed_target_visibility_action_for_recalc(snapshot, "1", "0xccc", false, false) ==
             hyprmacs::ManagedTargetVisibilityAction::kIgnore,
         "unmanaged target should not be hide/show managed"
     );
     ok &= expect(
-        hyprmacs::compute_managed_target_visibility_action_for_recalc(snapshot, "1", "0xaaa", true) ==
+        hyprmacs::compute_managed_target_visibility_action_for_recalc(snapshot, "1", "0xaaa", true, false) ==
             hyprmacs::ManagedTargetVisibilityAction::kIgnore,
         "floating target should not be hide/show managed"
     );
     ok &= expect(
-        hyprmacs::compute_managed_target_visibility_action_for_recalc(snapshot, "2", "0xaaa", false) ==
+        hyprmacs::compute_managed_target_visibility_action_for_recalc(snapshot, "2", "0xaaa", false, false) ==
             hyprmacs::ManagedTargetVisibilityAction::kIgnore,
         "wrong-workspace target should not be hide/show managed"
+    );
+
+    return ok;
+}
+
+bool test_recalc_visibility_restores_hidden_clients_marked_visible_by_snapshot() {
+    bool ok = true;
+    const auto snapshot = sample_snapshot();
+
+    ok &= expect(
+        hyprmacs::compute_managed_target_visibility_action_for_recalc(snapshot, "-99", "0xaaa", false, true) ==
+            hyprmacs::ManagedTargetVisibilityAction::kShow,
+        "hidden client should be shown when snapshot marks it visible"
+    );
+    ok &= expect(
+        hyprmacs::compute_managed_target_visibility_action_for_recalc(snapshot, "-99", "0xbbb", false, true) ==
+            hyprmacs::ManagedTargetVisibilityAction::kHide,
+        "hidden client should stay hidden when snapshot marks it hidden"
+    );
+    ok &= expect(
+        hyprmacs::compute_managed_target_visibility_action_for_recalc(snapshot, "-99", "0xaaa", true, true) ==
+            hyprmacs::ManagedTargetVisibilityAction::kIgnore,
+        "floating hidden target should remain unmanaged by visibility action"
     );
 
     return ok;
@@ -220,6 +244,7 @@ int main() {
     ok &= test_recalc_box_ignores_hidden_unmanaged_floating_and_wrong_workspace_targets();
     ok &= test_recalc_visibility_shows_visible_targets_and_hides_hidden_targets();
     ok &= test_recalc_visibility_ignores_emacs_unmanaged_floating_and_wrong_workspace_targets();
+    ok &= test_recalc_visibility_restores_hidden_clients_marked_visible_by_snapshot();
     ok &= test_build_workspace_recalc_dispatch_command_normalizes_input();
     ok &= test_request_workspace_recalc_marshaled_dispatches_via_injected_executor();
 

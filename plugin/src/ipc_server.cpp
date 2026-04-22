@@ -744,7 +744,10 @@ std::vector<ProtocolMessage> route_command_for_tests(
                     error = "set-layout snapshot commit rejected";
                 } else {
                     if (recalc_requester) {
-                        recalc_requester(incoming.workspace_id);
+                        const bool recalc_requested = recalc_requester(incoming.workspace_id);
+                        if (!recalc_requested) {
+                            std::cerr << "[hyprmacs] set-layout recalc request failed workspace=" << incoming.workspace_id << '\n';
+                        }
                     }
 
                     if (selected_client.has_value() && !selected_client->empty()) {

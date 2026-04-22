@@ -15,7 +15,7 @@
 
 namespace hyprmacs {
 
-using RecalcRequester = std::function<void(const WorkspaceId&)>;
+using RecalcRequester = std::function<bool(const WorkspaceId&)>;
 
 std::optional<std::string> default_ipc_socket_path();
 std::vector<ProtocolMessage> route_command_for_tests(

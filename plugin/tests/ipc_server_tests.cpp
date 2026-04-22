@@ -1,6 +1,7 @@
 #include "hyprmacs/ipc_server.hpp"
 
 #include <iostream>
+#include <sstream>
 #include <string>
 #include <vector>
 
@@ -33,10 +34,12 @@ struct RecordingApplier {
 
 struct RecordingRecalcRequester {
     std::vector<std::string> workspaces;
+    bool result = true;
 
     hyprmacs::IpcServer::RecalcRequester make() {
         return [this](const hyprmacs::WorkspaceId& workspace_id) {
             workspaces.push_back(workspace_id);
+            return result;
         };
     }
 };
@@ -396,6 +399,46 @@ bool test_route_set_layout_rejects_missing_rectangle_for_visible_client_before_c
     ok &= expect(recording.commands.empty(), "missing-rectangle validation should run before any geometry commands");
     ok &= expect(!manager.managed_layout_snapshot("1").has_value(), "failed validation should not commit a snapshot");
     ok &= expect(recalc.workspaces.empty(), "failed set-layout should not request recalc");
+    return ok;
+}
+
+bool test_route_set_layout_logs_warning_when_recalc_request_fails() {
+    hyprmacs::WorkspaceManager manager;
+    RecordingApplier recording;
+    RecordingRecalcRequester recalc;
+    recalc.result = false;
+    auto applier = recording.make();
+    manager.process_event_for_tests("openwindowv2>>0xaaa,1,foot,foot-a");
+    manager.process_event_for_tests("openwindowv2>>0xbbb,1,foot,foot-b");
+    manager.manage_workspace("1");
+
+    const hyprmacs::ProtocolMessage set_layout {
+        .version = 1,
+        .type = "set-layout",
+        .workspace_id = "1",
+        .timestamp = "2026-04-23T00:00:00Z",
+        .payload_json =
+            "{\"selected_client\":\"0xbbb\",\"input_mode\":\"client-control\",\"visible_clients\":[\"0xbbb\"],"
+            "\"hidden_clients\":[\"0xaaa\"],\"rectangles\":[{\"client_id\":\"0xbbb\",\"x\":10,\"y\":20,\"width\":300,\"height\":400}],"
+            "\"stacking_order\":[\"0xbbb\"]}",
+    };
+
+    std::ostringstream captured_err;
+    auto* previous_err = std::cerr.rdbuf(captured_err.rdbuf());
+    const auto responses = hyprmacs::route_command_for_tests(set_layout, manager, applier, nullptr, recalc.make());
+    std::cerr.rdbuf(previous_err);
+
+    bool ok = true;
+    ok &= expect(responses.size() == 2, "set-layout should produce two responses when recalc request fails");
+    if (responses.size() == 2) {
+        ok &= expect(responses[0].type == "layout-applied", "first response should be layout-applied");
+        ok &= expect(responses[0].payload_json.find("\"ok\":true") != std::string::npos,
+                     "set-layout should remain successful when snapshot commit succeeds");
+    }
+    ok &= expect(recalc.workspaces == std::vector<std::string>({"1"}),
+                 "set-layout should still invoke recalc requester exactly once");
+    ok &= expect(captured_err.str().find("set-layout recalc request failed workspace=1") != std::string::npos,
+                 "recalc request failure should be logged");
     return ok;
 }
 
@@ -849,6 +892,7 @@ int main() {
     ok &= test_route_set_layout_commits_snapshot_without_geometry_application();
     ok &= test_route_set_layout_rejects_missing_required_arrays_before_commit();
     ok &= test_route_set_layout_rejects_missing_rectangle_for_visible_client_before_commit();
+    ok &= test_route_set_layout_logs_warning_when_recalc_request_fails();
     ok &= test_route_set_layout_rejects_overlapping_rectangles();
     ok &= test_route_set_layout_ignores_non_managed_selected_client();
     ok &= test_route_set_layout_with_null_selected_client_does_not_pick_visible_client();
