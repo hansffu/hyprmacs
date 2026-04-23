@@ -90,3 +90,27 @@
         (when-let ((buf (get-buffer "*before-new-client*")))
           (kill-buffer buf))
         (hyprmacs-buffer-reset)))))
+
+(ert-deftest hyprmacs-state-dump-displays-new-client-added-to-existing-managed-set ()
+  (hyprmacs-session-reset)
+  (hyprmacs-buffer-reset)
+  (delete-other-windows)
+  (let ((sync-count 0))
+    (cl-letf (((symbol-function 'hyprmacs--schedule-auto-sync-layout)
+               (lambda (&rest _) (setq sync-count (1+ sync-count)))))
+      (unwind-protect
+          (progn
+            (hyprmacs-session-fake-receive
+             "{\"version\":1,\"type\":\"state-dump\",\"workspace_id\":\"1\",\"timestamp\":\"2026-04-24T12:00:00Z\",\"payload\":{\"managed\":true,\"controller_connected\":true,\"eligible_clients\":[{\"client_id\":\"0xold\",\"title\":\"old\",\"app_id\":\"foot\",\"floating\":false}],\"managed_clients\":[\"0xold\"],\"selected_client\":\"0xold\",\"input_mode\":\"emacs-control\"}}\n")
+            (setq sync-count 0)
+            (switch-to-buffer (get-buffer-create "*before-added-client*"))
+            (hyprmacs-session-fake-receive
+             "{\"version\":1,\"type\":\"state-dump\",\"workspace_id\":\"1\",\"timestamp\":\"2026-04-24T12:00:01Z\",\"payload\":{\"managed\":true,\"controller_connected\":true,\"eligible_clients\":[{\"client_id\":\"0xold\",\"title\":\"old\",\"app_id\":\"foot\",\"floating\":false},{\"client_id\":\"0xnew\",\"title\":\"new\",\"app_id\":\"foot\",\"floating\":false}],\"managed_clients\":[\"0xold\",\"0xnew\"],\"selected_client\":\"0xold\",\"input_mode\":\"emacs-control\"}}\n")
+            (should (eq (window-buffer (selected-window))
+                        (hyprmacs-buffer-for-client "0xnew")))
+            (should (= sync-count 1)))
+        (delete-other-windows)
+        (switch-to-buffer (get-buffer-create "*scratch*"))
+        (when-let ((buf (get-buffer "*before-added-client*")))
+          (kill-buffer buf))
+        (hyprmacs-buffer-reset)))))

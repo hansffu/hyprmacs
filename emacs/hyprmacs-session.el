@@ -212,8 +212,7 @@ If the buffer exists but is not visible, leave window selection unchanged."
                           (hyprmacs-buffer-sync-managed managed-clients eligible-clients)))
          (setq new-managed-clients
                (seq-difference managed-clients old-managed-clients #'equal))
-         (when-let* ((client-id (and new-managed-clients
-                                     (car managed-clients)))
+         (when-let* ((client-id (car new-managed-clients))
                      (buffer (hyprmacs-buffer-for-client client-id)))
            (when (buffer-live-p buffer)
              (hyprmacs-display-managed-buffer
