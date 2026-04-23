@@ -190,3 +190,23 @@
           (should (eq (window-buffer left) (get-buffer "*scratch*"))))
       (delete-other-windows)
       (hyprmacs-buffer-reset))))
+
+(ert-deftest hyprmacs-visible-uniqueness-prefers-changed-non-selected-window ()
+  (hyprmacs-buffer-reset)
+  (delete-other-windows)
+  (let* ((hyprmacs-duplicate-buffer-replacement-buffer "*scratch*")
+         (buffer (hyprmacs-buffer-ensure-for-client "0xaaa" "foot" "shell" "1"))
+         (left (selected-window))
+         (right (split-window-right)))
+    (unwind-protect
+        (progn
+          (set-window-buffer left buffer)
+          (select-window left)
+          ;; Simulate ordinary Emacs display paths that put the same buffer in
+          ;; a non-selected window, then run the buffer-change hook callback.
+          (set-window-buffer right buffer)
+          (hyprmacs-enforce-visible-managed-buffer-uniqueness right)
+          (should (eq (window-buffer right) buffer))
+          (should (eq (window-buffer left) (get-buffer "*scratch*"))))
+      (delete-other-windows)
+      (hyprmacs-buffer-reset))))

@@ -312,16 +312,24 @@ window, or nil when BUFFER is not visible."
         (hyprmacs--schedule-auto-sync-layout))
       keep)))
 
-(defun hyprmacs-enforce-visible-managed-buffer-uniqueness (&rest _)
-  "Enforce one-visible-window invariant for all visible hyprmacs buffers."
-  (let ((seen (make-hash-table :test #'eq)))
+(defun hyprmacs-enforce-visible-managed-buffer-uniqueness (&rest args)
+  "Enforce one-visible-window invariant for all visible hyprmacs buffers.
+When ARGS include the window whose buffer changed, prefer that changed window
+for the buffer it displays. This preserves ordinary Emacs display paths that
+create a newer duplicate in a non-selected window."
+  (let ((seen (make-hash-table :test #'eq))
+        (changed-window (cl-find-if #'window-live-p args)))
     (dolist (window (window-list nil 'no-minibuf))
       (let ((buffer (window-buffer window)))
         (when (hyprmacs--managed-buffer-p buffer)
           (puthash buffer t seen))))
     (maphash
      (lambda (buffer _)
-       (hyprmacs-enforce-single-visible-managed-buffer buffer))
+       (hyprmacs-enforce-single-visible-managed-buffer
+        buffer
+        (and (window-live-p changed-window)
+             (eq (window-buffer changed-window) buffer)
+             changed-window)))
      seen)))
 
 (defun hyprmacs-display-managed-buffer (buffer client-id workspace-id reason)
