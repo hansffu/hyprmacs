@@ -1601,6 +1601,38 @@ Steps:
   - targeted plugin tests passed: =hyprmacs_workspace_manager_tests= and =hyprmacs_ipc_server_tests=
   - full suite passed: =just e2e= with artifact =artifacts/e2e/20260423-174725=.
 
+*** DONE Session note: usability-planning kickoff (2026-04-23)
+- User requested starting usability-feature planning now that the backend is mostly working.
+- Next step in this session is structured usability brainstorming and design before adding new implementation tasks.
+
+*** DONE Session note: usability must-have feature intake (2026-04-24)
+- User identified day-to-day control ergonomics as the first usability-planning priority.
+- Must-have usability features for this pass:
+  - When a new client is managed, it opens in the currently active Emacs window.
+  - A =hyprmacs= buffer is displayed in at most one Emacs window at a time; if the user displays it in a second window, the existing window should be replaced by =*scratch*=.
+  - Provide a function to make a managed buffer floating, effectively unmanaging that client.
+  - Provide a summon command that pulls a client from another workspace and manages it.
+  - Handle focus requests from managed windows, with configurable buffer-switching behavior so users can integrate workspace packages.
+- Implementation preference:
+  - Keep most behavior in Emacs.
+  - Add only supporting plugin APIs where Emacs cannot observe or act reliably by itself.
+- Initial usability design decision:
+  - When a newly managed client is assigned to the active Emacs window and that window already displays another =hyprmacs= buffer, replace the active window with the new client's buffer and hide the previous client.
+  - Enforce the one-window-per-=hyprmacs=-buffer invariant globally, including ordinary Emacs display paths such as =switch-to-buffer=, =display-buffer=, and workspace/package restore flows.
+  - Managed client focus requests default to: if the corresponding =hyprmacs= buffer is already visible, focus that Emacs window; otherwise display it in the currently active Emacs window.
+  - Making a managed buffer floating removes/kills the corresponding =hyprmacs= buffer immediately; the client becomes a native Hyprland window.
+  - Summon pulls only eligible tiled clients from other workspaces.
+  - Summon is exposed as an interactive completing-read command.
+  - Chosen architecture approach: Emacs-orchestrated usability policy.
+    Emacs owns display/window policy, uniqueness enforcement, summon UI, and focus-request handling.
+    The plugin provides only supporting APIs/events for compositor state and operations Emacs cannot perform reliably by itself.
+  - Implementation must maintain nested E2E coverage in TDD style for each feature:
+    write or extend failing ERT/plugin tests and the relevant failing E2E assertion first, implement the feature, then restore green tests before moving to the next feature.
+- Follow-up planning artifact:
+  - Implementation plan written at =docs/superpowers/plans/2026-04-24-usability-ergonomics.md=.
+  - Work must continue on branch =usability-ergonomics=.
+  - Do not commit usability work to =main= before explicit user approval.
+
 Validation:
 - =just test=
 - =just e2e=
