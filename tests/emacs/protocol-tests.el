@@ -123,6 +123,16 @@
     (should (equal (alist-get 'type third nil nil #'equal) "set-layout"))
     (should (equal (alist-get 'visible_clients (alist-get 'payload third) nil nil #'equal) '("0xabc")))))
 
+(ert-deftest hyprmacs-session-sends-float-managed-client ()
+  (hyprmacs-session-reset)
+  (hyprmacs-session-use-fake-transport)
+  (hyprmacs-session-float-managed-client "1" "0xabc")
+  (let* ((frame (hyprmacs-test--decode (car (hyprmacs-session-fake-outbox))))
+         (payload (alist-get 'payload frame)))
+    (should (equal (alist-get 'type frame nil nil #'equal) "float-managed-client"))
+    (should (equal (alist-get 'workspace_id frame nil nil #'equal) "1"))
+    (should (equal (alist-get 'client_id payload nil nil #'equal) "0xabc"))))
+
 (ert-deftest hyprmacs-command-set-input-mode-defaults-to-client-control ()
   (hyprmacs-session-reset)
   (hyprmacs-session-use-fake-transport)

@@ -1094,6 +1094,21 @@ bool test_unmanaged_only_floating_refresh_adopts_tiled_client_without_reclassify
     return ok;
 }
 
+bool test_float_managed_client_marks_client_floating_and_unmanaged() {
+    hyprmacs::WorkspaceManager manager;
+    manager.seed_client("0xaaa", "1", "foot", "foot-a", false);
+    manager.manage_workspace("1");
+
+    const bool floated = manager.float_managed_client("1", "0xaaa");
+    auto state = manager.build_state_dump("1");
+
+    bool ok = true;
+    ok &= expect(floated, "float_managed_client should accept managed client");
+    ok &= expect(state.managed_clients.empty(), "floated client should leave managed set");
+    ok &= expect(state.eligible_clients.empty(), "floated client should leave eligible set");
+    return ok;
+}
+
 }  // namespace
 
 int main() {
@@ -1123,5 +1138,6 @@ int main() {
     ok &= test_seed_client_inserts_new_managed_client_hidden_by_default();
     ok &= test_visible_snapshot_client_stays_managed_when_query_reports_floating_overlay();
     ok &= test_unmanaged_only_floating_refresh_adopts_tiled_client_without_reclassifying_managed();
+    ok &= test_float_managed_client_marks_client_floating_and_unmanaged();
     return ok ? 0 : 1;
 }

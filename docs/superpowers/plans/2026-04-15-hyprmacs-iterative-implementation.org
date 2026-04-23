@@ -1650,7 +1650,7 @@ Steps:
 - Add TDD coverage for displaying new managed clients in the active Emacs window.
 - Enforce at most one visible Emacs window per hyprmacs managed buffer.
 - Replace older duplicate visible windows with =*scratch*= and schedule layout sync through existing layout hooks.
-*** TODO Task 17.2: Managed buffer floating/unmanage command
+*** DONE Task 17.2: Managed buffer floating/unmanage command
 *** TODO Task 17.3: Completing-read summon command
 *** TODO Task 17.4: Managed-client focus request handling
 *** WAIT Review task 17 with user
@@ -1710,6 +1710,27 @@ Steps:
   - =emacs -Q --batch -L emacs -L tests/emacs -l tests/emacs/buffer-tests.el -f ert-run-tests-batch-and-exit=: pass.
   - =emacs -Q --batch -L emacs -L tests/emacs -l tests/emacs/session-tests.el -f ert-run-tests-batch-and-exit=: pass.
   - =just e2e=: pass with artifact =artifacts/e2e/20260424-014015=.
+
+*** DONE Session note: Task 17.2 managed buffer floating command (2026-04-24)
+- Added Emacs command path:
+  - =hyprmacs-session-float-managed-client= sends =float-managed-client= with =client_id=.
+  - =hyprmacs-make-buffer-floating= defaults to the current managed buffer, sends the plugin command, removes the local managed buffer immediately, and schedules layout sync.
+- Added plugin command path:
+  - =WorkspaceManager::float_managed_client= marks a managed client floating, removes it from managed membership through reconciliation, prunes committed layout state, and preserves overlay-float suppression for visible snapshot clients.
+  - IPC routing handles =float-managed-client=, asks =LayoutApplier= to make the client native floating, and replies with =client-floated= followed by =state-dump=.
+- Updated =docs/protocol/ipc-v1.org= with =float-managed-client= and =client-floated= payloads.
+- Nested E2E now verifies =hyprmacs-make-buffer-floating= removes the managed Emacs buffer and removes the client from the managed set after a state refresh.
+- Red verification before implementation:
+  - =emacs -Q --batch -L emacs -L tests/emacs -l tests/emacs/protocol-tests.el -f ert-run-tests-batch-and-exit= failed with undefined =hyprmacs-session-float-managed-client=.
+  - =emacs -Q --batch -L emacs -L tests/emacs -l tests/emacs/buffer-tests.el -f ert-run-tests-batch-and-exit= failed with undefined =hyprmacs-make-buffer-floating=.
+  - =nix develop -c sh -lc 'cmake --build build/plugin --target hyprmacs_workspace_manager_tests hyprmacs_ipc_server_tests -j8 && ctest --test-dir build/plugin --output-on-failure -R "hyprmacs_(workspace_manager_tests|ipc_server_tests)"'= failed compiling the new workspace-manager test because =WorkspaceManager::float_managed_client= did not exist.
+  - =just e2e= failed during static/unit build for the same missing =float_managed_client= API.
+- Green verification after implementation:
+  - =emacs -Q --batch -L emacs -L tests/emacs -l tests/emacs/protocol-tests.el -f ert-run-tests-batch-and-exit=: pass, 17/17.
+  - =emacs -Q --batch -L emacs -L tests/emacs -l tests/emacs/buffer-tests.el -f ert-run-tests-batch-and-exit=: pass, 14/14.
+  - =nix develop -c sh -lc 'cmake --build build/plugin --target hyprmacs_workspace_manager_tests hyprmacs_ipc_server_tests -j8 && ctest --test-dir build/plugin --output-on-failure -R "hyprmacs_(workspace_manager_tests|ipc_server_tests)"'=: pass, 2/2.
+  - =emacs -Q --batch -L emacs -f batch-byte-compile emacs/hyprmacs.el=: pass with pre-existing docstring-width warning.
+  - =just e2e=: pass with artifact =artifacts/e2e/20260424-015529=.
 
 *** Session note: Task 16 layering blocker from compositor focus/render semantics (2026-04-22)
 - Task 16 single-window geometry regression is now fixed in E2E (client rectangle aligns with Emacs body area).

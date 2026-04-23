@@ -1,10 +1,21 @@
 (require 'ert)
+(require 'json)
+(require 'subr-x)
 
 (add-to-list 'load-path
              (expand-file-name "../../emacs" (file-name-directory load-file-name)))
 
 (require 'hyprmacs-buffers)
 (require 'hyprmacs-session)
+(require 'hyprmacs)
+
+(defun hyprmacs-test--decode (frame)
+  "Decode FRAME and return message alist."
+  (json-parse-string (string-trim-right frame)
+                     :object-type 'alist
+                     :array-type 'list
+                     :null-object nil
+                     :false-object :json-false))
 
 (ert-deftest hyprmacs-buffer-create-and-lookup ()
   (let* ((buffer (hyprmacs-buffer-ensure-for-client "0xabc" "foot"))
@@ -228,4 +239,21 @@
           (should (eq (window-buffer right) buffer))
           (should (eq (window-buffer left) (get-buffer "*scratch*"))))
       (delete-other-windows)
+      (hyprmacs-buffer-reset))))
+
+(ert-deftest hyprmacs-make-buffer-floating-sends-command-and-removes-buffer ()
+  (hyprmacs-session-reset)
+  (hyprmacs-session-use-fake-transport)
+  (let ((buffer (hyprmacs-buffer-ensure-for-client "0xabc" "foot" "shell" "1")))
+    (unwind-protect
+        (progn
+          (switch-to-buffer buffer)
+          (setq hyprmacs-session-state
+                (plist-put hyprmacs-session-state :workspace-id "1"))
+          (setq hyprmacs-session-state
+                (plist-put hyprmacs-session-state :managed-clients '("0xabc")))
+          (hyprmacs-make-buffer-floating)
+          (should-not (buffer-live-p buffer))
+          (let* ((frame (hyprmacs-test--decode (car (hyprmacs-session-fake-outbox)))))
+            (should (equal (alist-get 'type frame nil nil #'equal) "float-managed-client"))))
       (hyprmacs-buffer-reset))))

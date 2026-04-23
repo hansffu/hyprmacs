@@ -59,6 +59,7 @@ class WorkspaceManager {
 
     bool manage_workspace(const WorkspaceId& workspace_id);
     bool unmanage_workspace(const WorkspaceId& workspace_id);
+    bool float_managed_client(const WorkspaceId& workspace_id, const ClientId& client_id);
     bool set_selected_client(const WorkspaceId& workspace_id, const ClientId& client_id);
     bool set_input_mode(const WorkspaceId& workspace_id, InputMode mode);
     void seed_client(const ClientId& client_id, const WorkspaceId& workspace_id, const std::string& app_id,

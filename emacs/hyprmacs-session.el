@@ -291,6 +291,13 @@ When ADOPT-EXISTING is nil, defaults to true."
    workspace-id
    `((client_id . ,client-id))))
 
+(defun hyprmacs-session-float-managed-client (workspace-id client-id)
+  "Send float-managed-client for CLIENT-ID in WORKSPACE-ID."
+  (hyprmacs-session-send
+   "float-managed-client"
+   workspace-id
+   `((client_id . ,client-id))))
+
 (defun hyprmacs-session-set-input-mode (workspace-id mode)
   "Send set-input-mode for WORKSPACE-ID and MODE symbol."
   (let ((wire (hyprmacs-ipc-mode-to-wire mode)))

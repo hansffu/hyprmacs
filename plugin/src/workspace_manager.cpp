@@ -408,6 +408,29 @@ bool WorkspaceManager::unmanage_workspace(const WorkspaceId& workspace_id) {
     return true;
 }
 
+bool WorkspaceManager::float_managed_client(const WorkspaceId& workspace_id, const ClientId& client_id) {
+    std::scoped_lock lock(mutex_);
+    if (!managed_workspace_id_.has_value() || *managed_workspace_id_ != workspace_id) {
+        return false;
+    }
+
+    const std::string normalized = normalize_client_id_for_query(client_id);
+    const ClientRecord* before = client_registry_.find(normalized);
+    if (before == nullptr || !before->managed) {
+        return false;
+    }
+
+    if (managed_layout_snapshot_.has_value() && managed_layout_snapshot_->workspace_id == workspace_id &&
+        is_snapshot_visible_client_locked(normalized)) {
+        overlay_float_pending_clients_.insert(normalized);
+    }
+    client_registry_.set_floating(normalized, true);
+    client_registry_.reconcile_management(managed_workspace_id_);
+    managed_client_seen_.erase(normalized);
+    sync_committed_layout_snapshot_locked();
+    return true;
+}
+
 bool WorkspaceManager::set_selected_client(const WorkspaceId& workspace_id, const ClientId& client_id) {
     std::scoped_lock lock(mutex_);
     const ClientRecord* record = client_registry_.find(client_id);

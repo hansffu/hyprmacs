@@ -657,6 +657,28 @@ std::vector<ProtocolMessage> route_command_for_tests(
         return out;
     }
 
+    if (incoming.type == "float-managed-client") {
+        const auto client_id = parse_string_field_from_payload(incoming.payload_json, "client_id");
+        if (!client_id.has_value()) {
+            out.push_back(make_message(
+                "protocol-error",
+                incoming.workspace_id,
+                payload_for_protocol_error("invalid-payload", "float-managed-client missing client_id")
+            ));
+            return out;
+        }
+
+        const bool ok = workspace_manager.float_managed_client(incoming.workspace_id, *client_id);
+        if (ok) {
+            (void)layout_applier.ensure_client_floating(*client_id);
+        }
+        out.push_back(make_message("client-floated", incoming.workspace_id, payload_for_client_transition(*client_id, true)));
+        out.push_back(make_message(
+            "state-dump", incoming.workspace_id, serialize_state_dump_payload(workspace_manager.build_state_dump(incoming.workspace_id))
+        ));
+        return out;
+    }
+
     if (incoming.type == "request-state") {
         workspace_manager.refresh_workspace_floating_state_from_query(incoming.workspace_id);
         out.push_back(make_message(

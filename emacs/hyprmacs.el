@@ -208,6 +208,27 @@ Non-interactively accepts flexible forms:
   (hyprmacs-session-set-selected-client workspace-id client-id)
   (message "hyprmacs: requested selected managed client %s" client-id))
 
+(defun hyprmacs--read-managed-client-id ()
+  "Prompt for a currently managed client ID."
+  (let ((managed (or (plist-get hyprmacs-session-state :managed-clients) '())))
+    (completing-read "Managed client: " managed nil t)))
+
+(defun hyprmacs-make-buffer-floating (&optional prompt)
+  "Make current managed buffer's client native floating.
+With PROMPT, ask for a managed client."
+  (interactive "P")
+  (let* ((workspace-id (hyprmacs--default-workspace-id))
+         (client-id (if prompt
+                        (hyprmacs--read-managed-client-id)
+                      (or (hyprmacs--current-managed-buffer-client-id)
+                          (user-error "hyprmacs: current buffer is not managed"))))
+         (buffer (hyprmacs-buffer-for-client client-id)))
+    (hyprmacs-session-float-managed-client workspace-id client-id)
+    (when (buffer-live-p buffer)
+      (hyprmacs-buffer-remove-client client-id))
+    (hyprmacs--schedule-auto-sync-layout)
+    (message "hyprmacs: requested floating native client %s" client-id)))
+
 (defun hyprmacs-sync-layout (&optional workspace-id silent)
   "Publish a set-layout snapshot for WORKSPACE-ID from current Emacs windows."
   (interactive)
@@ -1110,6 +1131,49 @@ This covers the implemented runtime contract through Task 11."
                                 managing-emacs-address))))
               4.0 0.10)
              path "emacs-control focuses the managing emacs frame"))
+            (let ((managed-before-float-spawn (managed-ids))
+                  (float-client nil)
+                  (floating-buffer nil))
+              (pcase-let ((`(:exit ,spawn-float-exit :out ,spawn-float-out)
+                           (hyprmacs--run-command
+                            "hyprctl dispatch exec \"foot -T hyprmacs-float-command\"")))
+                (append-to-file (format "spawn-float-command-out:\n%s\n" spawn-float-out) nil path)
+                (hyprmacs--e2e-assert
+                 (zerop spawn-float-exit)
+                 path
+                 "spawn make-buffer-floating probe client succeeded"))
+              (hyprmacs--e2e-assert
+               (hyprmacs--wait-until
+                (lambda ()
+                  (refresh-state)
+                  (setq float-client
+                        (car (cl-set-difference
+                              (managed-ids)
+                              managed-before-float-spawn
+                              :test #'equal)))
+                  float-client)
+                5.0 0.20)
+               path
+               "make-buffer-floating probe client becomes managed")
+              (setq floating-buffer (and float-client (hyprmacs-buffer-for-client float-client)))
+              (hyprmacs--e2e-assert
+               (buffer-live-p floating-buffer)
+               path
+               "make-buffer-floating probe buffer exists")
+              (switch-to-buffer floating-buffer)
+              (hyprmacs-make-buffer-floating)
+              (hyprmacs--e2e-assert
+               (not (buffer-live-p floating-buffer))
+               path
+               "make-buffer-floating removes managed Emacs buffer")
+              (hyprmacs--e2e-assert
+               (hyprmacs--wait-until
+                (lambda ()
+                  (refresh-state)
+                  (not (member float-client (managed-ids))))
+                5.0 0.20)
+               path
+               "make-buffer-floating removes client from managed set"))
           (when regression-failures
             (error "hyprmacs e2e regression assertions failed: %s"
                    (string-join (nreverse regression-failures) " | "))))))

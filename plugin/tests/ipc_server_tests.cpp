@@ -174,6 +174,28 @@ bool test_route_unmanage_workspace() {
     return ok;
 }
 
+bool test_route_float_managed_client_returns_ack_and_state_dump() {
+    hyprmacs::WorkspaceManager manager;
+    auto applier = make_noop_applier();
+    manager.seed_client("0xaaa", "1", "foot", "foot-a", false);
+    manager.manage_workspace("1");
+
+    const hyprmacs::ProtocolMessage incoming {
+        .type = "float-managed-client",
+        .workspace_id = "1",
+        .timestamp = "2026-04-24T00:00:00Z",
+        .payload_json = "{\"client_id\":\"0xaaa\"}",
+    };
+    auto responses = hyprmacs::route_command_for_tests(incoming, manager, applier);
+
+    bool ok = true;
+    ok &= expect(responses.size() == 2, "float-managed-client should return ack and state-dump");
+    ok &= expect(responses[0].type == "client-floated", "first response should be client-floated");
+    ok &= expect(responses[1].type == "state-dump", "second response should be state-dump");
+    ok &= expect(manager.build_state_dump("1").managed_clients.empty(), "client should be unmanaged after route");
+    return ok;
+}
+
 bool test_route_request_state() {
     hyprmacs::WorkspaceManager manager;
     auto applier = make_noop_applier();
@@ -1179,6 +1201,7 @@ int main() {
     ok &= test_route_manage_workspace_hides_existing_managed_clients();
     ok &= test_route_manage_workspace_focuses_managing_emacs_client();
     ok &= test_route_unmanage_workspace();
+    ok &= test_route_float_managed_client_returns_ack_and_state_dump();
     ok &= test_route_request_state();
     ok &= test_route_request_state_refreshes_floating_membership_from_query();
     ok &= test_route_debug_hide_show();

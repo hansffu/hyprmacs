@@ -100,6 +100,21 @@ Rules:
 - Overlapping visible rectangles are rejected in v1.
 - The plugin responds with =layout-applied= and then =state-dump=.
 
+*** =float-managed-client=
+Purpose:
+- Request that a currently managed client leave hyprmacs management and become a native floating Hyprland client.
+
+Payload:
+#+begin_src json
+{
+  "client_id": "0xabc123"
+}
+#+end_src
+
+Rules:
+- =client_id= is required.
+- The plugin responds with =client-floated= followed by =state-dump=.
+
 ** Plugin -> Emacs
 *** =workspace-managed=
 Purpose:
@@ -184,6 +199,21 @@ Payload:
   "ok": true
 }
 #+end_src
+
+*** =client-floated=
+Purpose:
+- Acknowledge a =float-managed-client= request.
+
+Payload:
+#+begin_src json
+{
+  "client_id": "0xabc123",
+  "floating": true
+}
+#+end_src
+
+Rules:
+- The following =state-dump= is authoritative for whether the client left managed membership.
 
 *** =client-became-floating=
 Purpose:
