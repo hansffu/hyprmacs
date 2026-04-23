@@ -650,6 +650,46 @@ This covers the implemented runtime contract through Task 11."
        path
        "pre-manage floating client is not moved to hidden workspace"))
     (when floating-before-manage-client
+      (pcase-let ((`(:exit ,tile-exit :out ,tile-out)
+                   (hyprmacs--run-command
+                    (format "hyprctl dispatch togglefloating address:%s" floating-before-manage-client))))
+        (append-to-file (format "pre-manage-togglefloating-back-out:\n%s\n" tile-out) nil path)
+        (hyprmacs--e2e-assert
+         (zerop tile-exit)
+         path
+         "pre-manage floating client togglefloating back to tiled succeeded"))
+      (hyprmacs--e2e-assert
+       (hyprmacs--wait-until
+        (lambda ()
+          (let ((record (hyprmacs--find-client-record floating-before-manage-client)))
+            (and record
+                 (not (hyprmacs--json-bool (alist-get 'floating record nil nil #'equal))))))
+        4.0 0.15)
+       path
+       "pre-manage floating client is tiled after togglefloating off")
+      (pcase-let ((`(:exit ,focus-exit :out ,focus-out)
+                   (hyprmacs--run-command "hyprctl dispatch hyprmacs:set-emacs-control-mode")))
+        (append-to-file (format "pre-manage-focus-emacs-out:\n%s\n" focus-out) nil path)
+        (hyprmacs--e2e-assert
+         (zerop focus-exit)
+         path
+         "dispatcher hyprmacs:set-emacs-control-mode succeeded for pre-manage transition check"))
+      (hyprmacs--e2e-assert
+       (hyprmacs--wait-until
+        (lambda ()
+          (member floating-before-manage-client
+                  (or (plist-get hyprmacs-session-state :managed-clients) '())))
+        5.0 0.20)
+       path
+       "pre-manage floating client is adopted after togglefloating off without explicit request-state")
+      (hyprmacs--e2e-assert
+       (hyprmacs--wait-until
+        (lambda ()
+          (let ((buffer (hyprmacs-buffer-for-client floating-before-manage-client)))
+            (and buffer (buffer-live-p buffer))))
+        5.0 0.20)
+       path
+       "pre-manage floating client gets a managed buffer after togglefloating off")
       (pcase-let ((`(:exit ,close-exit :out ,close-out)
                    (hyprmacs--run-command
                     (format "hyprctl dispatch closewindow address:%s" floating-before-manage-client))))
@@ -657,14 +697,14 @@ This covers the implemented runtime contract through Task 11."
         (hyprmacs--e2e-assert
          (zerop close-exit)
          path
-         "pre-manage floating client close succeeded"))
+         "pre-manage transition probe client close succeeded"))
       (hyprmacs--e2e-assert
        (hyprmacs--wait-until
         (lambda ()
           (null (hyprmacs--find-client-record floating-before-manage-client)))
         4.0 0.15)
        path
-       "pre-manage floating client is closed before layering assertions"))
+       "pre-manage transition probe client is closed before layering assertions"))
 
     (let* ((active (hyprmacs--hyprctl-activewindow))
            (managing-emacs-address (format "%s" (alist-get 'address active nil nil #'equal)))
@@ -701,6 +741,7 @@ This covers the implemented runtime contract through Task 11."
                     (member client-id (managed-ids))
                   (not (member client-id (managed-ids)))))
               5.0 0.20)))
+        (refresh-state)
         (let ((managed (managed-ids)))
       (when (< (length managed) 1)
         (hyprmacs--seed-existing-workspace-clients workspace-id)

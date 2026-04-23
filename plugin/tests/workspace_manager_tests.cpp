@@ -1050,6 +1050,50 @@ bool test_visible_snapshot_client_stays_managed_when_query_reports_floating_over
     return ok;
 }
 
+bool test_unmanaged_only_floating_refresh_adopts_tiled_client_without_reclassifying_managed() {
+    bool ok = true;
+
+    std::string clients_json = R"([
+      {"address":"0xaaa","workspace":{"id":1},"class":"foot","title":"foot-a","floating":false},
+      {"address":"0xbbb","workspace":{"id":1},"class":"foot","title":"foot-b","floating":false}
+    ])";
+
+    hyprmacs::WorkspaceManager manager(
+        [](const std::string&) { return 0; },
+        [&clients_json](const std::string& command) -> std::optional<std::string> {
+            if (command == "j/clients") {
+                return clients_json;
+            }
+            return std::nullopt;
+        }
+    );
+
+    manager.process_event_for_tests("openwindowv2>>0xaaa,1,foot,foot-a");
+    manager.process_event_for_tests("openwindowv2>>0xbbb,1,foot,foot-b");
+    ok &= expect(manager.manage_workspace("1"), "workspace 1 should become managed");
+    manager.process_event_for_tests("changefloatingmodev2>>0xbbb,true");
+
+    auto state = manager.build_state_dump("1");
+    ok &= expect(state.managed_clients == std::vector<std::string>({"0xaaa"}),
+                 "setup should leave 0xaaa managed and 0xbbb unmanaged");
+
+    clients_json = R"([
+      {"address":"0xaaa","workspace":{"id":1},"class":"foot","title":"foot-a","floating":true},
+      {"address":"0xbbb","workspace":{"id":1},"class":"foot","title":"foot-b","floating":false}
+    ])";
+
+    const bool mutated = manager.refresh_workspace_floating_state_from_query("1", false);
+    state = manager.build_state_dump("1");
+    ok &= expect(mutated, "unmanaged-only refresh should mutate when an unmanaged client becomes tiled");
+    ok &= expect(state.managed_clients.size() == 2, "unmanaged-only refresh should adopt retiled unmanaged client");
+    ok &= expect(std::find(state.managed_clients.begin(), state.managed_clients.end(), "0xaaa") != state.managed_clients.end(),
+                 "unmanaged-only refresh should not drop existing managed client");
+    ok &= expect(std::find(state.managed_clients.begin(), state.managed_clients.end(), "0xbbb") != state.managed_clients.end(),
+                 "unmanaged-only refresh should adopt unmanaged client that is tiled in query");
+
+    return ok;
+}
+
 }  // namespace
 
 int main() {
@@ -1078,5 +1122,6 @@ int main() {
     ok &= test_seed_client_refreshes_committed_snapshot_coherence();
     ok &= test_seed_client_inserts_new_managed_client_hidden_by_default();
     ok &= test_visible_snapshot_client_stays_managed_when_query_reports_floating_overlay();
+    ok &= test_unmanaged_only_floating_refresh_adopts_tiled_client_without_reclassifying_managed();
     return ok ? 0 : 1;
 }

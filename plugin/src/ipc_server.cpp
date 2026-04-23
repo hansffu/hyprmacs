@@ -1441,6 +1441,9 @@ void IpcServer::on_workspace_state_changed(const WorkspaceId& workspace_id) {
     if (!running_.load()) {
         return;
     }
+    if (workspace_manager_ != nullptr) {
+        (void)workspace_manager_->refresh_workspace_floating_state_from_query(workspace_id, false);
+    }
     if (workspace_manager_ != nullptr && layout_applier_ != nullptr) {
         const auto snapshot = workspace_manager_->managed_layout_snapshot(workspace_id);
         if (snapshot.has_value() && snapshot->input_mode.has_value() &&

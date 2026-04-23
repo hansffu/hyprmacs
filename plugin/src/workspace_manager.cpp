@@ -371,7 +371,7 @@ bool WorkspaceManager::manage_workspace(const WorkspaceId& workspace_id) {
 
     managed_workspace_id_ = workspace_id;
     input_mode_ = InputMode::kEmacsControl;
-    (void)refresh_workspace_floating_state_locked(workspace_id);
+    (void)refresh_workspace_floating_state_locked(workspace_id, true);
     client_registry_.reconcile_management(managed_workspace_id_);
     refresh_managing_emacs_client_locked();
     sync_committed_layout_snapshot_locked();
@@ -548,10 +548,12 @@ void WorkspaceManager::note_overlay_float_request(const WorkspaceId& workspace_i
     overlay_float_pending_clients_.insert(normalize_client_id_for_query(client_id));
 }
 
-bool WorkspaceManager::refresh_workspace_floating_state_from_query(const WorkspaceId& workspace_id) {
+bool WorkspaceManager::refresh_workspace_floating_state_from_query(
+    const WorkspaceId& workspace_id, bool include_managed_clients
+) {
     std::scoped_lock lock(mutex_);
 
-    const bool state_mutated = refresh_workspace_floating_state_locked(workspace_id);
+    const bool state_mutated = refresh_workspace_floating_state_locked(workspace_id, include_managed_clients);
 
     if (state_mutated) {
         refresh_managing_emacs_client_locked();
@@ -775,12 +777,17 @@ bool WorkspaceManager::should_ignore_overlay_floating_update_locked(std::string_
     return false;
 }
 
-bool WorkspaceManager::refresh_workspace_floating_state_locked(const WorkspaceId& workspace_id) {
+bool WorkspaceManager::refresh_workspace_floating_state_locked(
+    const WorkspaceId& workspace_id, bool include_managed_clients
+) {
     bool state_mutated = false;
 
     const auto snapshot = client_registry_.snapshot();
     for (const auto& client : snapshot.clients) {
         if (client.workspace_id != workspace_id) {
+            continue;
+        }
+        if (!include_managed_clients && client.managed) {
             continue;
         }
 

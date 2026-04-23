@@ -1501,7 +1501,7 @@ Validation:
   - =nix develop -c sh -lc 'cmake -S plugin -B build/plugin >/tmp/hyprmacs-cmake.log && cmake --build build/plugin --target hyprmacs_ipc_server_tests hyprmacs_workspace_manager_tests -j2 && ctest --test-dir build/plugin --output-on-failure -R "hyprmacs_(ipc_server_tests|workspace_manager_tests)"'=: pass.
   - =just e2e=: pass with artifact =artifacts/e2e/20260422-222733=.
 
-** NEXT Task 16: Reproduce and fix layering + single-window geometry regressions
+** DONE Task 16: Reproduce and fix layering + single-window geometry regressions
 Purpose:
 - Reproduce the reported runtime regressions in E2E first, then fix:
   - managed clients rendering behind Emacs in emacs-control mode
@@ -1584,8 +1584,22 @@ Steps:
   - =just test=: pass.
   - =just e2e=: pass with artifact =artifacts/e2e/20260423-005630=.
 
-*** WAIT Review task 16 with user
+*** DONE Review task 16 with user
 - Stop after E2E reproduces red first and then passes green with all three assertions.
+
+*** DONE Session note: Task 16 follow-up adoption refresh split + E2E stabilization (2026-04-23)
+- User approved continuing past the Task 16 WAIT checkpoint in-session, so this checkpoint is now closed.
+- Added red E2E coverage for pre-manage floating -> tiled adoption without explicit =request-state=.
+- Initial broad fix (workspace-wide floating refresh on all state-change notifications) reproduced adoption but introduced regressions:
+  - hidden managed client lifecycle regression in =just e2e= (artifact =artifacts/e2e/20260423-173627=)
+  - managed->floating transition regression in =just e2e= (artifact =artifacts/e2e/20260423-174232=)
+- Final fix split floating refresh scope by caller intent:
+  - =WorkspaceManager::refresh_workspace_floating_state_from_query(...)= now accepts =include_managed_clients= (default =true=).
+  - =IpcServer::on_workspace_state_changed(...)= now refreshes with =include_managed_clients=false= (adopt unmanaged tiled transitions without reclassifying managed overlays).
+  - explicit =request-state= path keeps full refresh (=include_managed_clients=true=) so managed->floating detection still works.
+- Regression and verification status:
+  - targeted plugin tests passed: =hyprmacs_workspace_manager_tests= and =hyprmacs_ipc_server_tests=
+  - full suite passed: =just e2e= with artifact =artifacts/e2e/20260423-174725=.
 
 Validation:
 - =just test=
