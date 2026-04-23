@@ -37,7 +37,7 @@
                        (pcase window
                          ('w1 buffer-a)
                          ('w2 buffer-b))))
-                    ((symbol-function 'window-inside-pixel-edges)
+                    ((symbol-function 'window-body-pixel-edges)
                      (lambda (window)
                        (pcase window
                          ('w1 '(0 0 100 200))
@@ -61,7 +61,7 @@
 
           (cl-letf (((symbol-function 'window-buffer)
                      (lambda (_window) buffer-a))
-                    ((symbol-function 'window-inside-pixel-edges)
+                    ((symbol-function 'window-body-pixel-edges)
                      (lambda (_window)
                        '(10 20 110 220)))
                     ((symbol-function 'hyprmacs-layout--hyprland-main-frame-origin)
@@ -73,6 +73,28 @@
               (should (equal (alist-get 'client_id rectangle nil nil #'equal) "0xaaa"))
               (should (= (alist-get 'x rectangle) 60))
               (should (= (alist-get 'y rectangle) 90))
+              (should (= (alist-get 'width rectangle) 100))
+              (should (= (alist-get 'height rectangle) 200)))))
+      (kill-buffer buffer-a))))
+
+(ert-deftest hyprmacs-layout-window-rectangle-uses-body-edges-not-inside-edges ()
+  (let ((buffer-a (generate-new-buffer " *hyprmacs-layout-body*"))
+        (window (selected-window)))
+    (unwind-protect
+        (progn
+          (with-current-buffer buffer-a
+            (setq-local hyprmacs-client-id "0xaaa"))
+          (cl-letf (((symbol-function 'window-buffer)
+                     (lambda (_window) buffer-a))
+                    ((symbol-function 'window-body-pixel-edges)
+                     (lambda (_window) '(1 2 101 202)))
+                    ((symbol-function 'window-inside-pixel-edges)
+                     (lambda (_window) '(1 2 500 600)))
+                    ((symbol-function 'hyprmacs-layout--hyprland-main-frame-origin)
+                     (lambda () nil))
+                    ((symbol-function 'hyprmacs-layout--frame-inner-origin)
+                     (lambda (&optional _frame) '(0 . 0))))
+            (let ((rectangle (car (hyprmacs-layout-visible-rectangles (list window)))))
               (should (= (alist-get 'width rectangle) 100))
               (should (= (alist-get 'height rectangle) 200)))))
       (kill-buffer buffer-a))))
@@ -92,7 +114,7 @@
                        (pcase window
                          ('w1 buffer-a)
                          ('w2 buffer-b))))
-                    ((symbol-function 'window-inside-pixel-edges)
+                    ((symbol-function 'window-body-pixel-edges)
                      (lambda (window)
                        (pcase window
                          ('w1 '(0 0 100 100))
@@ -128,7 +150,7 @@
                        (pcase window
                          ('w1 buffer-a)
                          ('w2 buffer-b))))
-                    ((symbol-function 'window-inside-pixel-edges)
+                    ((symbol-function 'window-body-pixel-edges)
                      (lambda (_window)
                        '(0 0 100 100))))
             (should-error
@@ -149,7 +171,7 @@
 
           (cl-letf (((symbol-function 'window-buffer)
                      (lambda (_window) buffer-a))
-                    ((symbol-function 'window-inside-pixel-edges)
+                    ((symbol-function 'window-body-pixel-edges)
                      (lambda (_window) '(0 0 200 100))))
             (let ((payload (hyprmacs-layout-build-payload
                             '("0xaaa")
@@ -181,7 +203,7 @@
             (setq-local hyprmacs-client-id "0xaaa"))
           (cl-letf (((symbol-function 'window-buffer)
                      (lambda (_window) buffer-a))
-                    ((symbol-function 'window-inside-pixel-edges)
+                    ((symbol-function 'window-body-pixel-edges)
                      (lambda (window)
                        (if (eq window 'w1)
                            '(0 0 100 100)

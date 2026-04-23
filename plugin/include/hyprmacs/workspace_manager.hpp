@@ -1,5 +1,6 @@
 #pragma once
 
+#include <cstdint>
 #include <atomic>
 #include <functional>
 #include <mutex>
@@ -9,6 +10,7 @@
 #include <thread>
 #include <unordered_set>
 #include <unordered_map>
+#include <vector>
 
 #include "hyprmacs/client_registry.hpp"
 #include "hyprmacs/client_classifier.hpp"
@@ -23,6 +25,18 @@ struct EventFrame {
 
 std::optional<EventFrame> parse_event_frame(const std::string& line);
 bool is_tracked_event_name(std::string_view event_name);
+
+struct ManagedWorkspaceLayoutSnapshot {
+    WorkspaceId workspace_id;
+    std::uint64_t layout_version = 0;
+    std::unordered_map<ClientId, ClientRect> rectangles_by_client_id;
+    std::vector<ClientId> visible_client_ids;
+    std::vector<ClientId> hidden_client_ids;
+    std::vector<ClientId> stacking_order;
+    std::optional<ClientId> selected_client;
+    std::optional<InputMode> input_mode;
+    std::optional<ClientId> managing_emacs_client_id;
+};
 
 class WorkspaceManager {
   public:
@@ -55,7 +69,13 @@ class WorkspaceManager {
     void set_client_transition_notifier(ClientTransitionNotifier notifier);
     void set_state_change_notifier(StateChangeNotifier notifier);
     void set_controller_connected(bool connected);
+    bool apply_managed_layout_snapshot(ManagedWorkspaceLayoutSnapshot snapshot);
+    std::optional<ManagedWorkspaceLayoutSnapshot> managed_layout_snapshot(const WorkspaceId& workspace_id) const;
+    void clear_managed_layout_snapshot(const WorkspaceId& workspace_id);
+    void note_overlay_float_request(const WorkspaceId& workspace_id, const ClientId& client_id);
+    bool refresh_workspace_floating_state_from_query(const WorkspaceId& workspace_id, bool include_managed_clients = true);
     StateDumpPayload build_state_dump(const WorkspaceId& workspace_id) const;
+    std::optional<int> plugin_option_int(std::string_view option_name) const;
     void process_event_for_tests(const std::string& line);
 
   private:
@@ -71,6 +91,11 @@ class WorkspaceManager {
     std::optional<std::string> query_workspace_tiled_layout_locked(std::string_view workspace_id) const;
     bool dispatch_keyword_locked(std::string_view key, std::string_view value) const;
     std::optional<ClientId> find_emacs_client_locked(const WorkspaceId& workspace_id) const;
+    std::optional<ClientId> selected_managed_client_locked(const WorkspaceId& workspace_id) const;
+    bool is_snapshot_visible_client_locked(std::string_view client_id) const;
+    bool should_ignore_overlay_floating_update_locked(std::string_view client_id, bool floating);
+    bool refresh_workspace_floating_state_locked(const WorkspaceId& workspace_id, bool include_managed_clients);
+    void sync_committed_layout_snapshot_locked();
     void refresh_managing_emacs_client_locked();
 
     void apply_managed_layout_locked(const WorkspaceId& workspace_id);
@@ -98,7 +123,10 @@ class WorkspaceManager {
     PolicySnapshot policy_snapshot_;
     std::unordered_map<WorkspaceId, std::string> workspace_layout_snapshot_;
     std::unordered_set<ClientId> managed_client_seen_;
+    std::unordered_set<ClientId> overlay_float_pending_clients_;
     std::optional<ClientId> managing_emacs_client_id_;
+    std::optional<ManagedWorkspaceLayoutSnapshot> managed_layout_snapshot_;
+    std::uint64_t managed_layout_version_ = 0;
     DispatchExecutor dispatch_executor_;
     QueryExecutor query_executor_;
     ClientTransitionNotifier client_transition_notifier_;

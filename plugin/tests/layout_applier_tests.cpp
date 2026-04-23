@@ -98,7 +98,7 @@ bool test_apply_snapshot_rejects_overlapping_rectangles() {
                   "overlapping rectangles should be rejected");
 }
 
-bool test_apply_snapshot_hides_shows_and_moves() {
+bool test_apply_snapshot_hides_and_shows_without_geometry_commands() {
     std::vector<std::string> commands;
     hyprmacs::LayoutApplier applier([&commands](const std::string& command) {
         commands.push_back(command);
@@ -115,19 +115,11 @@ bool test_apply_snapshot_hides_shows_and_moves() {
 
     bool ok = true;
     ok &= expect(first_ok, "first snapshot should apply");
-    ok &= expect(commands.size() == 5, "first snapshot should hide one and move/resize/move one");
-    if (commands.size() >= 5) {
+    ok &= expect(commands.size() == 1, "first snapshot should only hide clients");
+    if (commands.size() >= 1) {
         ok &= expect(commands[0].find("dispatch movetoworkspacesilent special:hyprmacs-hidden,address:0xbbb")
                          != std::string::npos,
                      "first command should hide client");
-        ok &= expect(commands[1].find("dispatch togglefloating address:0xaaa") != std::string::npos,
-                     "second command should enable positioning mode");
-        ok &= expect(commands[2].find("dispatch movewindowpixel exact 10 20,address:0xaaa") != std::string::npos,
-                     "third command should move visible client");
-        ok &= expect(commands[3].find("dispatch resizewindowpixel exact 300 400,address:0xaaa") != std::string::npos,
-                     "fourth command should resize visible client");
-        ok &= expect(commands[4].find("dispatch movewindowpixel exact 10 20,address:0xaaa") != std::string::npos,
-                     "fifth command should re-anchor visible client after resize");
     }
 
     const size_t before_second = commands.size();
@@ -139,25 +131,20 @@ bool test_apply_snapshot_hides_shows_and_moves() {
         nullptr
     );
     ok &= expect(second_ok, "second snapshot should apply");
-    ok &= expect(commands.size() == before_second + 6,
-                 "second snapshot should hide old visible and show + move/resize/move new");
-    if (commands.size() >= before_second + 6) {
+    ok &= expect(commands.size() == before_second + 2,
+                 "second snapshot should hide old visible and show newly visible client");
+    if (commands.size() >= before_second + 2) {
         ok &= expect(commands[before_second].find("dispatch movetoworkspacesilent special:hyprmacs-hidden,address:0xaaa")
                          != std::string::npos,
                      "second snapshot should hide old visible client");
         ok &= expect(commands[before_second + 1].find("dispatch movetoworkspacesilent 1,address:0xbbb")
                          != std::string::npos,
                      "second snapshot should show previously hidden client");
-        ok &= expect(commands[before_second + 2].find("dispatch togglefloating address:0xbbb") != std::string::npos,
-                     "second snapshot should enable positioning mode for newly visible client");
-        ok &= expect(commands[before_second + 5].find("dispatch movewindowpixel exact 1 2,address:0xbbb")
-                         != std::string::npos,
-                     "second snapshot should re-anchor newly visible client after resize");
     }
     return ok;
 }
 
-bool test_restore_workspace_to_native_shows_hidden_and_resets_positioning_mode() {
+bool test_restore_workspace_to_native_shows_hidden_clients_only() {
     std::vector<std::string> commands;
     hyprmacs::LayoutApplier applier([&commands](const std::string& command) {
         commands.push_back(command);
@@ -177,13 +164,11 @@ bool test_restore_workspace_to_native_shows_hidden_and_resets_positioning_mode()
     const size_t before_restore = commands.size();
     ok &= expect(applier.restore_workspace_to_native("1", {"0xaaa", "0xbbb"}),
                  "restore_workspace_to_native should succeed");
-    ok &= expect(commands.size() == before_restore + 2,
-                 "restore should show hidden client and disable positioning mode for visible managed client");
-    if (commands.size() >= before_restore + 2) {
+    ok &= expect(commands.size() == before_restore + 1,
+                 "restore should only show hidden clients");
+    if (commands.size() >= before_restore + 1) {
         ok &= expect(commands[before_restore].find("dispatch movetoworkspacesilent 1,address:0xbbb") != std::string::npos,
                      "restore should show hidden client in original workspace");
-        ok &= expect(commands[before_restore + 1].find("dispatch togglefloating address:0xaaa") != std::string::npos,
-                     "restore should disable temporary positioning mode");
     }
 
     const size_t before_reapply = commands.size();
@@ -195,11 +180,36 @@ bool test_restore_workspace_to_native_shows_hidden_and_resets_positioning_mode()
                      nullptr
                  ),
                  "snapshot should apply after restore");
-    ok &= expect(commands.size() == before_reapply + 4,
-                 "reapply should toggle positioning mode again after restore cleanup");
-    if (commands.size() >= before_reapply + 1) {
-        ok &= expect(commands[before_reapply].find("dispatch togglefloating address:0xaaa") != std::string::npos,
-                     "first reapply command should re-enable positioning mode");
+    ok &= expect(commands.size() == before_reapply, "reapply should not emit geometry commands");
+
+    return ok;
+}
+
+bool test_overlay_floating_commands_are_emitted_with_normalized_ids() {
+    std::vector<std::string> commands;
+    hyprmacs::LayoutApplier applier([&commands](const std::string& command) {
+        commands.push_back(command);
+        return 0;
+    });
+
+    bool ok = true;
+    ok &= expect(applier.ensure_client_floating("aaa"), "ensure_client_floating should succeed");
+    ok &= expect(applier.apply_floating_geometry({.client_id = "aaa", .x = 10, .y = 20, .width = 300, .height = 400}),
+                 "apply_floating_geometry should succeed");
+    ok &= expect(applier.lower_client_zorder("aaa"), "lower_client_zorder should succeed");
+
+    ok &= expect(commands.size() == 5, "overlay helpers should emit five commands");
+    if (commands.size() == 5) {
+        ok &= expect(commands[0] == "dispatch setfloating address:0xaaa",
+                     "ensure_client_floating should normalize client id");
+        ok &= expect(commands[1] == "dispatch movewindowpixel exact 10 20,address:0xaaa",
+                     "apply_floating_geometry should emit movewindowpixel exact command");
+        ok &= expect(commands[2] == "dispatch resizewindowpixel exact 300 400,address:0xaaa",
+                     "apply_floating_geometry should emit resizewindowpixel exact command");
+        ok &= expect(commands[3] == "dispatch movewindowpixel exact 10 20,address:0xaaa",
+                     "apply_floating_geometry should re-anchor after resize");
+        ok &= expect(commands[4] == "dispatch alterzorder bottom,address:0xaaa",
+                     "lower_client_zorder should emit alterzorder bottom command");
     }
 
     return ok;
@@ -214,7 +224,8 @@ int main() {
     ok &= test_hide_does_not_duplicate_commands();
     ok &= test_id_normalization_across_hide_show();
     ok &= test_apply_snapshot_rejects_overlapping_rectangles();
-    ok &= test_apply_snapshot_hides_shows_and_moves();
-    ok &= test_restore_workspace_to_native_shows_hidden_and_resets_positioning_mode();
+    ok &= test_apply_snapshot_hides_and_shows_without_geometry_commands();
+    ok &= test_restore_workspace_to_native_shows_hidden_clients_only();
+    ok &= test_overlay_floating_commands_are_emitted_with_normalized_ids();
     return ok ? 0 : 1;
 }

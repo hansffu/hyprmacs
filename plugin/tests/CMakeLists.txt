@@ -153,3 +153,30 @@ add_test(
   NAME hyprmacs_dispatcher_tests
   COMMAND hyprmacs_dispatcher_tests
 )
+
+add_executable(hyprmacs_plugin_main_tests
+  plugin_main_tests.cpp
+  ../src/plugin_main.cpp
+)
+
+target_include_directories(hyprmacs_plugin_main_tests PRIVATE
+  ${CMAKE_CURRENT_SOURCE_DIR}/../include
+  ${HYPRLAND_INCLUDE_DIRS}
+)
+
+target_compile_definitions(hyprmacs_plugin_main_tests PRIVATE
+  HYPRMACS_PLUGIN_MAIN_UNIT_TEST=1
+)
+
+target_link_libraries(hyprmacs_plugin_main_tests PRIVATE
+  PkgConfig::HYPRLAND
+)
+
+if(CMAKE_CXX_COMPILER_ID MATCHES "Clang|GNU")
+  target_compile_options(hyprmacs_plugin_main_tests PRIVATE -Wall -Wextra -Wpedantic)
+endif()
+
+add_test(
+  NAME hyprmacs_plugin_main_tests
+  COMMAND hyprmacs_plugin_main_tests
+)

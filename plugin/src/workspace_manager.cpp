@@ -1,5 +1,6 @@
 #include "hyprmacs/workspace_manager.hpp"
 
+#include <algorithm>
 #include <array>
 #include <cctype>
 #include <cerrno>
@@ -234,7 +235,8 @@ std::optional<std::string_view> find_client_object_json(std::string_view clients
 
         const auto object_json = clients_json.substr(object_start, object_end - object_start + 1);
         const auto address = parse_json_string_field(object_json, "address");
-        if (address.has_value() && *address == client_id) {
+        if (address.has_value() &&
+            normalize_client_id_for_query(*address) == normalize_client_id_for_query(client_id)) {
             return object_json;
         }
 
@@ -364,15 +366,19 @@ bool WorkspaceManager::manage_workspace(const WorkspaceId& workspace_id) {
     const bool changed = !managed_workspace_id_.has_value() || *managed_workspace_id_ != workspace_id;
     if (changed && managed_workspace_id_.has_value()) {
         restore_managed_layout_locked(*managed_workspace_id_);
+        managed_layout_snapshot_.reset();
     }
 
     managed_workspace_id_ = workspace_id;
     input_mode_ = InputMode::kEmacsControl;
+    (void)refresh_workspace_floating_state_locked(workspace_id, true);
     client_registry_.reconcile_management(managed_workspace_id_);
     refresh_managing_emacs_client_locked();
+    sync_committed_layout_snapshot_locked();
     if (changed) {
         apply_managed_layout_locked(workspace_id);
         managed_client_seen_.clear();
+        overlay_float_pending_clients_.clear();
         const auto snapshot = client_registry_.snapshot();
         for (const auto& client : snapshot.clients) {
             if (client.managed) {
@@ -391,12 +397,14 @@ bool WorkspaceManager::unmanage_workspace(const WorkspaceId& workspace_id) {
     }
 
     restore_managed_layout_locked(workspace_id);
+    managed_layout_snapshot_.reset();
     managed_workspace_id_ = std::nullopt;
     input_mode_ = std::nullopt;
     last_active_client_id_ = std::nullopt;
     managing_emacs_client_id_ = std::nullopt;
     client_registry_.reconcile_management(managed_workspace_id_);
     managed_client_seen_.clear();
+    overlay_float_pending_clients_.clear();
     return true;
 }
 
@@ -407,6 +415,7 @@ bool WorkspaceManager::set_selected_client(const WorkspaceId& workspace_id, cons
         return false;
     }
     client_registry_.set_focus(client_id);
+    sync_committed_layout_snapshot_locked();
     return true;
 }
 
@@ -416,6 +425,7 @@ bool WorkspaceManager::set_input_mode(const WorkspaceId& workspace_id, InputMode
         return false;
     }
     input_mode_ = mode;
+    sync_committed_layout_snapshot_locked();
     return true;
 }
 
@@ -430,10 +440,15 @@ void WorkspaceManager::seed_client(
     client_registry_.upsert_open(client_id, workspace_id, app_id, title);
     client_registry_.set_floating(client_id, floating);
     client_registry_.reconcile_management(managed_workspace_id_);
+    refresh_managing_emacs_client_locked();
+    sync_committed_layout_snapshot_locked();
 }
 
 std::optional<WorkspaceId> WorkspaceManager::managed_workspace() const {
-    std::scoped_lock lock(mutex_);
+    std::unique_lock lock(mutex_, std::try_to_lock);
+    if (!lock.owns_lock()) {
+        return std::nullopt;
+    }
     return managed_workspace_id_;
 }
 
@@ -477,15 +492,75 @@ void WorkspaceManager::set_controller_connected(bool connected) {
     std::scoped_lock lock(mutex_);
     const bool transition_to_disconnected = controller_connected_ && !connected;
     controller_connected_ = connected;
-    if (transition_to_disconnected && managed_workspace_id_.has_value()) {
-        restore_managed_layout_locked(*managed_workspace_id_);
-        managed_workspace_id_ = std::nullopt;
-        input_mode_ = std::nullopt;
-        last_active_client_id_ = std::nullopt;
-        managing_emacs_client_id_ = std::nullopt;
-        client_registry_.reconcile_management(managed_workspace_id_);
-        managed_client_seen_.clear();
+    if (transition_to_disconnected) {
+        managed_layout_snapshot_.reset();
+        if (managed_workspace_id_.has_value()) {
+            restore_managed_layout_locked(*managed_workspace_id_);
+            managed_workspace_id_ = std::nullopt;
+            input_mode_ = std::nullopt;
+            last_active_client_id_ = std::nullopt;
+            managing_emacs_client_id_ = std::nullopt;
+            client_registry_.reconcile_management(managed_workspace_id_);
+            managed_client_seen_.clear();
+            overlay_float_pending_clients_.clear();
+        }
     }
+}
+
+bool WorkspaceManager::apply_managed_layout_snapshot(ManagedWorkspaceLayoutSnapshot snapshot) {
+    std::scoped_lock lock(mutex_);
+    if (snapshot.workspace_id.empty() || !managed_workspace_id_.has_value() || *managed_workspace_id_ != snapshot.workspace_id) {
+        return false;
+    }
+
+    refresh_managing_emacs_client_locked();
+    managed_layout_version_ += 1;
+    ManagedWorkspaceLayoutSnapshot committed_snapshot = std::move(snapshot);
+    committed_snapshot.layout_version = managed_layout_version_;
+    managed_layout_snapshot_ = std::move(committed_snapshot);
+    sync_committed_layout_snapshot_locked();
+    return true;
+}
+
+std::optional<ManagedWorkspaceLayoutSnapshot> WorkspaceManager::managed_layout_snapshot(const WorkspaceId& workspace_id) const {
+    std::scoped_lock lock(mutex_);
+    if (!managed_layout_snapshot_.has_value() || managed_layout_snapshot_->workspace_id != workspace_id) {
+        return std::nullopt;
+    }
+    return managed_layout_snapshot_;
+}
+
+void WorkspaceManager::clear_managed_layout_snapshot(const WorkspaceId& workspace_id) {
+    std::scoped_lock lock(mutex_);
+    if (managed_layout_snapshot_.has_value() && managed_layout_snapshot_->workspace_id == workspace_id) {
+        managed_layout_snapshot_.reset();
+    }
+}
+
+void WorkspaceManager::note_overlay_float_request(const WorkspaceId& workspace_id, const ClientId& client_id) {
+    std::scoped_lock lock(mutex_);
+    if (!managed_layout_snapshot_.has_value() || managed_layout_snapshot_->workspace_id != workspace_id) {
+        return;
+    }
+    if (!is_snapshot_visible_client_locked(client_id)) {
+        return;
+    }
+    overlay_float_pending_clients_.insert(normalize_client_id_for_query(client_id));
+}
+
+bool WorkspaceManager::refresh_workspace_floating_state_from_query(
+    const WorkspaceId& workspace_id, bool include_managed_clients
+) {
+    std::scoped_lock lock(mutex_);
+
+    const bool state_mutated = refresh_workspace_floating_state_locked(workspace_id, include_managed_clients);
+
+    if (state_mutated) {
+        refresh_managing_emacs_client_locked();
+        sync_committed_layout_snapshot_locked();
+        log_state_dump_locked();
+    }
+    return state_mutated;
 }
 
 StateDumpPayload WorkspaceManager::build_state_dump(const WorkspaceId& workspace_id) const {
@@ -524,6 +599,10 @@ StateDumpPayload WorkspaceManager::build_state_dump(const WorkspaceId& workspace
 
     out.input_mode = input_mode_;
     return out;
+}
+
+std::optional<int> WorkspaceManager::plugin_option_int(std::string_view option_name) const {
+    return query_option_int_locked(option_name);
 }
 
 void WorkspaceManager::process_event_for_tests(const std::string& line) {
@@ -652,9 +731,154 @@ std::optional<ClientId> WorkspaceManager::find_emacs_client_locked(const Workspa
     return std::nullopt;
 }
 
+std::optional<ClientId> WorkspaceManager::selected_managed_client_locked(const WorkspaceId& workspace_id) const {
+    const auto snapshot = client_registry_.snapshot();
+    if (!snapshot.selected_client.has_value()) {
+        return std::nullopt;
+    }
+
+    const ClientRecord* selected = client_registry_.find(*snapshot.selected_client);
+    if (selected == nullptr || selected->workspace_id != workspace_id || !selected->managed) {
+        return std::nullopt;
+    }
+
+    return *snapshot.selected_client;
+}
+
+bool WorkspaceManager::is_snapshot_visible_client_locked(std::string_view client_id) const {
+    if (!managed_layout_snapshot_.has_value()) {
+        return false;
+    }
+
+    const std::string normalized_client_id = normalize_client_id_for_query(client_id);
+    return std::find(
+               managed_layout_snapshot_->visible_client_ids.begin(),
+               managed_layout_snapshot_->visible_client_ids.end(),
+               normalized_client_id
+           ) != managed_layout_snapshot_->visible_client_ids.end();
+}
+
+bool WorkspaceManager::should_ignore_overlay_floating_update_locked(std::string_view client_id, bool floating) {
+    const std::string normalized_client_id = normalize_client_id_for_query(client_id);
+    if (!floating) {
+        overlay_float_pending_clients_.erase(normalized_client_id);
+        return false;
+    }
+    if (!is_snapshot_visible_client_locked(normalized_client_id)) {
+        return false;
+    }
+
+    const auto pending_it = overlay_float_pending_clients_.find(normalized_client_id);
+    if (pending_it != overlay_float_pending_clients_.end()) {
+        overlay_float_pending_clients_.erase(pending_it);
+        return true;
+    }
+
+    return false;
+}
+
+bool WorkspaceManager::refresh_workspace_floating_state_locked(
+    const WorkspaceId& workspace_id, bool include_managed_clients
+) {
+    bool state_mutated = false;
+
+    const auto snapshot = client_registry_.snapshot();
+    for (const auto& client : snapshot.clients) {
+        if (client.workspace_id != workspace_id) {
+            continue;
+        }
+        if (!include_managed_clients && client.managed) {
+            continue;
+        }
+
+        const auto queried_floating = query_client_floating_locked(client.client_id);
+        if (!queried_floating.has_value()) {
+            continue;
+        }
+        if (should_ignore_overlay_floating_update_locked(client.client_id, *queried_floating)) {
+            continue;
+        }
+        if (*queried_floating == client.floating) {
+            continue;
+        }
+
+        client_registry_.set_floating(client.client_id, *queried_floating);
+        client_registry_.reconcile_management(managed_workspace_id_);
+        state_mutated = true;
+
+        const auto* after = client_registry_.find(client.client_id);
+        if (after == nullptr || !managed_workspace_id_.has_value() || after->workspace_id != *managed_workspace_id_ ||
+            !after->managed) {
+            managed_client_seen_.erase(normalize_client_id_for_query(client.client_id));
+        } else {
+            managed_client_seen_.insert(after->client_id);
+        }
+    }
+
+    return state_mutated;
+}
+
+void WorkspaceManager::sync_committed_layout_snapshot_locked() {
+    if (!managed_layout_snapshot_.has_value() || !managed_workspace_id_.has_value() ||
+        managed_layout_snapshot_->workspace_id != *managed_workspace_id_) {
+        return;
+    }
+
+    const auto snapshot = client_registry_.snapshot();
+    std::unordered_set<ClientId> active_managed_client_ids;
+    for (const auto& client : snapshot.clients) {
+        if (client.workspace_id == *managed_workspace_id_ && client.managed && client.eligible) {
+            active_managed_client_ids.insert(client.client_id);
+        }
+    }
+
+    auto& committed_snapshot = *managed_layout_snapshot_;
+    for (auto it = committed_snapshot.rectangles_by_client_id.begin(); it != committed_snapshot.rectangles_by_client_id.end();) {
+        if (active_managed_client_ids.find(it->first) == active_managed_client_ids.end()) {
+            it = committed_snapshot.rectangles_by_client_id.erase(it);
+        } else {
+            ++it;
+        }
+    }
+
+    auto prune_client_vector = [&](std::vector<ClientId>& client_ids) {
+        client_ids.erase(
+            std::remove_if(client_ids.begin(), client_ids.end(), [&](const ClientId& client_id) {
+                return active_managed_client_ids.find(client_id) == active_managed_client_ids.end();
+            }),
+            client_ids.end()
+        );
+    };
+
+    prune_client_vector(committed_snapshot.visible_client_ids);
+    prune_client_vector(committed_snapshot.hidden_client_ids);
+    prune_client_vector(committed_snapshot.stacking_order);
+
+    auto snapshot_contains_client = [&](const ClientId& client_id) {
+        return committed_snapshot.rectangles_by_client_id.find(client_id) != committed_snapshot.rectangles_by_client_id.end() ||
+               std::find(committed_snapshot.visible_client_ids.begin(), committed_snapshot.visible_client_ids.end(), client_id) !=
+                   committed_snapshot.visible_client_ids.end() ||
+               std::find(committed_snapshot.hidden_client_ids.begin(), committed_snapshot.hidden_client_ids.end(), client_id) !=
+                   committed_snapshot.hidden_client_ids.end() ||
+               std::find(committed_snapshot.stacking_order.begin(), committed_snapshot.stacking_order.end(), client_id) !=
+                   committed_snapshot.stacking_order.end();
+    };
+
+    for (const auto& client_id : active_managed_client_ids) {
+        if (!snapshot_contains_client(client_id)) {
+            committed_snapshot.hidden_client_ids.push_back(client_id);
+        }
+    }
+
+    managed_layout_snapshot_->selected_client = selected_managed_client_locked(*managed_workspace_id_);
+    managed_layout_snapshot_->input_mode = input_mode_;
+    managed_layout_snapshot_->managing_emacs_client_id = managing_emacs_client_id_;
+}
+
 void WorkspaceManager::refresh_managing_emacs_client_locked() {
     if (!managed_workspace_id_.has_value()) {
         managing_emacs_client_id_ = std::nullopt;
+        sync_committed_layout_snapshot_locked();
         return;
     }
 
@@ -670,16 +894,19 @@ void WorkspaceManager::refresh_managing_emacs_client_locked() {
 
     if (last_active_client_id_.has_value() && is_valid_for_managed_workspace(*last_active_client_id_)) {
         managing_emacs_client_id_ = *last_active_client_id_;
+        sync_committed_layout_snapshot_locked();
         return;
     }
 
     const auto snapshot = client_registry_.snapshot();
     if (snapshot.selected_client.has_value() && is_valid_for_managed_workspace(*snapshot.selected_client)) {
         managing_emacs_client_id_ = *snapshot.selected_client;
+        sync_committed_layout_snapshot_locked();
         return;
     }
 
     managing_emacs_client_id_ = find_emacs_client_locked(*managed_workspace_id_);
+    sync_committed_layout_snapshot_locked();
 }
 
 void WorkspaceManager::apply_managed_layout_locked(const WorkspaceId& workspace_id) {
@@ -849,6 +1076,9 @@ void WorkspaceManager::handle_line(const std::string& line) {
             if (!queried_floating.has_value() || *queried_floating == before->floating) {
                 return;
             }
+            if (should_ignore_overlay_floating_update_locked(raw_client_id, *queried_floating)) {
+                return;
+            }
 
             client_registry_.set_floating(std::string(raw_client_id), *queried_floating);
             client_registry_.reconcile_management(managed_workspace_id_);
@@ -882,6 +1112,7 @@ void WorkspaceManager::handle_line(const std::string& line) {
                     last_active_client_id_ = std::nullopt;
                 }
                 managed_client_seen_.erase(normalize_client_id_for_query(parts[0]));
+                overlay_float_pending_clients_.erase(normalize_client_id_for_query(parts[0]));
                 client_registry_.reconcile_management(managed_workspace_id_);
                 state_mutated = true;
             }
@@ -921,22 +1152,26 @@ void WorkspaceManager::handle_line(const std::string& line) {
                 const bool was_managed = before != nullptr && before->managed;
                 const auto floating = parse_floating_value(parts);
                 if (floating.has_value()) {
-                    client_registry_.set_floating(parts[0], *floating);
-                    client_registry_.reconcile_management(managed_workspace_id_);
-                    state_mutated = true;
+                    if (should_ignore_overlay_floating_update_locked(parts[0], *floating)) {
+                        sync_managed_seen_for_client(parts[0]);
+                    } else {
+                        client_registry_.set_floating(parts[0], *floating);
+                        client_registry_.reconcile_management(managed_workspace_id_);
+                        state_mutated = true;
 
-                    const auto after = client_registry_.find(parts[0]);
-                    const bool now_managed = after != nullptr && after->managed;
-                    const bool can_notify = managed_workspace_id_.has_value() && client_transition_notifier_ != nullptr &&
-                                            after != nullptr && after->workspace_id == *managed_workspace_id_;
-                    if (can_notify) {
-                        if (*floating && was_managed && !now_managed) {
-                            maybe_set_transition(parts[0], true);
-                        } else if (!*floating && !was_managed && now_managed) {
-                            maybe_set_transition(parts[0], false);
+                        const auto after = client_registry_.find(parts[0]);
+                        const bool now_managed = after != nullptr && after->managed;
+                        const bool can_notify = managed_workspace_id_.has_value() && client_transition_notifier_ != nullptr &&
+                                                after != nullptr && after->workspace_id == *managed_workspace_id_;
+                        if (can_notify) {
+                            if (*floating && was_managed && !now_managed) {
+                                maybe_set_transition(parts[0], true);
+                            } else if (!*floating && !was_managed && now_managed) {
+                                maybe_set_transition(parts[0], false);
+                            }
                         }
+                        sync_managed_seen_for_client(parts[0]);
                     }
-                    sync_managed_seen_for_client(parts[0]);
                 }
             }
         }
@@ -949,6 +1184,7 @@ void WorkspaceManager::handle_line(const std::string& line) {
 
         if (state_mutated) {
             refresh_managing_emacs_client_locked();
+            sync_committed_layout_snapshot_locked();
             log_state_dump_locked();
             if (!transition_notify && controller_connected_ && managed_workspace_id_.has_value() && state_change_notifier_ != nullptr) {
                 state_change_notify = true;

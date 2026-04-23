@@ -3,7 +3,6 @@
 #include <functional>
 #include <string>
 #include <unordered_map>
-#include <unordered_set>
 #include <vector>
 
 #include "hyprmacs/plugin_state.hpp"
@@ -25,8 +24,12 @@ class LayoutApplier {
     explicit LayoutApplier(CommandExecutor executor);
 
     bool hide_client(const std::string& client_id, const std::string& workspace_id);
+    bool hide_client_force(const std::string& client_id, const std::string& workspace_id);
     bool show_client(const std::string& client_id);
     bool is_hidden(const std::string& client_id) const;
+    bool ensure_client_floating(const std::string& client_id);
+    bool apply_floating_geometry(const LayoutRectangle& rectangle);
+    bool lower_client_zorder(const std::string& client_id);
     bool restore_workspace_to_native(const WorkspaceId& workspace_id, const std::vector<ClientId>& managed_clients);
     bool apply_snapshot(const WorkspaceId& workspace_id, const std::vector<LayoutRectangle>& visible_rectangles,
                         const std::vector<ClientId>& hidden_clients, const std::vector<ClientId>& stacking_order,
@@ -37,13 +40,9 @@ class LayoutApplier {
   private:
     static std::string normalize_client_id(const std::string& client_id);
     static bool rectangles_overlap(const LayoutRectangle& lhs, const LayoutRectangle& rhs);
-    bool ensure_positioning_mode(const std::string& normalized_client_id);
-    bool disable_positioning_mode(const std::string& normalized_client_id);
-    bool move_resize_client(const LayoutRectangle& rectangle);
 
     CommandExecutor executor_;
     std::unordered_map<std::string, std::string> hidden_workspace_by_client_;
-    std::unordered_set<std::string> positioning_mode_clients_;
 };
 
 }  // namespace hyprmacs
