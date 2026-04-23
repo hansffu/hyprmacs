@@ -286,7 +286,6 @@ Non-interactively accepts flexible forms:
     (add-hook 'window-size-change-functions #'hyprmacs--auto-sync-layout-size-change)
     (add-hook 'window-state-change-functions #'hyprmacs--auto-sync-layout-state-change)
     (add-hook 'window-buffer-change-functions #'hyprmacs--auto-sync-layout-buffer-change)
-    (add-hook 'window-buffer-change-functions #'hyprmacs-enforce-visible-managed-buffer-uniqueness)
     (setq hyprmacs-layout-sync-enabled t))
   (message "hyprmacs: automatic layout sync enabled"))
 
@@ -297,7 +296,6 @@ Non-interactively accepts flexible forms:
   (remove-hook 'window-size-change-functions #'hyprmacs--auto-sync-layout-size-change)
   (remove-hook 'window-state-change-functions #'hyprmacs--auto-sync-layout-state-change)
   (remove-hook 'window-buffer-change-functions #'hyprmacs--auto-sync-layout-buffer-change)
-  (remove-hook 'window-buffer-change-functions #'hyprmacs-enforce-visible-managed-buffer-uniqueness)
   (when (timerp hyprmacs--layout-sync-timer)
     (cancel-timer hyprmacs--layout-sync-timer))
   (setq hyprmacs--layout-sync-timer nil)

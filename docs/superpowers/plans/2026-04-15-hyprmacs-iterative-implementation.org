@@ -1695,6 +1695,22 @@ Steps:
   - =emacs -Q --batch -L emacs -L tests/emacs -l tests/emacs/session-tests.el -f ert-run-tests-batch-and-exit=: pass.
   - =just e2e=: pass with artifact =artifacts/e2e/20260424-013254=.
 
+*** DONE Session note: Task 17.1 review follow-up for local hook and selected-client activation (2026-04-24)
+- Review found two remaining Task 17.1 compliance issues:
+  - global =window-buffer-change-functions= receives a frame, not the changed window, so duplicate enforcement still could not reliably prefer the newer non-selected duplicate from ordinary Emacs display paths.
+  - state-dump new-client display could be undone when payload =selected_client= still referenced an older visible client, because selected-client activation ran after displaying the new buffer.
+- Added red ERT coverage for:
+  - buffer-local =window-buffer-change-functions= on a managed buffer receiving the changed window and keeping that newer duplicate.
+  - adding a new managed client while an older selected client remains visible, requiring final Emacs selection to stay on the new client's window.
+- Fixes:
+  - moved uniqueness enforcement from the global layout-sync hook to a buffer-local =window-buffer-change-functions= hook installed by =hyprmacs-window-mode=.
+  - kept the global layout sync buffer-change hook unchanged.
+  - skipped selected-client activation for state dumps that displayed a newly managed client; no-new-client state dumps keep the existing selected-client activation behavior.
+- Verification after fix:
+  - =emacs -Q --batch -L emacs -L tests/emacs -l tests/emacs/buffer-tests.el -f ert-run-tests-batch-and-exit=: pass.
+  - =emacs -Q --batch -L emacs -L tests/emacs -l tests/emacs/session-tests.el -f ert-run-tests-batch-and-exit=: pass.
+  - =just e2e=: pass with artifact =artifacts/e2e/20260424-014015=.
+
 *** Session note: Task 16 layering blocker from compositor focus/render semantics (2026-04-22)
 - Task 16 single-window geometry regression is now fixed in E2E (client rectangle aligns with Emacs body area).
 - Remaining failing E2E assertions are the two managed layering/click assertions while Emacs is focused.

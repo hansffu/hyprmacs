@@ -164,7 +164,10 @@ Returns non-nil to allow normal kill to continue, nil to cancel."
   "Major mode for buffers associated with managed Hyprland clients."
   (setq-local mode-name (hyprmacs-window-mode--mode-name))
   (add-hook 'kill-buffer-query-functions #'hyprmacs-window-mode--kill-buffer-query nil t)
-  (add-hook 'kill-buffer-hook #'hyprmacs-window-mode--kill-buffer-hook nil t))
+  (add-hook 'kill-buffer-hook #'hyprmacs-window-mode--kill-buffer-hook nil t)
+  (add-hook 'window-buffer-change-functions
+            #'hyprmacs-enforce-visible-managed-buffer-uniqueness
+            nil t))
 
 (defun hyprmacs-window-mode-refresh ()
   "Refresh mode line in all live managed window-mode buffers."

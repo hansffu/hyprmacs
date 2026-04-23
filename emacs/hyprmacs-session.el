@@ -220,15 +220,16 @@ If the buffer exists but is not visible, leave window selection unchanged."
              (setq displayed-new-client t)))
          (when (and displayed-new-client
                     (fboundp 'hyprmacs--schedule-auto-sync-layout))
-           (hyprmacs--schedule-auto-sync-layout)))
-       (setq hyprmacs-session-state
-             (plist-put hyprmacs-session-state :selected-client
-                        (alist-get 'selected_client payload nil nil #'equal)))
-       (setq hyprmacs-session-state
-             (plist-put hyprmacs-session-state :input-mode
-                        (hyprmacs-ipc-mode-from-wire
-                         (alist-get 'input_mode payload nil nil #'equal))))
-       (hyprmacs-session--activate-selected-client-buffer)))
+           (hyprmacs--schedule-auto-sync-layout))
+         (setq hyprmacs-session-state
+               (plist-put hyprmacs-session-state :selected-client
+                          (alist-get 'selected_client payload nil nil #'equal)))
+         (setq hyprmacs-session-state
+               (plist-put hyprmacs-session-state :input-mode
+                          (hyprmacs-ipc-mode-from-wire
+                           (alist-get 'input_mode payload nil nil #'equal))))
+         (unless displayed-new-client
+           (hyprmacs-session--activate-selected-client-buffer)))))
     (hyprmacs-buffer-notify-session-state-changed old-state hyprmacs-session-state))
   hyprmacs-session-state)
 

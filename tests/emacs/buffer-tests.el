@@ -210,3 +210,22 @@
           (should (eq (window-buffer left) (get-buffer "*scratch*"))))
       (delete-other-windows)
       (hyprmacs-buffer-reset))))
+
+(ert-deftest hyprmacs-buffer-local-change-hook-prefers-changed-window ()
+  (hyprmacs-buffer-reset)
+  (delete-other-windows)
+  (let* ((hyprmacs-duplicate-buffer-replacement-buffer "*scratch*")
+         (buffer (hyprmacs-buffer-ensure-for-client "0xaaa" "foot" "shell" "1"))
+         (left (selected-window))
+         (right (split-window-right)))
+    (unwind-protect
+        (progn
+          (set-window-buffer left buffer)
+          (select-window left)
+          (set-window-buffer right buffer)
+          (with-current-buffer buffer
+            (run-hook-with-args 'window-buffer-change-functions right))
+          (should (eq (window-buffer right) buffer))
+          (should (eq (window-buffer left) (get-buffer "*scratch*"))))
+      (delete-other-windows)
+      (hyprmacs-buffer-reset))))
