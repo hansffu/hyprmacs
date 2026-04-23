@@ -72,6 +72,7 @@ class WorkspaceManager {
     bool apply_managed_layout_snapshot(ManagedWorkspaceLayoutSnapshot snapshot);
     std::optional<ManagedWorkspaceLayoutSnapshot> managed_layout_snapshot(const WorkspaceId& workspace_id) const;
     void clear_managed_layout_snapshot(const WorkspaceId& workspace_id);
+    void note_overlay_float_request(const WorkspaceId& workspace_id, const ClientId& client_id);
     bool refresh_workspace_floating_state_from_query(const WorkspaceId& workspace_id);
     StateDumpPayload build_state_dump(const WorkspaceId& workspace_id) const;
     std::optional<int> plugin_option_int(std::string_view option_name) const;
@@ -91,6 +92,9 @@ class WorkspaceManager {
     bool dispatch_keyword_locked(std::string_view key, std::string_view value) const;
     std::optional<ClientId> find_emacs_client_locked(const WorkspaceId& workspace_id) const;
     std::optional<ClientId> selected_managed_client_locked(const WorkspaceId& workspace_id) const;
+    bool is_snapshot_visible_client_locked(std::string_view client_id) const;
+    bool should_ignore_overlay_floating_update_locked(std::string_view client_id, bool floating);
+    bool refresh_workspace_floating_state_locked(const WorkspaceId& workspace_id);
     void sync_committed_layout_snapshot_locked();
     void refresh_managing_emacs_client_locked();
 
@@ -119,6 +123,7 @@ class WorkspaceManager {
     PolicySnapshot policy_snapshot_;
     std::unordered_map<WorkspaceId, std::string> workspace_layout_snapshot_;
     std::unordered_set<ClientId> managed_client_seen_;
+    std::unordered_set<ClientId> overlay_float_pending_clients_;
     std::optional<ClientId> managing_emacs_client_id_;
     std::optional<ManagedWorkspaceLayoutSnapshot> managed_layout_snapshot_;
     std::uint64_t managed_layout_version_ = 0;

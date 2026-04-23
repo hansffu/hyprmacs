@@ -619,96 +619,9 @@ class CHyprmacsAlgorithm final : public Layout::ITiledAlgorithm {
             }
         }
 
-        for (const auto& visible_client_id : snapshot->stacking_order) {
-            const auto* target_context = find_target_context(visible_client_id);
-            if (target_context == nullptr) {
-                std::cerr << "[hyprmacs] recalc missing visible target context id=" << visible_client_id << '\n';
-                continue;
-            }
-
-            const std::string normalized_target_client_id = hyprmacs::normalize_client_id_for_recalc(target_context->client_id);
-            const bool target_is_hidden = g_layout_applier.is_hidden(normalized_target_client_id);
-            const auto visibility_action = hyprmacs::compute_managed_target_visibility_action_for_recalc(
-                *snapshot,
-                target_context->workspace_id,
-                target_context->client_id,
-                target_context->floating,
-                target_is_hidden
-            );
-            if (visibility_action == hyprmacs::ManagedTargetVisibilityAction::kHide) {
-                if (!target_is_hidden) {
-                    (void)g_layout_applier.hide_client(normalized_target_client_id, target_context->workspace_id);
-                }
-                continue;
-            }
-
-            if (visibility_action == hyprmacs::ManagedTargetVisibilityAction::kShow && target_is_hidden) {
-                (void)g_layout_applier.show_client(normalized_target_client_id);
-            }
-
-            const std::string workspace_id_for_geometry =
-                (visibility_action == hyprmacs::ManagedTargetVisibilityAction::kShow && target_is_hidden)
-                ? snapshot->workspace_id
-                : target_context->workspace_id;
-            const auto target_box = hyprmacs::compute_managed_target_box_for_recalc(
-                *snapshot,
-                workspace_id_for_geometry,
-                target_context->client_id,
-                target_context->floating,
-                target_context->work_area
-            );
-            if (!target_box.has_value()) {
-                continue;
-            }
-
-            target_context->target->setPositionGlobal(Layout::STargetBox {
-                .logicalBox = *target_box,
-                .visualBox = *target_box,
-            });
-        }
-
-        for (const auto& hidden_client_id : snapshot->hidden_client_ids) {
-            const auto* target_context = find_target_context(hidden_client_id);
-            if (target_context == nullptr) {
-                continue;
-            }
-
-            const std::string normalized_target_client_id = hyprmacs::normalize_client_id_for_recalc(target_context->client_id);
-            const bool target_is_hidden = g_layout_applier.is_hidden(normalized_target_client_id);
-            const auto visibility_action = hyprmacs::compute_managed_target_visibility_action_for_recalc(
-                *snapshot,
-                target_context->workspace_id,
-                target_context->client_id,
-                target_context->floating,
-                target_is_hidden
-            );
-            if (visibility_action == hyprmacs::ManagedTargetVisibilityAction::kHide && !target_is_hidden) {
-                (void)g_layout_applier.hide_client(normalized_target_client_id, target_context->workspace_id);
-            }
-        }
-
-        const auto apply_target_zorder = [&](const TargetRecalcContext* target_context, bool top) {
-            if (target_context == nullptr) {
-                return;
-            }
-
-#if HYPRMACS_HAS_REAL_PLUGIN_API
-            const auto window = target_context->target ? target_context->target->window() : nullptr;
-            if (!window) {
-                return;
-            }
-            g_pCompositor->changeWindowZOrder(window, top);
-#else
-            (void)top;
-#endif
-        };
-
-        for (const auto& visible_client_id : snapshot->stacking_order) {
-            apply_target_zorder(find_target_context(visible_client_id), true);
-        }
-        if (snapshot->managing_emacs_client_id.has_value()) {
-            apply_target_zorder(find_target_context(*snapshot->managing_emacs_client_id), false);
-        }
+        // Managed overlay clients are driven by IPC set-layout commands.
+        // Keep the tiled algorithm from mutating their position/visibility/z-order;
+        // otherwise recalc timing can fight set-layout hide/show transitions.
     }
 
     SP<Layout::ITarget> getNextCandidate(SP<Layout::ITarget> old) override {

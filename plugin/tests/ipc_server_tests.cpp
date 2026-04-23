@@ -441,7 +441,7 @@ bool test_route_seed_client_adopts_existing_window() {
     return ok;
 }
 
-bool test_route_set_layout_commits_snapshot_without_geometry_application() {
+bool test_route_set_layout_commits_snapshot_with_overlay_floating_geometry_application() {
     hyprmacs::WorkspaceManager manager;
     RecordingApplier recording;
     RecordingRecalcRequester recalc;
@@ -456,7 +456,7 @@ bool test_route_set_layout_commits_snapshot_without_geometry_application() {
         .workspace_id = "1",
         .timestamp = "2026-04-16T00:00:00Z",
         .payload_json =
-            "{\"selected_client\":\"0xbbb\",\"input_mode\":\"client-control\",\"visible_clients\":[\"0xbbb\"],"
+            "{\"selected_client\":\"0xbbb\",\"input_mode\":\"emacs-control\",\"visible_clients\":[\"0xbbb\"],"
             "\"hidden_clients\":[\"0xaaa\"],\"rectangles\":[{\"client_id\":\"0xbbb\",\"x\":10,\"y\":20,\"width\":300,\"height\":400}],"
             "\"stacking_order\":[\"0xbbb\"]}",
     };
@@ -472,8 +472,8 @@ bool test_route_set_layout_commits_snapshot_without_geometry_application() {
         if (payload.has_value()) {
             ok &= expect(payload->input_mode.has_value(), "state-dump should include input mode");
             if (payload->input_mode.has_value()) {
-                ok &= expect(*payload->input_mode == hyprmacs::InputMode::kClientControl,
-                             "input mode should be client-control");
+                ok &= expect(*payload->input_mode == hyprmacs::InputMode::kEmacsControl,
+                             "input mode should be emacs-control");
             }
             ok &= expect(payload->selected_client.has_value(), "state-dump should include selected client");
             if (payload->selected_client.has_value()) {
@@ -482,23 +482,34 @@ bool test_route_set_layout_commits_snapshot_without_geometry_application() {
         }
     }
 
-    ok &= expect(recording.commands.size() == 1, "set-layout should reconcile visibility with one hide command");
-    if (recording.commands.size() == 1) {
+    ok &= expect(recording.commands.size() >= 5,
+                 "set-layout should apply overlay floating commands plus hidden-client reconciliation");
+    if (recording.commands.size() >= 1) {
         ok &= expect(
             recording.commands[0] == "dispatch movetoworkspacesilent special:hyprmacs-hidden,address:0xaaa",
             "set-layout should hide hidden_clients entries via movetoworkspacesilent"
         );
     }
-    ok &= expect(std::none_of(
-                     recording.commands.begin(),
-                     recording.commands.end(),
-                     [](const std::string& command) {
-                         return command.find("togglefloating") != std::string::npos ||
-                                command.find("movewindowpixel") != std::string::npos ||
-                                command.find("resizewindowpixel") != std::string::npos;
-                     }
-                 ),
-                 "set-layout should not execute floating geometry commands");
+    ok &= expect(
+        std::find(recording.commands.begin(), recording.commands.end(), "dispatch setfloating address:0xbbb")
+            != recording.commands.end(),
+        "set-layout should force visible managed clients into floating overlay mode"
+    );
+    ok &= expect(
+        std::find(recording.commands.begin(), recording.commands.end(), "dispatch movewindowpixel exact 10 20,address:0xbbb")
+            != recording.commands.end(),
+        "set-layout should position visible managed overlays from snapshot rectangles"
+    );
+    ok &= expect(
+        std::find(recording.commands.begin(), recording.commands.end(), "dispatch resizewindowpixel exact 300 400,address:0xbbb")
+            != recording.commands.end(),
+        "set-layout should size visible managed overlays from snapshot rectangles"
+    );
+    ok &= expect(
+        std::find(recording.commands.begin(), recording.commands.end(), "dispatch alterzorder bottom,address:0xbbb")
+            != recording.commands.end(),
+        "set-layout should lower managed overlays in floating z-order band"
+    );
     ok &= expect(recalc.workspaces == std::vector<std::string>({"1"}),
                  "successful set-layout commit should request one recalc for the workspace");
 
@@ -513,8 +524,8 @@ bool test_route_set_layout_commits_snapshot_without_geometry_application() {
         }
         ok &= expect(snapshot->input_mode.has_value(), "snapshot should capture input_mode");
         if (snapshot->input_mode.has_value()) {
-            ok &= expect(*snapshot->input_mode == hyprmacs::InputMode::kClientControl,
-                         "snapshot input mode should be client-control");
+            ok &= expect(*snapshot->input_mode == hyprmacs::InputMode::kEmacsControl,
+                         "snapshot input mode should be emacs-control");
         }
         ok &= expect(snapshot->visible_client_ids == std::vector<std::string>({"0xbbb"}),
                      "snapshot should preserve visible client list");
@@ -1184,7 +1195,7 @@ int main() {
     ok &= test_route_set_layout_rejects_duplicate_stacking_order_before_commit();
     ok &= test_route_set_layout_rejects_stacking_order_outside_visible_before_commit();
     ok &= test_route_set_layout_rejects_non_visible_rectangle_client_before_commit();
-    ok &= test_route_set_layout_commits_snapshot_without_geometry_application();
+    ok &= test_route_set_layout_commits_snapshot_with_overlay_floating_geometry_application();
     ok &= test_route_set_layout_shows_visible_clients_from_hidden_workspace();
     ok &= test_route_set_layout_rejects_missing_required_arrays_before_commit();
     ok &= test_route_set_layout_rejects_missing_rectangle_for_visible_client_before_commit();

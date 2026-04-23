@@ -450,6 +450,12 @@ switch modes, and collect state plus `hyprctl clients` output."
     (when name
       (format "%s" name))))
 
+(defun hyprmacs--client-hidden-p (client-id)
+  "Return non-nil when CLIENT-ID is marked hidden by Hyprland."
+  (let* ((record (hyprmacs--find-client-record client-id))
+         (hidden (alist-get 'hidden record nil nil #'equal)))
+    (hyprmacs--json-bool hidden)))
+
 (defun hyprmacs--client-center (client-id)
   "Return center point for CLIENT-ID as (X . Y), or nil when unavailable."
   (let* ((record (hyprmacs--find-client-record client-id))
@@ -543,7 +549,8 @@ This covers the implemented runtime contract through Task 11."
   (let* ((path (or log-path "logs-e2e.txt"))
          (workspace-id (hyprmacs--default-workspace-id))
          (layout-before (or (hyprmacs--activeworkspace-layout) ""))
-         (regression-failures nil))
+         (regression-failures nil)
+         (floating-before-manage-client nil))
     (hyprmacs--ensure-hyprland-instance-signature)
     (with-temp-file path
       (insert "hyprmacs nested e2e\n"))
@@ -566,6 +573,41 @@ This covers the implemented runtime contract through Task 11."
         (hyprmacs--e2e-assert (zerop exit) path "spawn duplicate-title client %d succeeded" idx)))
     (hyprmacs--wait-seconds 1.0)
 
+    ;; Pre-manage floating invariant: a native floating client should stay unmanaged and not be hidden.
+    (dolist (entry (hyprmacs--hyprctl-clients))
+      (when (null floating-before-manage-client)
+        (let* ((address (format "%s" (alist-get 'address entry nil nil #'equal)))
+               (workspace (alist-get 'workspace entry nil nil #'equal))
+               (entry-workspace-id (alist-get 'id workspace nil nil #'equal))
+               (entry-workspace (format "%s" entry-workspace-id))
+               (class (downcase (format "%s" (alist-get 'class entry nil nil #'equal))))
+               (floating (hyprmacs--json-bool (alist-get 'floating entry nil nil #'equal))))
+          (when (and (not (string-empty-p address))
+                     (equal entry-workspace workspace-id)
+                     (not (string-match-p "emacs" class))
+                     (not floating))
+            (setq floating-before-manage-client address)))))
+    (when floating-before-manage-client
+      (append-to-file (format "floating-before-manage-client: %s\n" floating-before-manage-client) nil path)
+      (pcase-let ((`(:exit ,float-exit :out ,float-out)
+                   (hyprmacs--run-command
+                    (format "hyprctl dispatch togglefloating address:%s" floating-before-manage-client))))
+        (append-to-file (format "pre-manage-togglefloating-out:\n%s\n" float-out) nil path)
+        (hyprmacs--e2e-assert
+         (zerop float-exit)
+         path
+         "pre-manage togglefloating succeeded for %s"
+         floating-before-manage-client))
+      (hyprmacs--e2e-assert
+       (hyprmacs--wait-until
+        (lambda ()
+          (let ((record (hyprmacs--find-client-record floating-before-manage-client)))
+            (and record
+                 (hyprmacs--json-bool (alist-get 'floating record nil nil #'equal)))))
+        4.0 0.10)
+       path
+       "pre-manage client is floating before manage-workspace"))
+
     (hyprmacs-manage-current-workspace workspace-id)
     (hyprmacs--wait-seconds 0.80)
     (hyprmacs-request-state workspace-id)
@@ -587,6 +629,42 @@ This covers the implemented runtime contract through Task 11."
     (hyprmacs--e2e-assert
      (= (or (hyprmacs--hyprctl-option-int "misc:focus_on_activate") -1) 0)
      path "misc:focus_on_activate forced to 0 while managed")
+    (when floating-before-manage-client
+      (hyprmacs--e2e-assert
+       (hyprmacs--wait-until
+        (lambda ()
+          (hyprmacs-request-state workspace-id)
+          (hyprmacs--wait-seconds 0.15)
+          (not (member floating-before-manage-client
+                       (or (plist-get hyprmacs-session-state :managed-clients) '()))))
+        4.0 0.20)
+       path
+       "pre-manage floating client stays out of managed set")
+      (hyprmacs--e2e-assert
+       (hyprmacs--wait-until
+        (lambda ()
+          (let ((workspace-name (or (hyprmacs--client-workspace-name floating-before-manage-client) "")))
+            (and (not (string-empty-p workspace-name))
+                 (not (string= workspace-name "special:hyprmacs-hidden")))))
+        4.0 0.20)
+       path
+       "pre-manage floating client is not moved to hidden workspace"))
+    (when floating-before-manage-client
+      (pcase-let ((`(:exit ,close-exit :out ,close-out)
+                   (hyprmacs--run-command
+                    (format "hyprctl dispatch closewindow address:%s" floating-before-manage-client))))
+        (append-to-file (format "pre-manage-floating-close-out:\n%s\n" close-out) nil path)
+        (hyprmacs--e2e-assert
+         (zerop close-exit)
+         path
+         "pre-manage floating client close succeeded"))
+      (hyprmacs--e2e-assert
+       (hyprmacs--wait-until
+        (lambda ()
+          (null (hyprmacs--find-client-record floating-before-manage-client)))
+        4.0 0.15)
+       path
+       "pre-manage floating client is closed before layering assertions"))
 
     (let* ((active (hyprmacs--hyprctl-activewindow))
            (managing-emacs-address (format "%s" (alist-get 'address active nil nil #'equal)))
@@ -682,26 +760,44 @@ This covers the implemented runtime contract through Task 11."
                 5.0 0.20)
                path "managed client is visible when managed buffer is shown")
               (let* ((window-body (hyprmacs--window-body-rectangle (selected-window)))
-                     (window-bottom (+ (alist-get 'y window-body)
-                                       (alist-get 'height window-body)))
                      (client-rect nil)
-                     (geometry-ok
+                     (client-ready
                       (hyprmacs--wait-until
                        (lambda ()
                          (setq client-rect (hyprmacs--client-rectangle target-client))
-                         (let ((client-bottom (and client-rect
-                                                   (+ (alist-get 'y client-rect)
-                                                      (alist-get 'height client-rect)))))
-                           (and client-rect
-                                (<= client-bottom (+ window-bottom 1)))))
-                       3.0 0.10)))
+                         client-rect)
+                       3.0 0.10))
+                     (x-delta nil)
+                     (y-delta nil)
+                     (width-delta nil)
+                     (height-delta nil)
+                     (geometry-ok nil))
+                (when client-ready
+                  (setq x-delta (abs (- (alist-get 'x client-rect) (alist-get 'x window-body))))
+                  (setq y-delta (abs (- (alist-get 'y client-rect) (alist-get 'y window-body))))
+                  (setq width-delta (abs (- (alist-get 'width client-rect) (alist-get 'width window-body))))
+                  (setq height-delta (abs (- (alist-get 'height client-rect) (alist-get 'height window-body))))
+                  (setq geometry-ok
+                        (and (<= x-delta 2)
+                             (<= y-delta 2)
+                             (<= width-delta 2)
+                             (<= height-delta 2))))
                 (append-to-file (format "single-window-body-rect: %S\n" window-body) nil path)
                 (append-to-file (format "single-window-client-rect: %S\n" client-rect) nil path)
+                (append-to-file
+                 (format "single-window-rect-delta: ((x . %S) (y . %S) (width . %S) (height . %S))\n"
+                         x-delta y-delta width-delta height-delta)
+                 nil path)
                 (condition-case err
-                    (hyprmacs--e2e-assert
-                     geometry-ok
-                     path
-                     "single-window managed client does not cover modeline/body bottom")
+                    (progn
+                      (hyprmacs--e2e-assert
+                       client-ready
+                       path
+                       "single-window client rectangle is available for geometry assertion")
+                      (hyprmacs--e2e-assert
+                       geometry-ok
+                       path
+                       "single-window managed client rectangle matches Emacs body rectangle"))
                   (error (push (error-message-string err) regression-failures)))
                 )
               (pcase-let ((`(:exit ,focus-exit :out ,focus-out)
@@ -758,12 +854,16 @@ This covers the implemented runtime contract through Task 11."
               (switch-to-buffer (get-buffer-create "*hyprmacs-e2e-scratch*"))
               (hyprmacs-sync-layout workspace-id t)
               (hyprmacs--wait-seconds 0.25)
+              (append-to-file
+               (format "target-client-after-hide-check: %S\n"
+                       (hyprmacs--find-client-record target-client))
+               nil path)
               (hyprmacs--e2e-assert
                (hyprmacs--wait-until
                 (lambda ()
-                  (string=
-                   (or (hyprmacs--client-workspace-name target-client) "")
-                   "special:hyprmacs-hidden"))
+                  (let ((workspace-name (or (hyprmacs--client-workspace-name target-client) "")))
+                    (or (string= workspace-name "special:hyprmacs-hidden")
+                        (hyprmacs--client-hidden-p target-client))))
                 5.0 0.20)
                path "managed client is hidden when managed buffer window is closed")
               (switch-to-buffer buffer)

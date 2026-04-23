@@ -1528,12 +1528,61 @@ Steps:
 - Ensure layout rectangle extraction uses Emacs window body area so managed clients do not cover mode line/header UI.
 - Add/update Emacs layout unit tests to capture this body-area contract.
 
-*** BLOCKED Fix compositor layering enforcement for managed/floating vs managing Emacs
+*** DONE Fix compositor layering enforcement for managed/floating vs managing Emacs
 - Enforce stacking contract at runtime:
   - floating windows above managed
   - managed above managing Emacs
   - keeping emacs-control behavior intact.
 - Add/update plugin-side regression tests around any new ordering helper/path.
+
+*** DONE Session note: Task 16 layering strategy update - two floating sub-bands (2026-04-22)
+- User approved the strategy: keep managing Emacs tiled/fullscreen, present managed clients as plugin-controlled floating overlays, and keep native floating above managed.
+- Practical runtime contract for this step:
+  - =emacs= remains tiled and anchored to workspace work area.
+  - =managed= are floating windows with geometry owned by Emacs layout snapshots.
+  - =floating= (native Hyprland floating clients not managed by hyprmacs) are always restacked above managed overlays.
+- This unblocks Task 16 step 3 by replacing the previously blocked tiled-layering assumption.
+
+*** DONE Session note: Task 16 compositor layering/hide race fixes and E2E green (2026-04-23)
+- Root cause for =hyprctl dispatch hyprmacs:set-emacs-control-mode= timeout:
+  - dispatcher callback called =publish_state_dump_for_workspace=, which routed through state-change overlay application and synchronously re-entered Hyprland command socket.
+- Fix:
+  - =IpcServer::publish_state_dump_for_workspace= now publishes only state dumps (debounced/immediate) without inline overlay command dispatch.
+- Root cause for repeated hidden-buffer regression in floating-overlay mode:
+  - late/stale workspace moves could bring a hidden managed overlay back to workspace =1= after a newer hide snapshot.
+  - hidden-state cache in =LayoutApplier= could become stale relative to compositor movement ordering.
+- Fixes:
+  - state-change handling now enforces hidden snapshot members first, then applies z-order-only restacking.
+  - added =LayoutApplier::hide_client_force(...)= and used it for state-change hidden enforcement so hidden re-assertion always dispatches even when cache says hidden.
+  - reduced plugin tiled algorithm side effects so managed overlay visibility/geometry ownership stays in IPC/layout-applier paths.
+- E2E assertion alignment for floating-overlay hide semantics:
+  - managed-hidden assertion now accepts either hidden workspace or compositor =hidden=true=.
+  - logs now include one snapshot line at hide checkpoint for diagnosis.
+- Verification:
+  - =nix develop -c sh -lc 'cmake --build build/plugin -j8 && ctest --test-dir build/plugin --output-on-failure'= pass.
+  - =just e2e= pass with artifact =artifacts/e2e/20260423-003413=.
+
+*** DONE Session note: Task 16 follow-up for pre-manage floating and strict geometry assertions (2026-04-23)
+- User reported two additional runtime regressions after Task 16 checkpoint review:
+  - managed overlay geometry/placement was wrong in single-window scenarios.
+  - pre-existing floating windows (floating before manage-workspace) could still end up in hidden workspace =-98=.
+- Reproduced red with test-first updates:
+  - strengthened E2E single-window geometry assertion to require full rectangle alignment (x/y/width/height deltas), not only bottom-edge check.
+  - added pre-manage floating E2E scenario:
+    - make a client floating before manage
+    - assert it stays out of =managed_clients=
+    - assert it is not moved to =special:hyprmacs-hidden=
+  - added plugin red unit tests:
+    - =layout_applier_tests=: overlay geometry path must execute =move -> resize -> move= to keep top-left anchor stable.
+    - =workspace_manager_tests=: =manage_workspace= must refresh floating state from query so clients that became floating before manage are excluded.
+- Fixes:
+  - restored post-resize re-anchor in =LayoutApplier::apply_floating_geometry(...)= (second =movewindowpixel= after resize).
+  - added internal =WorkspaceManager::refresh_workspace_floating_state_locked(...)= and invoke it from =manage_workspace(...)= before membership reconcile.
+  - kept E2E layering checks isolated by closing the dedicated pre-manage floating probe client after validating invariants, so it does not mask managed click assertions.
+- Verification:
+  - =nix develop -c sh -lc 'cmake --build build/plugin --target hyprmacs_layout_applier_tests hyprmacs_workspace_manager_tests -j8 && ctest --test-dir build/plugin --output-on-failure -R "hyprmacs_(layout_applier_tests|workspace_manager_tests)"'=: red before fix, green after fix.
+  - =just test=: pass.
+  - =just e2e=: pass with artifact =artifacts/e2e/20260423-005630=.
 
 *** WAIT Review task 16 with user
 - Stop after E2E reproduces red first and then passes green with all three assertions.

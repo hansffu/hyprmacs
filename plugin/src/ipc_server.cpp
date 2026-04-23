@@ -520,6 +520,62 @@ std::optional<InputMode> parse_input_mode_field_from_payload(std::string_view pa
     return std::nullopt;
 }
 
+void apply_managed_overlay_commands(LayoutApplier& layout_applier,
+                                    WorkspaceManager* workspace_manager,
+                                    const WorkspaceId& workspace_id,
+                                    const std::vector<std::string>& stacking_order,
+                                    const std::vector<LayoutRectangle>& visible_rectangles) {
+    std::unordered_map<std::string, LayoutRectangle> rectangles_by_client_id;
+    rectangles_by_client_id.reserve(visible_rectangles.size());
+    for (const auto& rectangle : visible_rectangles) {
+        rectangles_by_client_id.emplace(rectangle.client_id, rectangle);
+    }
+
+    for (const auto& client_id : stacking_order) {
+        const auto it = rectangles_by_client_id.find(client_id);
+        if (it == rectangles_by_client_id.end()) {
+            continue;
+        }
+
+        if (workspace_manager != nullptr) {
+            workspace_manager->note_overlay_float_request(workspace_id, client_id);
+        }
+        if (!layout_applier.ensure_client_floating(client_id)) {
+            std::cerr << "[hyprmacs] set-layout setfloating failed workspace=" << workspace_id
+                      << " client=" << client_id << '\n';
+        }
+        if (!layout_applier.apply_floating_geometry(it->second)) {
+            std::cerr << "[hyprmacs] set-layout floating geometry failed workspace=" << workspace_id
+                      << " client=" << client_id << '\n';
+        }
+    }
+
+    for (auto it = stacking_order.rbegin(); it != stacking_order.rend(); ++it) {
+        if (rectangles_by_client_id.find(*it) == rectangles_by_client_id.end()) {
+            continue;
+        }
+        if (!layout_applier.lower_client_zorder(*it)) {
+            std::cerr << "[hyprmacs] set-layout managed z-order lower failed workspace=" << workspace_id
+                      << " client=" << *it << '\n';
+        }
+    }
+}
+
+void apply_managed_overlay_zorder_only(LayoutApplier& layout_applier,
+                                       const WorkspaceId& workspace_id,
+                                       const std::vector<std::string>& stacking_order,
+                                       const std::unordered_set<std::string>& visible_client_ids) {
+    for (auto it = stacking_order.rbegin(); it != stacking_order.rend(); ++it) {
+        if (visible_client_ids.find(*it) == visible_client_ids.end()) {
+            continue;
+        }
+        if (!layout_applier.lower_client_zorder(*it)) {
+            std::cerr << "[hyprmacs] state-change managed z-order lower failed workspace=" << workspace_id
+                      << " client=" << *it << '\n';
+        }
+    }
+}
+
 }  // namespace
 
 int normalize_state_notify_debounce_ms(std::optional<int> configured_value, bool* used_default_out, bool* clamped_out) {
@@ -709,6 +765,33 @@ std::vector<ProtocolMessage> route_command_for_tests(
                     }
                 }
             }
+            if (ok && *mode == InputMode::kEmacsControl) {
+                const auto snapshot = workspace_manager.managed_layout_snapshot(incoming.workspace_id);
+                if (snapshot.has_value()) {
+                    std::vector<LayoutRectangle> visible_rectangles;
+                    visible_rectangles.reserve(snapshot->visible_client_ids.size());
+                    for (const auto& client_id : snapshot->visible_client_ids) {
+                        const auto rect_it = snapshot->rectangles_by_client_id.find(client_id);
+                        if (rect_it == snapshot->rectangles_by_client_id.end()) {
+                            continue;
+                        }
+                        visible_rectangles.push_back(LayoutRectangle {
+                            .client_id = client_id,
+                            .x = rect_it->second.x,
+                            .y = rect_it->second.y,
+                            .width = rect_it->second.width,
+                            .height = rect_it->second.height,
+                        });
+                    }
+                    apply_managed_overlay_commands(
+                        layout_applier,
+                        &workspace_manager,
+                        incoming.workspace_id,
+                        snapshot->stacking_order,
+                        visible_rectangles
+                    );
+                }
+            }
         }
         out.push_back(make_message("mode-changed", incoming.workspace_id, payload_for_mode_changed(wire_mode, ok)));
         out.push_back(make_message(
@@ -853,6 +936,14 @@ std::vector<ProtocolMessage> route_command_for_tests(
                             }
                         }
                     }
+
+                    apply_managed_overlay_commands(
+                        layout_applier,
+                        &workspace_manager,
+                        incoming.workspace_id,
+                        *stacking_order_opt,
+                        *visible_rectangles
+                    );
                 }
             }
         }
@@ -1040,7 +1131,18 @@ std::optional<std::string> IpcServer::socket_path() const {
 }
 
 void IpcServer::publish_state_dump_for_workspace(const WorkspaceId& workspace_id) {
-    on_workspace_state_changed(workspace_id);
+    if (!running_.load()) {
+        return;
+    }
+
+    // Dispatcher callbacks run on Hyprland's command handling path.
+    // Keep this path state-dump only: avoid overlay dispatches that would
+    // synchronously re-enter Hyprland's command socket and can stall hyprctl.
+    if (state_notify_debounce_ms_ <= 0) {
+        publish_state_dump_now(workspace_id);
+    } else {
+        enqueue_debounced_state_dump(workspace_id);
+    }
 }
 
 int IpcServer::resolve_state_notify_debounce_ms() const {
@@ -1338,6 +1440,37 @@ void IpcServer::on_client_transition(const WorkspaceId& workspace_id, const Clie
 void IpcServer::on_workspace_state_changed(const WorkspaceId& workspace_id) {
     if (!running_.load()) {
         return;
+    }
+    if (workspace_manager_ != nullptr && layout_applier_ != nullptr) {
+        const auto snapshot = workspace_manager_->managed_layout_snapshot(workspace_id);
+        if (snapshot.has_value() && snapshot->input_mode.has_value() &&
+            *snapshot->input_mode == InputMode::kEmacsControl) {
+            for (const auto& hidden_client_id : snapshot->hidden_client_ids) {
+                if (!layout_applier_->hide_client_force(hidden_client_id, workspace_id)) {
+                    std::cerr << "[hyprmacs] state-change hidden enforcement failed workspace="
+                              << workspace_id << " client=" << hidden_client_id << '\n';
+                }
+            }
+
+            std::unordered_set<std::string> visible_client_ids;
+            visible_client_ids.reserve(snapshot->visible_client_ids.size());
+            for (const auto& client_id : snapshot->visible_client_ids) {
+                visible_client_ids.insert(client_id);
+            }
+            apply_managed_overlay_zorder_only(
+                *layout_applier_,
+                workspace_id,
+                snapshot->stacking_order,
+                visible_client_ids
+            );
+
+            if (focus_controller_ != nullptr && snapshot->managing_emacs_client_id.has_value()) {
+                if (!focus_controller_->alter_zorder(*snapshot->managing_emacs_client_id, false)) {
+                    std::cerr << "[hyprmacs] state-change emacs z-order lower failed workspace="
+                              << workspace_id << " client=" << *snapshot->managing_emacs_client_id << '\n';
+                }
+            }
+        }
     }
     if (state_notify_debounce_ms_ <= 0) {
         publish_state_dump_now(workspace_id);

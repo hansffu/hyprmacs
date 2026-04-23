@@ -185,6 +185,36 @@ bool test_restore_workspace_to_native_shows_hidden_clients_only() {
     return ok;
 }
 
+bool test_overlay_floating_commands_are_emitted_with_normalized_ids() {
+    std::vector<std::string> commands;
+    hyprmacs::LayoutApplier applier([&commands](const std::string& command) {
+        commands.push_back(command);
+        return 0;
+    });
+
+    bool ok = true;
+    ok &= expect(applier.ensure_client_floating("aaa"), "ensure_client_floating should succeed");
+    ok &= expect(applier.apply_floating_geometry({.client_id = "aaa", .x = 10, .y = 20, .width = 300, .height = 400}),
+                 "apply_floating_geometry should succeed");
+    ok &= expect(applier.lower_client_zorder("aaa"), "lower_client_zorder should succeed");
+
+    ok &= expect(commands.size() == 5, "overlay helpers should emit five commands");
+    if (commands.size() == 5) {
+        ok &= expect(commands[0] == "dispatch setfloating address:0xaaa",
+                     "ensure_client_floating should normalize client id");
+        ok &= expect(commands[1] == "dispatch movewindowpixel exact 10 20,address:0xaaa",
+                     "apply_floating_geometry should emit movewindowpixel exact command");
+        ok &= expect(commands[2] == "dispatch resizewindowpixel exact 300 400,address:0xaaa",
+                     "apply_floating_geometry should emit resizewindowpixel exact command");
+        ok &= expect(commands[3] == "dispatch movewindowpixel exact 10 20,address:0xaaa",
+                     "apply_floating_geometry should re-anchor after resize");
+        ok &= expect(commands[4] == "dispatch alterzorder bottom,address:0xaaa",
+                     "lower_client_zorder should emit alterzorder bottom command");
+    }
+
+    return ok;
+}
+
 }  // namespace
 
 int main() {
@@ -196,5 +226,6 @@ int main() {
     ok &= test_apply_snapshot_rejects_overlapping_rectangles();
     ok &= test_apply_snapshot_hides_and_shows_without_geometry_commands();
     ok &= test_restore_workspace_to_native_shows_hidden_clients_only();
+    ok &= test_overlay_floating_commands_are_emitted_with_normalized_ids();
     return ok ? 0 : 1;
 }

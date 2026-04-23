@@ -55,6 +55,12 @@ bool LayoutApplier::hide_client(const std::string& client_id, const std::string&
         return true;
     }
 
+    return hide_client_force(normalized_client_id, workspace_id);
+}
+
+bool LayoutApplier::hide_client_force(const std::string& client_id, const std::string& workspace_id) {
+    const std::string normalized_client_id = normalize_client_id(client_id);
+
     const std::string command = "dispatch movetoworkspacesilent special:hyprmacs-hidden,address:" + normalized_client_id;
     const int rc = executor_(command);
     append_layout_debug_log(
@@ -93,6 +99,68 @@ bool LayoutApplier::show_client(const std::string& client_id) {
 
 bool LayoutApplier::is_hidden(const std::string& client_id) const {
     return hidden_workspace_by_client_.find(normalize_client_id(client_id)) != hidden_workspace_by_client_.end();
+}
+
+bool LayoutApplier::ensure_client_floating(const std::string& client_id) {
+    const std::string normalized_client_id = normalize_client_id(client_id);
+    const std::string command = "dispatch setfloating address:" + normalized_client_id;
+    const int rc = executor_(command);
+    append_layout_debug_log(
+        "setfloating command rc=" + std::to_string(rc) + " client=" + normalized_client_id + " command=" + command
+    );
+    return rc == 0;
+}
+
+bool LayoutApplier::apply_floating_geometry(const LayoutRectangle& rectangle) {
+    if (rectangle.width <= 0 || rectangle.height <= 0) {
+        append_layout_debug_log(
+            "apply_floating_geometry rejected non-positive size client=" + rectangle.client_id + " width="
+            + std::to_string(rectangle.width) + " height=" + std::to_string(rectangle.height)
+        );
+        return false;
+    }
+
+    const std::string normalized_client_id = normalize_client_id(rectangle.client_id);
+    const std::string move_command = "dispatch movewindowpixel exact " + std::to_string(rectangle.x) + " "
+                                     + std::to_string(rectangle.y) + ",address:" + normalized_client_id;
+    const int move_rc = executor_(move_command);
+    append_layout_debug_log(
+        "movewindowpixel command rc=" + std::to_string(move_rc) + " client=" + normalized_client_id + " command="
+        + move_command
+    );
+    if (move_rc != 0) {
+        return false;
+    }
+
+    const std::string resize_command = "dispatch resizewindowpixel exact " + std::to_string(rectangle.width) + " "
+                                       + std::to_string(rectangle.height) + ",address:" + normalized_client_id;
+    const int resize_rc = executor_(resize_command);
+    append_layout_debug_log(
+        "resizewindowpixel command rc=" + std::to_string(resize_rc) + " client=" + normalized_client_id + " command="
+        + resize_command
+    );
+    if (resize_rc != 0) {
+        return false;
+    }
+
+    // Hyprland resize can shift top-left anchor depending on previous geometry.
+    // Re-apply move after resize so rectangle origin stays deterministic.
+    const int remmove_rc = executor_(move_command);
+    append_layout_debug_log(
+        "movewindowpixel-reanchor command rc=" + std::to_string(remmove_rc) + " client=" + normalized_client_id
+        + " command=" + move_command
+    );
+    return remmove_rc == 0;
+}
+
+bool LayoutApplier::lower_client_zorder(const std::string& client_id) {
+    const std::string normalized_client_id = normalize_client_id(client_id);
+    const std::string command = "dispatch alterzorder bottom,address:" + normalized_client_id;
+    const int rc = executor_(command);
+    append_layout_debug_log(
+        "alterzorder-bottom command rc=" + std::to_string(rc) + " client=" + normalized_client_id + " command=" + command
+    );
+    return rc == 0;
 }
 
 bool LayoutApplier::restore_workspace_to_native(const WorkspaceId& workspace_id,
