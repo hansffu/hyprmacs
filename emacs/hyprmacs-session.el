@@ -11,6 +11,7 @@
 ;;; Code:
 
 (require 'cl-lib)
+(require 'seq)
 (require 'hyprmacs-buffers)
 (require 'hyprmacs-ipc)
 
@@ -29,21 +30,23 @@
 (defvar hyprmacs-session--partial-frame ""
   "Buffered partial frame data for process filter." )
 
+(declare-function hyprmacs--schedule-auto-sync-layout "hyprmacs")
+
 (defun hyprmacs-session-reset ()
   "Reset the session state to defaults."
   (setq hyprmacs-session-state
-        '(:connection-status disconnected
-          :workspace-id nil
-          :managed nil
-          :controller-connected nil
-          :known-clients nil
-          :associated-buffers nil
-          :eligible-clients nil
-          :managed-clients nil
-          :selected-client nil
-          :input-mode nil
-          :last-error nil
-          :last-message-type nil)))
+        (list :connection-status 'disconnected
+              :workspace-id nil
+              :managed nil
+              :controller-connected nil
+              :known-clients nil
+              :associated-buffers nil
+              :eligible-clients nil
+              :managed-clients nil
+              :selected-client nil
+              :input-mode nil
+              :last-error nil
+              :last-message-type nil)))
 
 (defun hyprmacs-session--set-connection-status (status)
   "Set connection STATUS in session state."  
@@ -188,7 +191,10 @@ If the buffer exists but is not visible, leave window selection unchanged."
             "unknown protocol error")))
       ("state-dump"
        (let ((eligible-clients (alist-get 'eligible_clients payload nil nil #'equal))
-             (managed-clients (alist-get 'managed_clients payload nil nil #'equal)))
+             (managed-clients (alist-get 'managed_clients payload nil nil #'equal))
+             (old-managed-clients (plist-get hyprmacs-session-state :managed-clients))
+             new-managed-clients
+             displayed-new-client)
          (setq hyprmacs-session-state
                (plist-put hyprmacs-session-state :managed
                           (hyprmacs-session--payload-bool payload 'managed)))
@@ -203,7 +209,19 @@ If the buffer exists but is not visible, leave window selection unchanged."
                (plist-put hyprmacs-session-state :managed-clients managed-clients))
          (setq hyprmacs-session-state
                (plist-put hyprmacs-session-state :associated-buffers
-                          (hyprmacs-buffer-sync-managed managed-clients eligible-clients))))
+                          (hyprmacs-buffer-sync-managed managed-clients eligible-clients)))
+         (setq new-managed-clients
+               (seq-difference managed-clients old-managed-clients #'equal))
+         (when-let* ((client-id (and new-managed-clients
+                                     (car managed-clients)))
+                     (buffer (hyprmacs-buffer-for-client client-id)))
+           (when (buffer-live-p buffer)
+             (hyprmacs-display-managed-buffer
+              buffer client-id workspace-id 'new-client)
+             (setq displayed-new-client t)))
+         (when (and displayed-new-client
+                    (fboundp 'hyprmacs--schedule-auto-sync-layout))
+           (hyprmacs--schedule-auto-sync-layout)))
        (setq hyprmacs-session-state
              (plist-put hyprmacs-session-state :selected-client
                         (alist-get 'selected_client payload nil nil #'equal)))

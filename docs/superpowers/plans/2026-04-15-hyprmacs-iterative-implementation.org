@@ -1641,6 +1641,41 @@ Validation:
   - in single-window Emacs layout, managed client no longer covers modeline.
   - native floating windows remain unmanaged and visibly above Emacs + managed windows.
 
+** TODO Task 17: Implement usability ergonomics pass
+Purpose:
+- Implement Emacs-orchestrated day-to-day control ergonomics from =docs/superpowers/specs/2026-04-24-usability-ergonomics-design.md=.
+
+Steps:
+*** DONE Task 17.1: Emacs display policy and duplicate enforcement
+- Add TDD coverage for displaying new managed clients in the active Emacs window.
+- Enforce at most one visible Emacs window per hyprmacs managed buffer.
+- Replace older duplicate visible windows with =*scratch*= and schedule layout sync through existing layout hooks.
+*** TODO Task 17.2: Managed buffer floating/unmanage command
+*** TODO Task 17.3: Completing-read summon command
+*** TODO Task 17.4: Managed-client focus request handling
+*** WAIT Review task 17 with user
+- Stop when all usability features pass ERT/plugin tests and nested E2E.
+
+*** DONE Session note: Task 17.1 managed buffer display policy (2026-04-24)
+- Added Emacs-side display policy helpers:
+  - =hyprmacs-display-managed-buffer= and default display function display a managed buffer in the selected Emacs window, or select an existing visible window for that buffer.
+  - =hyprmacs-enforce-single-visible-managed-buffer= keeps a managed buffer visible in at most one window, preserving the selected/preferred window and replacing older duplicates with =*scratch*=.
+  - =hyprmacs-enforce-visible-managed-buffer-uniqueness= is registered with =window-buffer-change-functions= while layout sync is enabled.
+- State dump handling now detects newly managed clients, displays the first current managed client for that new-client transition, and schedules layout sync.
+- Fixed =hyprmacs-session-reset= to construct a fresh plist, avoiding quoted-plist mutation that preserved stale =:managed-clients= across tests.
+- Nested E2E coverage now asserts:
+  - newly managed client buffer is displayed in the selected Emacs window when first managed-client state is observed.
+  - duplicate visible managed buffer windows replace the older duplicate with =*scratch*=.
+- Stabilized the existing managed->floating->managed E2E assertion by waiting for compositor tiled state after the second =togglefloating= instead of using a fixed short sleep.
+- Red verification before implementation:
+  - =emacs -Q --batch -L emacs -L tests/emacs -l tests/emacs/buffer-tests.el -f ert-run-tests-batch-and-exit= failed with undefined =hyprmacs-display-managed-buffer= and =hyprmacs-enforce-single-visible-managed-buffer=.
+  - =emacs -Q --batch -L emacs -L tests/emacs -l tests/emacs/session-tests.el -f ert-run-tests-batch-and-exit= failed because the new managed client was not displayed in the selected window.
+  - =just e2e= failed during the red unit phase on the new buffer tests.
+- Green verification after implementation:
+  - =emacs -Q --batch -L emacs -L tests/emacs -l tests/emacs/buffer-tests.el -f ert-run-tests-batch-and-exit=: pass.
+  - =emacs -Q --batch -L emacs -L tests/emacs -l tests/emacs/session-tests.el -f ert-run-tests-batch-and-exit=: pass.
+  - =just e2e=: pass with artifact =artifacts/e2e/20260424-012333=.
+
 *** Session note: Task 16 layering blocker from compositor focus/render semantics (2026-04-22)
 - Task 16 single-window geometry regression is now fixed in E2E (client rectangle aligns with Emacs body area).
 - Remaining failing E2E assertions are the two managed layering/click assertions while Emacs is focused.

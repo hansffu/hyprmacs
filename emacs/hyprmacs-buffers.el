@@ -44,6 +44,18 @@ Should return non-nil on success."
   :type 'function
   :group 'hyprmacs)
 
+(defcustom hyprmacs-duplicate-buffer-replacement-buffer "*scratch*"
+  "Buffer name used when replacing duplicate visible managed buffers."
+  :type 'string
+  :group 'hyprmacs)
+
+(defcustom hyprmacs-display-managed-buffer-function
+  #'hyprmacs-display-managed-buffer-default
+  "Function used to display managed buffers.
+Called with BUFFER, CLIENT-ID, WORKSPACE-ID, and REASON."
+  :type 'function
+  :group 'hyprmacs)
+
 (defvar hyprmacs-window-title-change-functions nil
   "Hook run when a managed client title changes.
 Functions receive: CLIENT-ID OLD-TITLE NEW-TITLE BUFFER.")
@@ -78,6 +90,7 @@ Functions receive: NEW-MODE OLD-MODE.")
   "Internal guard to avoid close dispatch during internal cleanup kills.")
 
 (declare-function hyprmacs-set-input-mode "hyprmacs")
+(declare-function hyprmacs--schedule-auto-sync-layout "hyprmacs")
 
 (defun hyprmacs--normalize-client-id (client-id)
   "Return CLIENT-ID as a normalized Hyprland address string."
@@ -238,6 +251,90 @@ buffer-local metadata when available."
                (push client-id out))
              hyprmacs-buffer-table)
     (nreverse out)))
+
+(defun hyprmacs-display-managed-buffer-default (buffer _client-id _workspace-id _reason)
+  "Display managed BUFFER using the default hyprmacs window policy.
+If BUFFER is already visible, select its window. Otherwise, show it in the
+currently selected window. Return the window that displays BUFFER."
+  (let ((visible-window (get-buffer-window buffer t)))
+    (if (window-live-p visible-window)
+        (progn
+          (select-window visible-window)
+          visible-window)
+      (set-window-buffer (selected-window) buffer)
+      (selected-window))))
+
+(defun hyprmacs--managed-buffer-p (buffer)
+  "Return non-nil when BUFFER is a live hyprmacs managed client buffer."
+  (and (buffer-live-p buffer)
+       (with-current-buffer buffer
+         (eq major-mode 'hyprmacs-window-mode))
+       (with-current-buffer buffer
+         (and (stringp hyprmacs-client-id)
+              (not (string-empty-p hyprmacs-client-id))))))
+
+(defun hyprmacs--visible-windows-for-buffer (buffer)
+  "Return visible non-minibuffer windows currently displaying BUFFER."
+  (cl-remove-if-not
+   (lambda (window)
+     (and (window-live-p window)
+          (not (window-minibuffer-p window))
+          (eq (window-buffer window) buffer)))
+   (window-list nil 'no-minibuf)))
+
+(defun hyprmacs--duplicate-buffer-replacement ()
+  "Return the buffer used to replace duplicate managed-buffer displays."
+  (get-buffer-create hyprmacs-duplicate-buffer-replacement-buffer))
+
+(defun hyprmacs-enforce-single-visible-managed-buffer (buffer &optional preferred-window)
+  "Ensure managed BUFFER is visible in at most one Emacs window.
+Keep PREFERRED-WINDOW when it displays BUFFER. If omitted, prefer the selected
+window when it displays BUFFER, then the first visible window. Replace duplicate
+windows with `hyprmacs-duplicate-buffer-replacement-buffer'. Return the kept
+window, or nil when BUFFER is not visible."
+  (when (hyprmacs--managed-buffer-p buffer)
+    (let* ((windows (hyprmacs--visible-windows-for-buffer buffer))
+           (keep (cond
+                  ((and (window-live-p preferred-window)
+                        (eq (window-buffer preferred-window) buffer))
+                   preferred-window)
+                  ((and (memq (selected-window) windows)
+                        (eq (window-buffer (selected-window)) buffer))
+                   (selected-window))
+                  (t (car windows))))
+           (replacement (hyprmacs--duplicate-buffer-replacement))
+           (replaced nil))
+      (dolist (window windows)
+        (unless (eq window keep)
+          (set-window-buffer window replacement)
+          (setq replaced t)))
+      (when (and replaced (fboundp 'hyprmacs--schedule-auto-sync-layout))
+        (hyprmacs--schedule-auto-sync-layout))
+      keep)))
+
+(defun hyprmacs-enforce-visible-managed-buffer-uniqueness (&rest _)
+  "Enforce one-visible-window invariant for all visible hyprmacs buffers."
+  (let ((seen (make-hash-table :test #'eq)))
+    (dolist (window (window-list nil 'no-minibuf))
+      (let ((buffer (window-buffer window)))
+        (when (hyprmacs--managed-buffer-p buffer)
+          (puthash buffer t seen))))
+    (maphash
+     (lambda (buffer _)
+       (hyprmacs-enforce-single-visible-managed-buffer buffer))
+     seen)))
+
+(defun hyprmacs-display-managed-buffer (buffer client-id workspace-id reason)
+  "Display managed BUFFER for CLIENT-ID on WORKSPACE-ID because of REASON.
+Delegates initial display to `hyprmacs-display-managed-buffer-function', then
+enforces the one-visible-window invariant for BUFFER."
+  (let ((window (when (and (buffer-live-p buffer)
+                           (functionp hyprmacs-display-managed-buffer-function))
+                  (funcall hyprmacs-display-managed-buffer-function
+                           buffer client-id workspace-id reason))))
+    (hyprmacs-enforce-single-visible-managed-buffer
+     buffer
+     (and (window-live-p window) window))))
 
 (defun hyprmacs-buffer-sync-managed (managed-client-ids eligible-clients)
   "Sync managed buffers for MANAGED-CLIENT-IDS using ELIGIBLE-CLIENTS metadata.

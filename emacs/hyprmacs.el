@@ -286,6 +286,7 @@ Non-interactively accepts flexible forms:
     (add-hook 'window-size-change-functions #'hyprmacs--auto-sync-layout-size-change)
     (add-hook 'window-state-change-functions #'hyprmacs--auto-sync-layout-state-change)
     (add-hook 'window-buffer-change-functions #'hyprmacs--auto-sync-layout-buffer-change)
+    (add-hook 'window-buffer-change-functions #'hyprmacs-enforce-visible-managed-buffer-uniqueness)
     (setq hyprmacs-layout-sync-enabled t))
   (message "hyprmacs: automatic layout sync enabled"))
 
@@ -296,6 +297,7 @@ Non-interactively accepts flexible forms:
   (remove-hook 'window-size-change-functions #'hyprmacs--auto-sync-layout-size-change)
   (remove-hook 'window-state-change-functions #'hyprmacs--auto-sync-layout-state-change)
   (remove-hook 'window-buffer-change-functions #'hyprmacs--auto-sync-layout-buffer-change)
+  (remove-hook 'window-buffer-change-functions #'hyprmacs-enforce-visible-managed-buffer-uniqueness)
   (when (timerp hyprmacs--layout-sync-timer)
     (cancel-timer hyprmacs--layout-sync-timer))
   (setq hyprmacs--layout-sync-timer nil)
@@ -629,6 +631,24 @@ This covers the implemented runtime contract through Task 11."
     (hyprmacs--e2e-assert
      (= (or (hyprmacs--hyprctl-option-int "misc:focus_on_activate") -1) 0)
      path "misc:focus_on_activate forced to 0 while managed")
+    (hyprmacs--e2e-assert
+     (hyprmacs--wait-until
+      (lambda ()
+        (or (plist-get hyprmacs-session-state :managed-clients)
+            (progn
+              (hyprmacs-request-state workspace-id)
+              (hyprmacs--wait-seconds 0.15)
+              (plist-get hyprmacs-session-state :managed-clients))))
+      4.0 0.20)
+     path
+     "first managed-client state observed")
+    (let* ((managed (plist-get hyprmacs-session-state :managed-clients))
+           (first-client (car managed))
+           (first-buffer (and first-client (hyprmacs-buffer-for-client first-client))))
+      (hyprmacs--e2e-assert
+       (and first-buffer (eq (window-buffer (selected-window)) first-buffer))
+       path
+       "newly managed client is displayed in selected Emacs window"))
     (when floating-before-manage-client
       (hyprmacs--e2e-assert
        (hyprmacs--wait-until
@@ -790,6 +810,21 @@ This covers the implemented runtime contract through Task 11."
               (hyprmacs--e2e-assert (buffer-live-p buffer) path "managed buffer exists for target client")
               (delete-other-windows)
               (switch-to-buffer buffer)
+              (let* ((client-id (car (plist-get hyprmacs-session-state :managed-clients)))
+                     (duplicate-buffer (hyprmacs-buffer-for-client client-id))
+                     (left (selected-window))
+                     (right (split-window-right)))
+                (set-window-buffer left duplicate-buffer)
+                (set-window-buffer right duplicate-buffer)
+                (select-window right)
+                (hyprmacs-enforce-single-visible-managed-buffer duplicate-buffer)
+                (hyprmacs--e2e-assert
+                 (and (eq (window-buffer right) duplicate-buffer)
+                      (eq (window-buffer left) (get-buffer "*scratch*")))
+                 path
+                 "duplicate managed buffer display replaces older window with scratch")
+                (delete-other-windows)
+                (switch-to-buffer buffer))
               (hyprmacs-sync-layout workspace-id t)
               (hyprmacs--wait-seconds 0.25)
               (hyprmacs--e2e-assert
@@ -1031,10 +1066,14 @@ This covers the implemented runtime contract through Task 11."
                 (hyprmacs--e2e-assert
                  (zerop tile-exit)
                  path "togglefloating back to tiled succeeded for %s" transition-client))
-              (hyprmacs--wait-seconds 0.20)
               (hyprmacs--e2e-assert
-               (let ((record (hyprmacs--find-client-record transition-client)))
-                 (and record (not (hyprmacs--json-bool (alist-get 'floating record nil nil #'equal)))))
+               (hyprmacs--wait-until
+                (lambda ()
+                  (let ((record (hyprmacs--find-client-record transition-client)))
+                    (and record
+                         (not (hyprmacs--json-bool
+                               (alist-get 'floating record nil nil #'equal))))))
+                5.0 0.15)
                path "compositor marks transition client tiled after second toggle")
               (refresh-state))
 
