@@ -42,6 +42,12 @@ enum class SendProtocolResult {
     Failed,
 };
 SendProtocolResult send_protocol_message(int fd, const ProtocolMessage& message, int flags = 0);
+enum class ControllerSendAction {
+    KeepConnected,
+    DropFrame,
+    Disconnect,
+};
+ControllerSendAction controller_send_action_for_result(SendProtocolResult result);
 
 class IpcServer {
   public:
@@ -62,9 +68,11 @@ class IpcServer {
 
   private:
     void accept_loop();
-    void serve_controller(int controller_fd);
-    void send_message(int fd, const ProtocolMessage& message);
-    void send_message_unlocked(int fd, const ProtocolMessage& message);
+    void serve_controller(int controller_fd, std::uint64_t controller_generation);
+    bool send_controller_message(
+        const ProtocolMessage& message, std::optional<std::uint64_t> expected_generation = std::nullopt
+    );
+    void invalidate_controller_locked(int fd, std::uint64_t generation);
     void restore_workspace_on_disconnect();
     void on_client_transition(const WorkspaceId& workspace_id, const ClientId& client_id, bool floating);
     void on_workspace_state_changed(const WorkspaceId& workspace_id);

@@ -579,6 +579,7 @@ bool WorkspaceManager::set_input_mode(const WorkspaceId& workspace_id, InputMode
 
 void WorkspaceManager::note_internal_focus_request(const WorkspaceId& workspace_id, const ClientId& client_id) {
     std::scoped_lock lock(mutex_);
+    prune_pending_internal_focus_requests_locked();
     const std::string normalized_client_id = normalize_client_id_for_query(client_id);
     if (last_active_client_id_.has_value() && *last_active_client_id_ == normalized_client_id) {
         return;

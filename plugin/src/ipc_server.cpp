@@ -1298,6 +1298,19 @@ SendProtocolResult send_protocol_message(int fd, const ProtocolMessage& message,
     return SendProtocolResult::Sent;
 }
 
+ControllerSendAction controller_send_action_for_result(SendProtocolResult result) {
+    switch (result) {
+        case SendProtocolResult::Sent:
+            return ControllerSendAction::KeepConnected;
+        case SendProtocolResult::WouldBlock:
+            return ControllerSendAction::DropFrame;
+        case SendProtocolResult::Partial:
+        case SendProtocolResult::Failed:
+            return ControllerSendAction::Disconnect;
+    }
+    return ControllerSendAction::Disconnect;
+}
+
 IpcServer::IpcServer(WorkspaceManager* workspace_manager, LayoutApplier* layout_applier, FocusController* focus_controller,
                      RecalcRequester recalc_requester)
     : workspace_manager_(workspace_manager)
@@ -1533,21 +1546,14 @@ void IpcServer::enqueue_debounced_state_dump(const WorkspaceId& workspace_id) {
 }
 
 void IpcServer::publish_state_dump_now(const WorkspaceId& workspace_id, std::optional<std::uint64_t> expected_generation) {
-    int fd = -1;
-    std::uint64_t current_generation = 0;
-    {
-        std::scoped_lock lock(controller_mutex_);
-        fd = controller_fd_;
-        current_generation = controller_generation_;
-    }
-    if (!running_.load() || fd < 0 || workspace_manager_ == nullptr) {
-        return;
-    }
-    if (expected_generation.has_value() && *expected_generation != current_generation) {
+    if (!running_.load() || workspace_manager_ == nullptr) {
         return;
     }
 
-    send_message(fd, make_message("state-dump", workspace_id, serialize_state_dump_payload(workspace_manager_->build_state_dump(workspace_id))));
+    send_controller_message(
+        make_message("state-dump", workspace_id, serialize_state_dump_payload(workspace_manager_->build_state_dump(workspace_id))),
+        expected_generation
+    );
 }
 
 void IpcServer::state_notify_loop() {
@@ -1610,10 +1616,12 @@ void IpcServer::accept_loop() {
             break;
         }
 
+        std::uint64_t controller_generation = 0;
         {
             std::scoped_lock lock(controller_mutex_);
             controller_fd_ = controller_fd;
             controller_generation_ += 1;
+            controller_generation = controller_generation_;
         }
         {
             std::scoped_lock lock(state_notify_mutex_);
@@ -1623,7 +1631,7 @@ void IpcServer::accept_loop() {
         state_notify_debounce_ms_ = resolve_state_notify_debounce_ms();
         workspace_manager_->set_controller_connected(true);
         std::cerr << "[hyprmacs] ipc controller connected\n";
-        serve_controller(controller_fd);
+        serve_controller(controller_fd, controller_generation);
         {
             std::unique_lock controller_lock(controller_mutex_);
             std::unique_lock send_lock(send_mutex_);
@@ -1645,7 +1653,7 @@ void IpcServer::accept_loop() {
     }
 }
 
-void IpcServer::serve_controller(int controller_fd) {
+void IpcServer::serve_controller(int controller_fd, std::uint64_t controller_generation) {
     std::array<char, 4096> chunk {};
     std::string pending;
 
@@ -1669,25 +1677,25 @@ void IpcServer::serve_controller(int controller_fd) {
                 const auto incoming = parse_message(frame);
                 if (!incoming.has_value()) {
                     std::cerr << "[hyprmacs] ipc invalid frame dropped\n";
-                    send_message(
-                        controller_fd,
+                    send_controller_message(
                         make_message(
                             "protocol-error",
                             "",
                             payload_for_protocol_error("invalid-frame", "malformed JSON envelope")
-                        )
+                        ),
+                        controller_generation
                     );
                 } else if (incoming->version != 1) {
                     std::cerr << "[hyprmacs] ipc unsupported version: " << incoming->version << '\n';
-                    send_message(
-                        controller_fd,
+                    send_controller_message(
                         make_message(
                             "protocol-error",
                             incoming->workspace_id,
                             payload_for_protocol_error(
                                 "unsupported-version", "unsupported protocol version", std::to_string(incoming->version)
                             )
-                        )
+                        ),
+                        controller_generation
                     );
                 } else {
                     std::cerr << "[hyprmacs] ipc recv type=" << incoming->type << " workspace=" << incoming->workspace_id << '\n';
@@ -1699,7 +1707,7 @@ void IpcServer::serve_controller(int controller_fd) {
                         recalc_requester_
                     );
                     for (const auto& response : responses) {
-                        send_message(controller_fd, response);
+                        send_controller_message(response, controller_generation);
                     }
                 }
             }
@@ -1726,20 +1734,6 @@ void IpcServer::restore_workspace_on_disconnect() {
     }
 }
 
-void IpcServer::send_message(int fd, const ProtocolMessage& message) {
-    std::scoped_lock lock(send_mutex_);
-    send_message_unlocked(fd, message);
-}
-
-void IpcServer::send_message_unlocked(int fd, const ProtocolMessage& message) {
-    if (send_protocol_message(fd, message, 0) != SendProtocolResult::Sent) {
-        std::cerr << "[hyprmacs] ipc send failed for type=" << message.type << ": " << std::strerror(errno) << '\n';
-        return;
-    }
-
-    std::cerr << "[hyprmacs] ipc send type=" << message.type << " workspace=" << message.workspace_id << '\n';
-}
-
 void IpcServer::on_client_transition(const WorkspaceId& workspace_id, const ClientId& client_id, bool floating) {
     if (layout_applier_ != nullptr) {
         if (floating) {
@@ -1749,17 +1743,12 @@ void IpcServer::on_client_transition(const WorkspaceId& workspace_id, const Clie
         }
     }
 
-    int fd = -1;
-    {
-        std::scoped_lock lock(controller_mutex_);
-        fd = controller_fd_;
-    }
-    if (!running_.load() || fd < 0 || workspace_manager_ == nullptr) {
+    if (!running_.load() || workspace_manager_ == nullptr) {
         return;
     }
 
     const char* type = floating ? "client-became-floating" : "client-became-tiled";
-    send_message(fd, make_message(type, workspace_id, payload_for_client_transition(client_id, floating)));
+    send_controller_message(make_message(type, workspace_id, payload_for_client_transition(client_id, floating)));
     on_workspace_state_changed(workspace_id);
 }
 
@@ -1813,31 +1802,41 @@ void IpcServer::on_focus_request(const WorkspaceId& workspace_id, const ClientId
         return;
     }
 
+    send_controller_message(focus_request_message(workspace_id, client_id));
+}
+
+bool IpcServer::send_controller_message(const ProtocolMessage& message, std::optional<std::uint64_t> expected_generation) {
     std::unique_lock controller_lock(controller_mutex_);
     const int fd = controller_fd_;
     const std::uint64_t controller_generation = controller_generation_;
     std::unique_lock send_lock(send_mutex_);
     if (!running_.load()
-        || !controller_send_target_is_current(fd, controller_generation, controller_fd_, controller_generation_)) {
-        return;
+        || !controller_send_target_is_current(fd, controller_generation, controller_fd_, controller_generation_)
+        || (expected_generation.has_value() && *expected_generation != controller_generation)) {
+        return false;
     }
 
-    const auto message = focus_request_message(workspace_id, client_id);
     const auto send_result = send_protocol_message(fd, message, MSG_DONTWAIT);
-    if (send_result == SendProtocolResult::Sent) {
+    const auto action = controller_send_action_for_result(send_result);
+    if (action == ControllerSendAction::KeepConnected) {
         std::cerr << "[hyprmacs] ipc send type=" << message.type << " workspace=" << message.workspace_id << '\n';
-        return;
+        return true;
     }
 
-    std::cerr << "[hyprmacs] ipc nonblocking focus send failed for workspace=" << workspace_id
-              << " client=" << client_id << ": " << std::strerror(errno) << '\n';
-    if (send_result == SendProtocolResult::Partial || send_result == SendProtocolResult::Failed) {
-        if (controller_send_target_is_current(fd, controller_generation, controller_fd_, controller_generation_)) {
-            ::shutdown(controller_fd_, SHUT_RDWR);
-            ::close(controller_fd_);
-            controller_fd_ = -1;
-            controller_generation_ += 1;
-        }
+    std::cerr << "[hyprmacs] ipc nonblocking send failed for type=" << message.type
+              << " workspace=" << message.workspace_id << ": " << std::strerror(errno) << '\n';
+    if (action == ControllerSendAction::Disconnect) {
+        invalidate_controller_locked(fd, controller_generation);
+    }
+    return false;
+}
+
+void IpcServer::invalidate_controller_locked(int fd, std::uint64_t generation) {
+    if (controller_send_target_is_current(fd, generation, controller_fd_, controller_generation_)) {
+        ::shutdown(controller_fd_, SHUT_RDWR);
+        ::close(controller_fd_);
+        controller_fd_ = -1;
+        controller_generation_ += 1;
     }
 }
 

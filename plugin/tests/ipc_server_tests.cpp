@@ -1829,6 +1829,23 @@ bool test_send_protocol_message_nonblocking_reports_partial_write() {
     return ok;
 }
 
+bool test_controller_send_action_for_result_is_stream_safe() {
+    bool ok = true;
+    ok &= expect(hyprmacs::controller_send_action_for_result(hyprmacs::SendProtocolResult::Sent) ==
+                     hyprmacs::ControllerSendAction::KeepConnected,
+                 "sent controller frame should keep connection");
+    ok &= expect(hyprmacs::controller_send_action_for_result(hyprmacs::SendProtocolResult::WouldBlock) ==
+                     hyprmacs::ControllerSendAction::DropFrame,
+                 "would-block before writing bytes should drop only the current frame");
+    ok &= expect(hyprmacs::controller_send_action_for_result(hyprmacs::SendProtocolResult::Partial) ==
+                     hyprmacs::ControllerSendAction::Disconnect,
+                 "partial controller frame should disconnect to avoid stream corruption");
+    ok &= expect(hyprmacs::controller_send_action_for_result(hyprmacs::SendProtocolResult::Failed) ==
+                     hyprmacs::ControllerSendAction::Disconnect,
+                 "failed controller send should disconnect when stream state may be unknown");
+    return ok;
+}
+
 }  // namespace
 
 int main() {
@@ -1885,5 +1902,6 @@ int main() {
     ok &= test_controller_send_target_is_current_rejects_stale_generation_and_fd();
     ok &= test_send_protocol_message_nonblocking_reports_backpressure();
     ok &= test_send_protocol_message_nonblocking_reports_partial_write();
+    ok &= test_controller_send_action_for_result_is_stream_safe();
     return ok ? 0 : 1;
 }
