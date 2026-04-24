@@ -1760,6 +1760,18 @@ Steps:
   - =emacs -Q --batch -L emacs -L tests/emacs -l tests/emacs/buffer-tests.el -f ert-run-tests-batch-and-exit=: pass, 14/14.
   - =just e2e=: first run failed at pre-existing nested =hyprctl activeworkspace= timeout before the float route; rerun passed with artifact =artifacts/e2e/20260424-021128=.
 
+*** DONE Session note: Task 17.2 review follow-up for hidden rollback on float failure (2026-04-24)
+- Spec review found that if a hidden client restore succeeded but native =setfloating= failed, the route returned =ok:false= while leaving the managed client visible and erasing =LayoutApplier= hidden state.
+- Added red IPC route coverage where hidden-client restore succeeds, native float fails, and the route must preserve managed membership, re-hide the client, and return =ok:false=.
+- Fixed route rollback so clients hidden before =float-managed-client= are re-hidden if native floating or the later manager commit fails after restore.
+- Red verification before fix:
+  - =nix develop -c sh -lc 'cmake --build build/plugin --target hyprmacs_ipc_server_tests hyprmacs_workspace_manager_tests -j8 && ctest --test-dir build/plugin --output-on-failure -R "hyprmacs_(ipc_server_tests|workspace_manager_tests)"'= failed in =hyprmacs_ipc_server_tests= because hidden state was not preserved after restore + native float failure.
+- Green verification after fix:
+  - =nix develop -c sh -lc 'cmake --build build/plugin --target hyprmacs_ipc_server_tests hyprmacs_workspace_manager_tests -j8 && ctest --test-dir build/plugin --output-on-failure -R "hyprmacs_(ipc_server_tests|workspace_manager_tests)"'=: pass, 2/2.
+  - =emacs -Q --batch -L emacs -L tests/emacs -l tests/emacs/protocol-tests.el -f ert-run-tests-batch-and-exit=: pass, 17/17.
+  - =emacs -Q --batch -L emacs -L tests/emacs -l tests/emacs/buffer-tests.el -f ert-run-tests-batch-and-exit=: pass, 14/14.
+  - =just e2e=: pass with artifact =artifacts/e2e/20260424-021600=.
+
 *** Session note: Task 16 layering blocker from compositor focus/render semantics (2026-04-22)
 - Task 16 single-window geometry regression is now fixed in E2E (client rectangle aligns with Emacs body area).
 - Remaining failing E2E assertions are the two managed layering/click assertions while Emacs is focused.

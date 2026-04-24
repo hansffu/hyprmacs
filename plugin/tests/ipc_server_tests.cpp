@@ -285,6 +285,52 @@ bool test_route_float_managed_client_restores_hidden_client_before_unmanage() {
     return ok;
 }
 
+bool test_route_float_managed_client_rehides_when_native_float_fails_after_restore() {
+    hyprmacs::WorkspaceManager manager;
+    std::vector<std::string> commands;
+    hyprmacs::LayoutApplier applier([&commands](const std::string& command) {
+        commands.push_back(command);
+        return command.rfind("dispatch setfloating ", 0) == 0 ? 1 : 0;
+    });
+    manager.seed_client("0xaaa", "1", "foot", "foot-a", false);
+    manager.manage_workspace("1");
+    (void)applier.hide_client("0xaaa", "1");
+
+    const hyprmacs::ProtocolMessage incoming {
+        .type = "float-managed-client",
+        .workspace_id = "1",
+        .timestamp = "2026-04-24T00:00:00Z",
+        .payload_json = "{\"client_id\":\"0xaaa\"}",
+    };
+    auto responses = hyprmacs::route_command_for_tests(incoming, manager, applier);
+    const auto state = manager.build_state_dump("1");
+
+    size_t restore_index = commands.size();
+    size_t refloat_index = commands.size();
+    size_t rehide_index = commands.size();
+    for (size_t i = 0; i < commands.size(); ++i) {
+        if (commands[i] == "dispatch movetoworkspacesilent 1,address:0xaaa") {
+            restore_index = i;
+        } else if (commands[i] == "dispatch setfloating address:0xaaa") {
+            refloat_index = i;
+        } else if (i > 0 && commands[i] == "dispatch movetoworkspacesilent special:hyprmacs-hidden,address:0xaaa") {
+            rehide_index = i;
+        }
+    }
+
+    bool ok = true;
+    ok &= expect(responses.size() == 2, "native float failure after restore should return ack and state-dump");
+    ok &= expect(responses[0].type == "client-floated", "native float failure after restore response should be client-floated");
+    ok &= expect(responses[0].payload_json.find("\"ok\":false") != std::string::npos,
+                 "native float failure after restore response should include ok:false");
+    ok &= expect(std::find(state.managed_clients.begin(), state.managed_clients.end(), "0xaaa") != state.managed_clients.end(),
+                 "native float failure after restore should keep client managed");
+    ok &= expect(applier.is_hidden("0xaaa"), "native float failure after restore should preserve hidden state");
+    ok &= expect(rehide_index < commands.size() && restore_index < refloat_index && refloat_index < rehide_index,
+                 "native float failure after restore should restore, attempt float, then re-hide");
+    return ok;
+}
+
 bool test_route_request_state() {
     hyprmacs::WorkspaceManager manager;
     auto applier = make_noop_applier();
@@ -1294,6 +1340,7 @@ int main() {
     ok &= test_route_float_managed_client_rejects_non_managed_without_mutation();
     ok &= test_route_float_managed_client_native_float_failure_does_not_unmanage();
     ok &= test_route_float_managed_client_restores_hidden_client_before_unmanage();
+    ok &= test_route_float_managed_client_rehides_when_native_float_fails_after_restore();
     ok &= test_route_request_state();
     ok &= test_route_request_state_refreshes_floating_membership_from_query();
     ok &= test_route_debug_hide_show();

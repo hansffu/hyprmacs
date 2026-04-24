@@ -679,14 +679,23 @@ std::vector<ProtocolMessage> route_command_for_tests(
         }
 
         bool ok = workspace_manager.can_float_managed_client(incoming.workspace_id, *client_id);
+        const bool was_hidden = ok && layout_applier.is_hidden(*client_id);
+        bool restored_hidden_client = false;
         if (ok) {
             ok = layout_applier.show_client(*client_id);
+            restored_hidden_client = ok && was_hidden;
         }
         if (ok) {
             ok = layout_applier.ensure_client_floating(*client_id);
+            if (!ok && restored_hidden_client) {
+                (void)layout_applier.hide_client(*client_id, incoming.workspace_id);
+            }
         }
         if (ok) {
             ok = workspace_manager.float_managed_client(incoming.workspace_id, *client_id);
+            if (!ok && restored_hidden_client) {
+                (void)layout_applier.hide_client(*client_id, incoming.workspace_id);
+            }
         }
         out.push_back(make_message("client-floated", incoming.workspace_id, payload_for_client_floated(*client_id, ok)));
         out.push_back(make_message(
