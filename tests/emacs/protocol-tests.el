@@ -148,16 +148,54 @@
 (ert-deftest hyprmacs-summon-client-uses-completing-read-choice ()
   (hyprmacs-session-reset)
   (hyprmacs-session-use-fake-transport)
-  (setq hyprmacs-session-state
-        (plist-put hyprmacs-session-state :summon-candidates
-                   '(((client_id . "0xabc") (workspace_id . "2") (app_id . "foot") (title . "remote shell")))))
-  (cl-letf (((symbol-function 'completing-read)
+  (cl-letf (((symbol-function 'hyprmacs--wait-seconds)
+             (lambda (&rest _)
+               (hyprmacs-session-fake-receive
+                "{\"version\":1,\"type\":\"summon-candidates\",\"workspace_id\":\"1\",\"timestamp\":\"2026-04-24T00:00:00Z\",\"payload\":{\"candidates\":[{\"client_id\":\"0xabc\",\"workspace_id\":\"2\",\"app_id\":\"foot\",\"title\":\"remote shell\"}]}}\n")))
+            ((symbol-function 'completing-read)
              (lambda (_prompt choices &rest _)
                (caar choices))))
     (hyprmacs-summon-client "1"))
-  (let* ((frame (hyprmacs-test--decode (car (hyprmacs-session-fake-outbox)))))
-    (should (equal (alist-get 'type frame nil nil #'equal) "summon-client"))
-    (should (equal (alist-get 'client_id (alist-get 'payload frame) nil nil #'equal) "0xabc"))))
+  (let* ((frames (hyprmacs-session-fake-outbox))
+         (first (hyprmacs-test--decode (nth 0 frames)))
+         (second (hyprmacs-test--decode (nth 1 frames))))
+    (should (equal (alist-get 'type first nil nil #'equal) "list-summon-candidates"))
+    (should (equal (alist-get 'type second nil nil #'equal) "summon-client"))
+    (should (equal (alist-get 'client_id (alist-get 'payload second) nil nil #'equal) "0xabc"))))
+
+(ert-deftest hyprmacs-session-tracks-summon-candidate-workspace ()
+  (hyprmacs-session-reset)
+  (hyprmacs-session-fake-receive
+   "{\"version\":1,\"type\":\"summon-candidates\",\"workspace_id\":\"7\",\"timestamp\":\"2026-04-24T00:00:00Z\",\"payload\":{\"candidates\":[{\"client_id\":\"0xabc\",\"workspace_id\":\"2\",\"app_id\":\"foot\",\"title\":\"remote\"}]}}\n")
+  (should (equal (plist-get hyprmacs-session-state :summon-candidates-workspace-id) "7"))
+  (should (equal (alist-get 'client_id
+                            (car (plist-get hyprmacs-session-state :summon-candidates))
+                            nil nil #'equal)
+                 "0xabc")))
+
+(ert-deftest hyprmacs-summon-client-does-not-reuse-stale-candidates-for-other-workspace ()
+  (hyprmacs-session-reset)
+  (hyprmacs-session-use-fake-transport)
+  (setq hyprmacs-session-state
+        (plist-put hyprmacs-session-state :summon-candidates-workspace-id "9"))
+  (setq hyprmacs-session-state
+        (plist-put hyprmacs-session-state :summon-candidates
+                   '(((client_id . "0xstale") (workspace_id . "8") (app_id . "foot") (title . "stale")))))
+  (cl-letf (((symbol-function 'hyprmacs--wait-seconds)
+             (lambda (&rest _)
+               (hyprmacs-session-fake-receive
+                "{\"version\":1,\"type\":\"summon-candidates\",\"workspace_id\":\"1\",\"timestamp\":\"2026-04-24T00:00:00Z\",\"payload\":{\"candidates\":[{\"client_id\":\"0xfresh\",\"workspace_id\":\"2\",\"app_id\":\"foot\",\"title\":\"fresh\"}]}}\n")))
+            ((symbol-function 'completing-read)
+             (lambda (_prompt choices &rest _)
+               (caar choices))))
+    (hyprmacs-summon-client "1"))
+  (let* ((frames (hyprmacs-session-fake-outbox))
+         (first (hyprmacs-test--decode (nth 0 frames)))
+         (second (hyprmacs-test--decode (nth 1 frames))))
+    (should (equal (alist-get 'type first nil nil #'equal) "list-summon-candidates"))
+    (should (equal (alist-get 'workspace_id first nil nil #'equal) "1"))
+    (should (equal (alist-get 'type second nil nil #'equal) "summon-client"))
+    (should (equal (alist-get 'client_id (alist-get 'payload second) nil nil #'equal) "0xfresh"))))
 
 (ert-deftest hyprmacs-command-set-input-mode-defaults-to-client-control ()
   (hyprmacs-session-reset)

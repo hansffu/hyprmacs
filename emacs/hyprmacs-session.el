@@ -44,6 +44,7 @@
               :eligible-clients nil
               :managed-clients nil
               :summon-candidates nil
+              :summon-candidates-workspace-id nil
               :selected-client nil
               :input-mode nil
               :last-error nil
@@ -79,6 +80,8 @@
         (plist-put hyprmacs-session-state :managed-clients nil))
   (setq hyprmacs-session-state
         (plist-put hyprmacs-session-state :summon-candidates nil))
+  (setq hyprmacs-session-state
+        (plist-put hyprmacs-session-state :summon-candidates-workspace-id nil))
   (setq hyprmacs-session-state
         (plist-put hyprmacs-session-state :selected-client nil))
   (setq hyprmacs-session-state
@@ -191,7 +194,10 @@ If the buffer exists but is not visible, leave window selection unchanged."
       ("summon-candidates"
        (setq hyprmacs-session-state
              (plist-put hyprmacs-session-state :summon-candidates
-                        (alist-get 'candidates payload nil nil #'equal))))
+                        (alist-get 'candidates payload nil nil #'equal)))
+       (setq hyprmacs-session-state
+             (plist-put hyprmacs-session-state :summon-candidates-workspace-id
+                        workspace-id)))
       ("protocol-error"
        (hyprmacs-session--set-last-error
         (or (alist-get 'message payload nil nil #'equal)

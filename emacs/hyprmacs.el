@@ -240,10 +240,16 @@ With PROMPT, ask for a managed client."
   "Summon an eligible tiled client from another workspace."
   (interactive)
   (let ((workspace-id (or workspace-id (hyprmacs--default-workspace-id))))
-    (unless (plist-get hyprmacs-session-state :summon-candidates)
-      (hyprmacs-session-list-summon-candidates workspace-id)
-      (hyprmacs--wait-seconds 0.20))
-    (let* ((candidates (or (plist-get hyprmacs-session-state :summon-candidates) '()))
+    (setq hyprmacs-session-state
+          (plist-put hyprmacs-session-state :summon-candidates nil))
+    (setq hyprmacs-session-state
+          (plist-put hyprmacs-session-state :summon-candidates-workspace-id nil))
+    (hyprmacs-session-list-summon-candidates workspace-id)
+    (hyprmacs--wait-seconds 0.20)
+    (let* ((candidate-workspace-id (plist-get hyprmacs-session-state :summon-candidates-workspace-id))
+           (candidates (if (equal candidate-workspace-id workspace-id)
+                           (or (plist-get hyprmacs-session-state :summon-candidates) '())
+                         '()))
            (choices (mapcar (lambda (candidate)
                               (cons (hyprmacs--summon-candidate-label candidate) candidate))
                             candidates))

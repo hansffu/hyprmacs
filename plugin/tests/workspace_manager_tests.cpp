@@ -1114,6 +1114,7 @@ bool test_summon_candidates_include_only_other_workspace_tiled_eligible_clients(
     manager.seed_client("0xaaa", "1", "foot", "local", false);
     manager.seed_client("0xbbb", "2", "foot", "remote", false);
     manager.seed_client("0xccc", "3", "foot", "floating", true);
+    manager.seed_client("0xddd", "2", "xdg-desktop-portal", "Open File", false);
     manager.seed_client("0xeee", "2", "emacs", "emacs", false);
     manager.manage_workspace("1");
 
@@ -1137,15 +1138,44 @@ bool test_summon_client_moves_and_adopts_candidate() {
     manager.seed_client("0xaaa", "1", "foot", "local", false);
     manager.seed_client("0xbbb", "2", "foot", "remote", false);
     manager.manage_workspace("1");
+    manager.set_input_mode("1", hyprmacs::InputMode::kClientControl);
+    manager.set_selected_client("1", "0xaaa");
+    manager.apply_managed_layout_snapshot({
+        .workspace_id = "1",
+        .layout_version = 0,
+        .rectangles_by_client_id = {
+            {"0xaaa", hyprmacs::ClientRect {.x = 0, .y = 0, .width = 100, .height = 100}},
+        },
+        .visible_client_ids = {"0xaaa"},
+        .hidden_client_ids = {},
+        .stacking_order = {"0xaaa"},
+        .selected_client = std::nullopt,
+        .input_mode = std::nullopt,
+        .managing_emacs_client_id = std::nullopt,
+    });
+    commands.clear();
 
     const bool summoned = manager.summon_client("1", "0xbbb");
     auto state = manager.build_state_dump("1");
+    auto snapshot = manager.managed_layout_snapshot("1");
 
     bool ok = true;
     ok &= expect(summoned, "summon_client should accept remote eligible tiled client");
+    ok &= expect(commands.size() == 1, "summon should dispatch exactly one workspace move");
+    if (!commands.empty()) {
+        ok &= expect(commands[0] == "dispatch movetoworkspacesilent 1,address:0xbbb",
+                     "summon should dispatch exact silent move command");
+    }
     ok &= expect(std::find(state.managed_clients.begin(), state.managed_clients.end(), "0xbbb") != state.managed_clients.end(),
                  "summoned client should be managed in target workspace");
-    ok &= expect(!commands.empty(), "summon should dispatch workspace move");
+    ok &= expect(snapshot.has_value(), "summon should preserve committed snapshot for target workspace");
+    if (snapshot.has_value()) {
+        ok &= expect(snapshot->workspace_id == "1", "committed snapshot should remain attached to target workspace");
+        ok &= expect(snapshot->input_mode == hyprmacs::InputMode::kClientControl,
+                     "committed snapshot sync should preserve manager input mode");
+        ok &= expect(snapshot->selected_client.has_value() && *snapshot->selected_client == "0xaaa",
+                     "committed snapshot sync should preserve selected managed client");
+    }
     return ok;
 }
 

@@ -1796,6 +1796,23 @@ Steps:
   - =nix develop -c sh -lc 'cmake --build build/plugin --target hyprmacs_workspace_manager_tests hyprmacs_ipc_server_tests -j8 && ctest --test-dir build/plugin --output-on-failure -R "hyprmacs_(workspace_manager_tests|ipc_server_tests)"'=: pass, 2/2.
   - =just e2e=: first run reached the new summon probe but failed because the E2E lookup matched only current title after =foot= had changed it; rerun passed with artifact =artifacts/e2e/20260424-022921=.
 
+*** DONE Session note: Task 17.3 review follow-up for stale candidates and stricter plugin coverage (2026-04-24)
+- Spec review found that =hyprmacs-summon-client= could reuse a non-empty cached =:summon-candidates= list from another target workspace because candidates were not associated with the response workspace.
+- Added red ERT coverage for:
+  - storing the =summon-candidates= response workspace in session state.
+  - refusing to reuse stale candidates from workspace 9 when summoning into workspace 1, requiring a fresh =list-summon-candidates= request and using the fresh response.
+- Fixed Emacs summon behavior by clearing cached candidates before each summon request, storing =:summon-candidates-workspace-id= on inbound =summon-candidates= frames, and only presenting candidates whose response workspace matches the target workspace.
+- Expanded plugin workspace-manager summon tests:
+  - candidate filtering now includes classifier-ineligible auxiliary/popup-style clients via =xdg-desktop-portal= / =Open File=.
+  - =summon_client= now asserts the exact =dispatch movetoworkspacesilent <target>,address:<client>= command and verifies managed state plus committed snapshot observables after summon.
+- Red verification before fix:
+  - =emacs -Q --batch -L emacs -L tests/emacs -l tests/emacs/protocol-tests.el -f ert-run-tests-batch-and-exit= failed 2/21 on missing =:summon-candidates-workspace-id= and stale =0xstale= reuse.
+  - =nix develop -c sh -lc 'cmake --build build/plugin --target hyprmacs_workspace_manager_tests hyprmacs_ipc_server_tests -j8 && ctest --test-dir build/plugin --output-on-failure -R "hyprmacs_(workspace_manager_tests|ipc_server_tests)"'= initially failed while tightening summon dispatch assertions, showing the test needed to isolate summon-time dispatch from setup-time policy commands.
+- Green verification after fix:
+  - =emacs -Q --batch -L emacs -L tests/emacs -l tests/emacs/protocol-tests.el -f ert-run-tests-batch-and-exit=: pass, 21/21.
+  - =nix develop -c sh -lc 'cmake --build build/plugin --target hyprmacs_workspace_manager_tests hyprmacs_ipc_server_tests -j8 && ctest --test-dir build/plugin --output-on-failure -R "hyprmacs_(workspace_manager_tests|ipc_server_tests)"'=: pass, 2/2.
+  - =just e2e=: pass with artifact =artifacts/e2e/20260424-023706=.
+
 *** Session note: Task 16 layering blocker from compositor focus/render semantics (2026-04-22)
 - Task 16 single-window geometry regression is now fixed in E2E (client rectangle aligns with Emacs body area).
 - Remaining failing E2E assertions are the two managed layering/click assertions while Emacs is focused.
