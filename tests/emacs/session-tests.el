@@ -185,4 +185,5 @@
       (hyprmacs-session-fake-receive
        "{\"version\":1,\"type\":\"client-focus-requested\",\"workspace_id\":\"1\",\"timestamp\":\"2026-04-24T12:00:00Z\",\"payload\":{\"client_id\":\"0xaaa\",\"reason\":\"urgent\"}}\n"))
     (should (equal (car seen) "0xaaa"))
-    (should (equal (cadr seen) "1"))))
+    (should (equal (cadr seen) "1"))
+    (should (equal (alist-get 'reason (caddr seen) nil nil #'equal) "urgent"))))
