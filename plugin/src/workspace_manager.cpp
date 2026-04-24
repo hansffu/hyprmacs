@@ -442,6 +442,54 @@ bool WorkspaceManager::float_managed_client(const WorkspaceId& workspace_id, con
     return true;
 }
 
+std::vector<SummonCandidate> WorkspaceManager::summon_candidates(const WorkspaceId& target_workspace_id) const {
+    std::scoped_lock lock(mutex_);
+    std::vector<SummonCandidate> out;
+
+    const auto snapshot = client_registry_.snapshot();
+    for (const auto& client : snapshot.clients) {
+        if (client.workspace_id == target_workspace_id || !client.eligible || client.floating) {
+            continue;
+        }
+        out.push_back(SummonCandidate {
+            .client_id = client.client_id,
+            .workspace_id = client.workspace_id,
+            .app_id = client.app_id,
+            .title = client.title,
+        });
+    }
+
+    return out;
+}
+
+bool WorkspaceManager::summon_client(const WorkspaceId& target_workspace_id, const ClientId& client_id) {
+    std::scoped_lock lock(mutex_);
+    if (!managed_workspace_id_.has_value() || *managed_workspace_id_ != target_workspace_id) {
+        return false;
+    }
+
+    const std::string normalized = normalize_client_id_for_query(client_id);
+    const ClientRecord* before = client_registry_.find(normalized);
+    if (before == nullptr || before->workspace_id == target_workspace_id || !before->eligible || before->floating) {
+        return false;
+    }
+
+    if (!dispatch_executor_) {
+        return false;
+    }
+
+    const std::string command = "dispatch movetoworkspacesilent " + target_workspace_id + ",address:" + normalized;
+    if (dispatch_executor_(command) != 0) {
+        return false;
+    }
+
+    client_registry_.update_workspace(normalized, target_workspace_id);
+    client_registry_.reconcile_management(managed_workspace_id_);
+    managed_client_seen_.insert(normalized);
+    sync_committed_layout_snapshot_locked();
+    return true;
+}
+
 bool WorkspaceManager::set_selected_client(const WorkspaceId& workspace_id, const ClientId& client_id) {
     std::scoped_lock lock(mutex_);
     const ClientRecord* record = client_registry_.find(client_id);

@@ -133,6 +133,32 @@
     (should (equal (alist-get 'workspace_id frame nil nil #'equal) "1"))
     (should (equal (alist-get 'client_id payload nil nil #'equal) "0xabc"))))
 
+(ert-deftest hyprmacs-session-sends-summon-candidate-requests ()
+  (hyprmacs-session-reset)
+  (hyprmacs-session-use-fake-transport)
+  (hyprmacs-session-list-summon-candidates "1")
+  (hyprmacs-session-summon-client "1" "0xabc")
+  (let* ((frames (hyprmacs-session-fake-outbox))
+         (first (hyprmacs-test--decode (nth 0 frames)))
+         (second (hyprmacs-test--decode (nth 1 frames))))
+    (should (equal (alist-get 'type first nil nil #'equal) "list-summon-candidates"))
+    (should (equal (alist-get 'type second nil nil #'equal) "summon-client"))
+    (should (equal (alist-get 'client_id (alist-get 'payload second) nil nil #'equal) "0xabc"))))
+
+(ert-deftest hyprmacs-summon-client-uses-completing-read-choice ()
+  (hyprmacs-session-reset)
+  (hyprmacs-session-use-fake-transport)
+  (setq hyprmacs-session-state
+        (plist-put hyprmacs-session-state :summon-candidates
+                   '(((client_id . "0xabc") (workspace_id . "2") (app_id . "foot") (title . "remote shell")))))
+  (cl-letf (((symbol-function 'completing-read)
+             (lambda (_prompt choices &rest _)
+               (caar choices))))
+    (hyprmacs-summon-client "1"))
+  (let* ((frame (hyprmacs-test--decode (car (hyprmacs-session-fake-outbox)))))
+    (should (equal (alist-get 'type frame nil nil #'equal) "summon-client"))
+    (should (equal (alist-get 'client_id (alist-get 'payload frame) nil nil #'equal) "0xabc"))))
+
 (ert-deftest hyprmacs-command-set-input-mode-defaults-to-client-control ()
   (hyprmacs-session-reset)
   (hyprmacs-session-use-fake-transport)

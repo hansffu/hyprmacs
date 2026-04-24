@@ -100,6 +100,60 @@ std::string payload_for_client_floated(std::string_view client_id, bool ok) {
     return out.str();
 }
 
+std::string escape_payload_json(std::string_view value) {
+    std::ostringstream out;
+    for (const char ch : value) {
+        switch (ch) {
+            case '"':
+                out << "\\\"";
+                break;
+            case '\\':
+                out << "\\\\";
+                break;
+            case '\n':
+                out << "\\n";
+                break;
+            case '\r':
+                out << "\\r";
+                break;
+            case '\t':
+                out << "\\t";
+                break;
+            default:
+                out << ch;
+                break;
+        }
+    }
+    return out.str();
+}
+
+std::string payload_for_summon_candidates(const std::vector<SummonCandidate>& candidates) {
+    std::ostringstream out;
+    out << "{\"candidates\":[";
+    for (size_t i = 0; i < candidates.size(); ++i) {
+        if (i != 0) {
+            out << ",";
+        }
+        out << "{";
+        out << "\"client_id\":\"" << escape_payload_json(candidates[i].client_id) << "\",";
+        out << "\"workspace_id\":\"" << escape_payload_json(candidates[i].workspace_id) << "\",";
+        out << "\"app_id\":\"" << escape_payload_json(candidates[i].app_id) << "\",";
+        out << "\"title\":\"" << escape_payload_json(candidates[i].title) << "\"";
+        out << "}";
+    }
+    out << "]}";
+    return out.str();
+}
+
+std::string payload_for_client_summoned(std::string_view client_id, bool ok) {
+    std::ostringstream out;
+    out << "{";
+    out << "\"client_id\":\"" << escape_payload_json(client_id) << "\",";
+    out << "\"ok\":" << (ok ? "true" : "false");
+    out << "}";
+    return out.str();
+}
+
 std::string payload_for_protocol_error(std::string_view code, std::string_view message, std::string_view detail = "") {
     std::ostringstream out;
     out << "{";
@@ -698,6 +752,34 @@ std::vector<ProtocolMessage> route_command_for_tests(
             }
         }
         out.push_back(make_message("client-floated", incoming.workspace_id, payload_for_client_floated(*client_id, ok)));
+        out.push_back(make_message(
+            "state-dump", incoming.workspace_id, serialize_state_dump_payload(workspace_manager.build_state_dump(incoming.workspace_id))
+        ));
+        return out;
+    }
+
+    if (incoming.type == "list-summon-candidates") {
+        out.push_back(make_message(
+            "summon-candidates",
+            incoming.workspace_id,
+            payload_for_summon_candidates(workspace_manager.summon_candidates(incoming.workspace_id))
+        ));
+        return out;
+    }
+
+    if (incoming.type == "summon-client") {
+        const auto client_id = parse_string_field_from_payload(incoming.payload_json, "client_id");
+        if (!client_id.has_value()) {
+            out.push_back(make_message(
+                "protocol-error",
+                incoming.workspace_id,
+                payload_for_protocol_error("invalid-payload", "summon-client missing client_id")
+            ));
+            return out;
+        }
+
+        const bool ok = workspace_manager.summon_client(incoming.workspace_id, *client_id);
+        out.push_back(make_message("client-summoned", incoming.workspace_id, payload_for_client_summoned(*client_id, ok)));
         out.push_back(make_message(
             "state-dump", incoming.workspace_id, serialize_state_dump_payload(workspace_manager.build_state_dump(incoming.workspace_id))
         ));

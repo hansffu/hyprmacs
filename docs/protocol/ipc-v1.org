@@ -115,6 +115,35 @@ Rules:
 - =client_id= is required.
 - The plugin responds with =client-floated= followed by =state-dump=.
 
+*** =list-summon-candidates=
+Purpose:
+- Request eligible tiled clients from other workspaces that can be summoned into the managed workspace.
+
+Payload:
+#+begin_src json
+{}
+#+end_src
+
+Rules:
+- The plugin responds with =summon-candidates=.
+- Candidates exclude clients already on the target workspace, floating clients, Emacs clients, and other ineligible auxiliary clients.
+
+*** =summon-client=
+Purpose:
+- Request that a summon candidate move into the current managed workspace and enter normal managed-client adoption.
+
+Payload:
+#+begin_src json
+{
+  "client_id": "0xabc123"
+}
+#+end_src
+
+Rules:
+- =client_id= is required.
+- The plugin responds with =client-summoned= followed by =state-dump=.
+- The following =state-dump= is authoritative for whether the client joined managed membership.
+
 ** Plugin -> Emacs
 *** =workspace-managed=
 Purpose:
@@ -216,6 +245,40 @@ Payload:
 Rules:
 - =ok=false= means the request was rejected or the compositor did not confirm native floating; the client remains managed in the following =state-dump=.
 - The following =state-dump= is authoritative for whether the client left managed membership.
+
+*** =summon-candidates=
+Purpose:
+- Return clients from other workspaces that =summon-client= may pull into the target managed workspace.
+
+Payload:
+#+begin_src json
+{
+  "candidates": [
+    {
+      "client_id": "0xbbb",
+      "workspace_id": "2",
+      "app_id": "foot",
+      "title": "remote"
+    }
+  ]
+}
+#+end_src
+
+*** =client-summoned=
+Purpose:
+- Acknowledge a =summon-client= request.
+
+Payload:
+#+begin_src json
+{
+  "client_id": "0xbbb",
+  "ok": true
+}
+#+end_src
+
+Rules:
+- =ok=false= means the request was rejected or the compositor move failed.
+- The following =state-dump= is authoritative for whether the client entered managed membership.
 
 *** =client-became-floating=
 Purpose:

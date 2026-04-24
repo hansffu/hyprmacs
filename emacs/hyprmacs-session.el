@@ -43,6 +43,7 @@
               :associated-buffers nil
               :eligible-clients nil
               :managed-clients nil
+              :summon-candidates nil
               :selected-client nil
               :input-mode nil
               :last-error nil
@@ -76,6 +77,8 @@
         (plist-put hyprmacs-session-state :eligible-clients nil))
   (setq hyprmacs-session-state
         (plist-put hyprmacs-session-state :managed-clients nil))
+  (setq hyprmacs-session-state
+        (plist-put hyprmacs-session-state :summon-candidates nil))
   (setq hyprmacs-session-state
         (plist-put hyprmacs-session-state :selected-client nil))
   (setq hyprmacs-session-state
@@ -185,6 +188,10 @@ If the buffer exists but is not visible, leave window selection unchanged."
              (plist-put hyprmacs-session-state :input-mode
                         (hyprmacs-ipc-mode-from-wire
                          (alist-get 'mode payload nil nil #'equal)))))
+      ("summon-candidates"
+       (setq hyprmacs-session-state
+             (plist-put hyprmacs-session-state :summon-candidates
+                        (alist-get 'candidates payload nil nil #'equal))))
       ("protocol-error"
        (hyprmacs-session--set-last-error
         (or (alist-get 'message payload nil nil #'equal)
@@ -295,6 +302,17 @@ When ADOPT-EXISTING is nil, defaults to true."
   "Send float-managed-client for CLIENT-ID in WORKSPACE-ID."
   (hyprmacs-session-send
    "float-managed-client"
+   workspace-id
+   `((client_id . ,client-id))))
+
+(defun hyprmacs-session-list-summon-candidates (workspace-id)
+  "Request summon candidates for WORKSPACE-ID."
+  (hyprmacs-session-send "list-summon-candidates" workspace-id '()))
+
+(defun hyprmacs-session-summon-client (workspace-id client-id)
+  "Request summon of CLIENT-ID into WORKSPACE-ID."
+  (hyprmacs-session-send
+   "summon-client"
    workspace-id
    `((client_id . ,client-id))))
 

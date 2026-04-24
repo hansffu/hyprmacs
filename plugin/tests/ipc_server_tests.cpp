@@ -331,6 +331,72 @@ bool test_route_float_managed_client_rehides_when_native_float_fails_after_resto
     return ok;
 }
 
+bool test_route_list_summon_candidates_returns_candidate_array() {
+    hyprmacs::WorkspaceManager manager;
+    auto applier = make_noop_applier();
+    manager.seed_client("0xaaa", "1", "foot", "local", false);
+    manager.seed_client("0xbbb", "2", "foot", "remote", false);
+    manager.manage_workspace("1");
+
+    const hyprmacs::ProtocolMessage incoming {
+        .type = "list-summon-candidates",
+        .workspace_id = "1",
+        .timestamp = "2026-04-24T00:00:00Z",
+        .payload_json = "{}",
+    };
+    const auto responses = hyprmacs::route_command_for_tests(incoming, manager, applier);
+
+    bool ok = true;
+    ok &= expect(responses.size() == 1, "list-summon-candidates should return one response");
+    if (responses.size() == 1) {
+        ok &= expect(responses[0].type == "summon-candidates", "response should be summon-candidates");
+        ok &= expect(responses[0].payload_json.find("\"candidates\"") != std::string::npos,
+                     "summon-candidates payload should include candidates array");
+        ok &= expect(responses[0].payload_json.find("\"client_id\":\"0xbbb\"") != std::string::npos,
+                     "summon-candidates payload should include remote client id");
+        ok &= expect(responses[0].payload_json.find("\"workspace_id\":\"2\"") != std::string::npos,
+                     "summon-candidates payload should include source workspace id");
+        ok &= expect(responses[0].payload_json.find("\"app_id\":\"foot\"") != std::string::npos,
+                     "summon-candidates payload should include app id");
+        ok &= expect(responses[0].payload_json.find("\"title\":\"remote\"") != std::string::npos,
+                     "summon-candidates payload should include title");
+    }
+    return ok;
+}
+
+bool test_route_summon_client_returns_ack_and_state_dump() {
+    hyprmacs::WorkspaceManager manager([](const std::string&) {
+        return 0;
+    });
+    auto applier = make_noop_applier();
+    manager.seed_client("0xaaa", "1", "foot", "local", false);
+    manager.seed_client("0xbbb", "2", "foot", "remote", false);
+    manager.manage_workspace("1");
+
+    const hyprmacs::ProtocolMessage incoming {
+        .type = "summon-client",
+        .workspace_id = "1",
+        .timestamp = "2026-04-24T00:00:00Z",
+        .payload_json = "{\"client_id\":\"0xbbb\"}",
+    };
+    const auto responses = hyprmacs::route_command_for_tests(incoming, manager, applier);
+
+    bool ok = true;
+    ok &= expect(responses.size() == 2, "summon-client should return ack and state-dump");
+    if (responses.size() == 2) {
+        ok &= expect(responses[0].type == "client-summoned", "first response should be client-summoned");
+        ok &= expect(responses[0].payload_json.find("\"client_id\":\"0xbbb\"") != std::string::npos,
+                     "client-summoned payload should include client id");
+        ok &= expect(responses[0].payload_json.find("\"ok\":true") != std::string::npos,
+                     "client-summoned payload should include ok:true");
+        ok &= expect(responses[1].type == "state-dump", "second response should be state-dump");
+    }
+    const auto state = manager.build_state_dump("1");
+    ok &= expect(std::find(state.managed_clients.begin(), state.managed_clients.end(), "0xbbb") != state.managed_clients.end(),
+                 "summoned client should appear in managed state");
+    return ok;
+}
+
 bool test_route_request_state() {
     hyprmacs::WorkspaceManager manager;
     auto applier = make_noop_applier();
@@ -1341,6 +1407,8 @@ int main() {
     ok &= test_route_float_managed_client_native_float_failure_does_not_unmanage();
     ok &= test_route_float_managed_client_restores_hidden_client_before_unmanage();
     ok &= test_route_float_managed_client_rehides_when_native_float_fails_after_restore();
+    ok &= test_route_list_summon_candidates_returns_candidate_array();
+    ok &= test_route_summon_client_returns_ack_and_state_dump();
     ok &= test_route_request_state();
     ok &= test_route_request_state_refreshes_floating_membership_from_query();
     ok &= test_route_debug_hide_show();

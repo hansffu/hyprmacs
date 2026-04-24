@@ -38,6 +38,13 @@ struct ManagedWorkspaceLayoutSnapshot {
     std::optional<ClientId> managing_emacs_client_id;
 };
 
+struct SummonCandidate {
+    ClientId client_id;
+    WorkspaceId workspace_id;
+    std::string app_id;
+    std::string title;
+};
+
 class WorkspaceManager {
   public:
     using DispatchExecutor = std::function<int(const std::string&)>;
@@ -61,6 +68,8 @@ class WorkspaceManager {
     bool unmanage_workspace(const WorkspaceId& workspace_id);
     bool can_float_managed_client(const WorkspaceId& workspace_id, const ClientId& client_id) const;
     bool float_managed_client(const WorkspaceId& workspace_id, const ClientId& client_id);
+    std::vector<SummonCandidate> summon_candidates(const WorkspaceId& target_workspace_id) const;
+    bool summon_client(const WorkspaceId& target_workspace_id, const ClientId& client_id);
     bool set_selected_client(const WorkspaceId& workspace_id, const ClientId& client_id);
     bool set_input_mode(const WorkspaceId& workspace_id, InputMode mode);
     void seed_client(const ClientId& client_id, const WorkspaceId& workspace_id, const std::string& app_id,

@@ -1109,6 +1109,46 @@ bool test_float_managed_client_marks_client_floating_and_unmanaged() {
     return ok;
 }
 
+bool test_summon_candidates_include_only_other_workspace_tiled_eligible_clients() {
+    hyprmacs::WorkspaceManager manager;
+    manager.seed_client("0xaaa", "1", "foot", "local", false);
+    manager.seed_client("0xbbb", "2", "foot", "remote", false);
+    manager.seed_client("0xccc", "3", "foot", "floating", true);
+    manager.seed_client("0xeee", "2", "emacs", "emacs", false);
+    manager.manage_workspace("1");
+
+    auto candidates = manager.summon_candidates("1");
+    bool ok = true;
+    ok &= expect(candidates.size() == 1, "only one summon candidate expected");
+    if (!candidates.empty()) {
+        ok &= expect(candidates[0].client_id == "0xbbb", "remote tiled foot should be candidate");
+        ok &= expect(candidates[0].workspace_id == "2", "candidate workspace should be preserved");
+    }
+    return ok;
+}
+
+bool test_summon_client_moves_and_adopts_candidate() {
+    std::vector<std::string> commands;
+    hyprmacs::WorkspaceManager manager(
+        [&commands](const std::string& command) {
+            commands.push_back(command);
+            return 0;
+        });
+    manager.seed_client("0xaaa", "1", "foot", "local", false);
+    manager.seed_client("0xbbb", "2", "foot", "remote", false);
+    manager.manage_workspace("1");
+
+    const bool summoned = manager.summon_client("1", "0xbbb");
+    auto state = manager.build_state_dump("1");
+
+    bool ok = true;
+    ok &= expect(summoned, "summon_client should accept remote eligible tiled client");
+    ok &= expect(std::find(state.managed_clients.begin(), state.managed_clients.end(), "0xbbb") != state.managed_clients.end(),
+                 "summoned client should be managed in target workspace");
+    ok &= expect(!commands.empty(), "summon should dispatch workspace move");
+    return ok;
+}
+
 }  // namespace
 
 int main() {
@@ -1139,5 +1179,7 @@ int main() {
     ok &= test_visible_snapshot_client_stays_managed_when_query_reports_floating_overlay();
     ok &= test_unmanaged_only_floating_refresh_adopts_tiled_client_without_reclassifying_managed();
     ok &= test_float_managed_client_marks_client_floating_and_unmanaged();
+    ok &= test_summon_candidates_include_only_other_workspace_tiled_eligible_clients();
+    ok &= test_summon_client_moves_and_adopts_candidate();
     return ok ? 0 : 1;
 }

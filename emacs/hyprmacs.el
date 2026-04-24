@@ -229,6 +229,32 @@ With PROMPT, ask for a managed client."
     (hyprmacs--schedule-auto-sync-layout)
     (message "hyprmacs: requested floating native client %s" client-id)))
 
+(defun hyprmacs--summon-candidate-label (candidate)
+  "Return completion label for summon CANDIDATE."
+  (format "%s [%s] - %s"
+          (or (alist-get 'app_id candidate nil nil #'equal) "unknown")
+          (or (alist-get 'workspace_id candidate nil nil #'equal) "?")
+          (or (alist-get 'title candidate nil nil #'equal) "untitled")))
+
+(defun hyprmacs-summon-client (&optional workspace-id)
+  "Summon an eligible tiled client from another workspace."
+  (interactive)
+  (let ((workspace-id (or workspace-id (hyprmacs--default-workspace-id))))
+    (unless (plist-get hyprmacs-session-state :summon-candidates)
+      (hyprmacs-session-list-summon-candidates workspace-id)
+      (hyprmacs--wait-seconds 0.20))
+    (let* ((candidates (or (plist-get hyprmacs-session-state :summon-candidates) '()))
+           (choices (mapcar (lambda (candidate)
+                              (cons (hyprmacs--summon-candidate-label candidate) candidate))
+                            candidates))
+           (label (completing-read "Summon client: " choices nil t))
+           (candidate (cdr (assoc label choices)))
+           (client-id (alist-get 'client_id candidate nil nil #'equal)))
+      (unless client-id
+        (user-error "hyprmacs: no summon candidate selected"))
+      (hyprmacs-session-summon-client workspace-id client-id)
+      (message "hyprmacs: requested summon for %s" client-id))))
+
 (defun hyprmacs-sync-layout (&optional workspace-id silent)
   "Publish a set-layout snapshot for WORKSPACE-ID from current Emacs windows."
   (interactive)
@@ -1174,6 +1200,70 @@ This covers the implemented runtime contract through Task 11."
                 5.0 0.20)
                path
                "make-buffer-floating removes client from managed set"))
+            (let ((summon-client nil)
+                  (summon-buffer nil))
+              (pcase-let ((`(:exit ,workspace2-exit :out ,workspace2-out)
+                           (hyprmacs--run-command "hyprctl dispatch workspace 2")))
+                (append-to-file (format "summon-workspace-2-out:\n%s\n" workspace2-out) nil path)
+                (hyprmacs--e2e-assert (zerop workspace2-exit) path "summon probe switches to workspace 2"))
+              (pcase-let ((`(:exit ,spawn-summon-exit :out ,spawn-summon-out)
+                           (hyprmacs--run-command
+                            "hyprctl dispatch exec \"foot -T hyprmacs-summon-command\"")))
+                (append-to-file (format "spawn-summon-command-out:\n%s\n" spawn-summon-out) nil path)
+                (hyprmacs--e2e-assert
+                 (zerop spawn-summon-exit)
+                 path
+                 "spawn summon probe client on workspace 2 succeeded"))
+              (hyprmacs--e2e-assert
+               (hyprmacs--wait-until
+                (lambda ()
+                  (setq summon-client
+                        (let ((entry
+                               (cl-find-if
+                                (lambda (client)
+                                  (and (or (string= (format "%s" (alist-get 'title client nil nil #'equal))
+                                                   "hyprmacs-summon-command")
+                                           (string= (format "%s" (alist-get 'initialTitle client nil nil #'equal))
+                                                   "hyprmacs-summon-command"))
+                                       (let* ((workspace (alist-get 'workspace client nil nil #'equal))
+                                              (id (format "%s" (alist-get 'id workspace nil nil #'equal))))
+                                         (string= id "2"))))
+                                (hyprmacs--hyprctl-clients))))
+                          (when entry
+                            (format "%s" (alist-get 'address entry nil nil #'equal)))))
+                  summon-client)
+                5.0 0.20)
+               path
+               "summon probe client appears on workspace 2")
+              (pcase-let ((`(:exit ,workspace1-exit :out ,workspace1-out)
+                           (hyprmacs--run-command
+                            (format "hyprctl dispatch workspace %s" workspace-id))))
+                (append-to-file (format "summon-workspace-1-out:\n%s\n" workspace1-out) nil path)
+                (hyprmacs--e2e-assert (zerop workspace1-exit) path "summon probe returns to managed workspace"))
+              (hyprmacs--wait-seconds 0.30)
+              (cl-letf (((symbol-function 'completing-read)
+                         (lambda (_prompt choices &rest _)
+                           (or (car (cl-find-if
+                                     (lambda (choice)
+                                       (equal (alist-get 'client_id (cdr choice) nil nil #'equal)
+                                              summon-client))
+                                     choices))
+                               (caar choices)))))
+                (hyprmacs-summon-client workspace-id))
+              (hyprmacs--e2e-assert
+               (hyprmacs--wait-until
+                (lambda ()
+                  (refresh-state)
+                  (member summon-client (managed-ids)))
+                5.0 0.20)
+               path
+               "summoned client appears in managed set")
+              (setq summon-buffer (and summon-client (hyprmacs-buffer-for-client summon-client)))
+              (hyprmacs--e2e-assert
+               (and (buffer-live-p summon-buffer)
+                    (eq (window-buffer (selected-window)) summon-buffer))
+               path
+               "summoned client buffer is displayed in selected Emacs window"))
           (when regression-failures
             (error "hyprmacs e2e regression assertions failed: %s"
                    (string-join (nreverse regression-failures) " | "))))))
