@@ -1852,6 +1852,25 @@ Steps:
   - =nix develop -c sh -lc 'cmake --build build/plugin --target hyprmacs_workspace_manager_tests hyprmacs_ipc_server_tests -j8 && ctest --test-dir build/plugin --output-on-failure -R "hyprmacs_(workspace_manager_tests|ipc_server_tests)"'=: pass, 2/2.
   - =just e2e=: pass with artifact =artifacts/e2e/20260424-025545=.
 
+*** DONE Session note: Task 17.3 quality review follow-up for duplicate choices and opaque request ids (2026-04-24)
+- Quality review found two remaining Task 17.3 issues:
+  - =hyprmacs-summon-client= used human-readable completion labels as identities, so duplicate app/workspace/title labels resolved through =assoc= to the first candidate and made later duplicates unreachable.
+  - IPC =request_id= parsing handled short JSON escapes but rejected valid opaque ids containing =\uXXXX= escapes; present empty ids were also omitted because the route used empty string as a missing-value sentinel.
+- Added red ERT coverage proving two candidates with identical app/workspace/title labels can select the second candidate and send its =client_id=.
+- Added red IPC route coverage proving:
+  - ={"request_id":"req-\u0031"}= is parsed and echoed as =req-1=.
+  - ={"request_id":""}= is treated as present and echoed as an empty string.
+- Fixed Emacs summon choices by making completion keys unique with the =client_id= while preserving the readable app/workspace/title label prefix.
+- Fixed IPC string parsing to decode =\uXXXX= JSON escapes, including surrogate pairs, and changed =summon-candidates= response generation to track request-id presence separately from request-id contents.
+- Updated =docs/protocol/ipc-v1.org= to document JSON escape handling and present empty =request_id= echoing.
+- Red verification before fix:
+  - =emacs -Q --batch -L emacs -L tests/emacs -l tests/emacs/protocol-tests.el -f ert-run-tests-batch-and-exit= failed 1/23 because selecting the second duplicate completion sent =0xfirst= instead of =0xsecond=.
+  - =nix develop -c sh -lc 'cmake --build build/plugin --target hyprmacs_workspace_manager_tests hyprmacs_ipc_server_tests -j8 && ctest --test-dir build/plugin --output-on-failure -R "hyprmacs_(workspace_manager_tests|ipc_server_tests)"'= failed in =hyprmacs_ipc_server_tests= with =summon-candidates response should parse unicode-escaped request_id= and =summon-candidates response should echo present empty request_id=.
+- Green verification after fix:
+  - =emacs -Q --batch -L emacs -L tests/emacs -l tests/emacs/protocol-tests.el -f ert-run-tests-batch-and-exit=: pass, 23/23.
+  - =nix develop -c sh -lc 'cmake --build build/plugin --target hyprmacs_workspace_manager_tests hyprmacs_ipc_server_tests -j8 && ctest --test-dir build/plugin --output-on-failure -R "hyprmacs_(workspace_manager_tests|ipc_server_tests)"'=: pass, 2/2.
+  - =just e2e=: pass with artifact =artifacts/e2e/20260424-030344=.
+
 *** Session note: Task 16 layering blocker from compositor focus/render semantics (2026-04-22)
 - Task 16 single-window geometry regression is now fixed in E2E (client rectangle aligns with Emacs body area).
 - Remaining failing E2E assertions are the two managed layering/click assertions while Emacs is focused.

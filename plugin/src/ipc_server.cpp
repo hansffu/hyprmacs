@@ -11,6 +11,7 @@
 #include <ctime>
 #include <iomanip>
 #include <iostream>
+#include <optional>
 #include <sstream>
 #include <unordered_set>
 #include <unordered_map>
@@ -136,11 +137,14 @@ std::string escape_payload_json(std::string_view value) {
     return out.str();
 }
 
-std::string payload_for_summon_candidates(const std::vector<SummonCandidate>& candidates, std::string_view request_id = "") {
+std::string payload_for_summon_candidates(
+    const std::vector<SummonCandidate>& candidates,
+    std::optional<std::string_view> request_id = std::nullopt
+) {
     std::ostringstream out;
     out << "{";
-    if (!request_id.empty()) {
-        out << "\"request_id\":\"" << escape_payload_json(request_id) << "\",";
+    if (request_id.has_value()) {
+        out << "\"request_id\":\"" << escape_payload_json(*request_id) << "\",";
     }
     out << "\"candidates\":[";
     for (size_t i = 0; i < candidates.size(); ++i) {
@@ -214,6 +218,47 @@ std::optional<std::string> parse_client_id_from_payload(std::string_view payload
     return std::string(payload_json.substr(first_quote + 1, second_quote - first_quote - 1));
 }
 
+std::optional<unsigned int> parse_hex4(std::string_view text, size_t pos) {
+    if (pos + 4 > text.size()) {
+        return std::nullopt;
+    }
+
+    unsigned int value = 0;
+    for (size_t i = 0; i < 4; ++i) {
+        const char ch = text[pos + i];
+        unsigned int digit = 0;
+        if (ch >= '0' && ch <= '9') {
+            digit = static_cast<unsigned int>(ch - '0');
+        } else if (ch >= 'a' && ch <= 'f') {
+            digit = static_cast<unsigned int>(ch - 'a' + 10);
+        } else if (ch >= 'A' && ch <= 'F') {
+            digit = static_cast<unsigned int>(ch - 'A' + 10);
+        } else {
+            return std::nullopt;
+        }
+        value = (value << 4U) | digit;
+    }
+    return value;
+}
+
+void append_utf8(std::string* out, unsigned int codepoint) {
+    if (codepoint <= 0x7FU) {
+        out->push_back(static_cast<char>(codepoint));
+    } else if (codepoint <= 0x7FFU) {
+        out->push_back(static_cast<char>(0xC0U | (codepoint >> 6U)));
+        out->push_back(static_cast<char>(0x80U | (codepoint & 0x3FU)));
+    } else if (codepoint <= 0xFFFFU) {
+        out->push_back(static_cast<char>(0xE0U | (codepoint >> 12U)));
+        out->push_back(static_cast<char>(0x80U | ((codepoint >> 6U) & 0x3FU)));
+        out->push_back(static_cast<char>(0x80U | (codepoint & 0x3FU)));
+    } else {
+        out->push_back(static_cast<char>(0xF0U | (codepoint >> 18U)));
+        out->push_back(static_cast<char>(0x80U | ((codepoint >> 12U) & 0x3FU)));
+        out->push_back(static_cast<char>(0x80U | ((codepoint >> 6U) & 0x3FU)));
+        out->push_back(static_cast<char>(0x80U | (codepoint & 0x3FU)));
+    }
+}
+
 std::optional<std::string> parse_json_string_literal(std::string_view text, size_t* pos) {
     if (*pos >= text.size() || text[*pos] != '"') {
         return std::nullopt;
@@ -257,6 +302,31 @@ std::optional<std::string> parse_json_string_literal(std::string_view text, size
             case 't':
                 out.push_back('\t');
                 break;
+            case 'u': {
+                const auto high = parse_hex4(text, *pos);
+                if (!high) {
+                    return std::nullopt;
+                }
+                *pos += 4;
+
+                unsigned int codepoint = *high;
+                if (codepoint >= 0xD800U && codepoint <= 0xDBFFU) {
+                    if (*pos + 6 > text.size() || text[*pos] != '\\' || text[*pos + 1] != 'u') {
+                        return std::nullopt;
+                    }
+                    *pos += 2;
+                    const auto low = parse_hex4(text, *pos);
+                    if (!low || *low < 0xDC00U || *low > 0xDFFFU) {
+                        return std::nullopt;
+                    }
+                    *pos += 4;
+                    codepoint = 0x10000U + (((codepoint - 0xD800U) << 10U) | (*low - 0xDC00U));
+                } else if (codepoint >= 0xDC00U && codepoint <= 0xDFFFU) {
+                    return std::nullopt;
+                }
+                append_utf8(&out, codepoint);
+                break;
+            }
             default:
                 return std::nullopt;
         }
@@ -822,7 +892,7 @@ std::vector<ProtocolMessage> route_command_for_tests(
             incoming.workspace_id,
             payload_for_summon_candidates(
                 workspace_manager.summon_candidates(incoming.workspace_id),
-                request_id.value_or("")
+                request_id ? std::optional<std::string_view>(*request_id) : std::nullopt
             )
         ));
         return out;

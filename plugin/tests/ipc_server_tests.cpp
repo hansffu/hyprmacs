@@ -414,6 +414,54 @@ bool test_route_list_summon_candidates_handles_escaped_request_id() {
     return ok;
 }
 
+bool test_route_list_summon_candidates_handles_unicode_escape_request_id() {
+    hyprmacs::WorkspaceManager manager;
+    auto applier = make_noop_applier();
+    manager.seed_client("0xaaa", "1", "foot", "local", false);
+    manager.seed_client("0xbbb", "2", "foot", "remote", false);
+    manager.manage_workspace("1");
+
+    const hyprmacs::ProtocolMessage incoming {
+        .type = "list-summon-candidates",
+        .workspace_id = "1",
+        .timestamp = "2026-04-24T00:00:00Z",
+        .payload_json = "{\"request_id\":\"req-\\u0031\"}",
+    };
+    const auto responses = hyprmacs::route_command_for_tests(incoming, manager, applier);
+
+    bool ok = true;
+    ok &= expect(responses.size() == 1, "unicode request_id summon candidate request should return one response");
+    if (responses.size() == 1) {
+        ok &= expect(responses[0].payload_json.find("\"request_id\":\"req-1\"") != std::string::npos,
+                     "summon-candidates response should parse unicode-escaped request_id");
+    }
+    return ok;
+}
+
+bool test_route_list_summon_candidates_echoes_empty_request_id() {
+    hyprmacs::WorkspaceManager manager;
+    auto applier = make_noop_applier();
+    manager.seed_client("0xaaa", "1", "foot", "local", false);
+    manager.seed_client("0xbbb", "2", "foot", "remote", false);
+    manager.manage_workspace("1");
+
+    const hyprmacs::ProtocolMessage incoming {
+        .type = "list-summon-candidates",
+        .workspace_id = "1",
+        .timestamp = "2026-04-24T00:00:00Z",
+        .payload_json = "{\"request_id\":\"\"}",
+    };
+    const auto responses = hyprmacs::route_command_for_tests(incoming, manager, applier);
+
+    bool ok = true;
+    ok &= expect(responses.size() == 1, "empty request_id summon candidate request should return one response");
+    if (responses.size() == 1) {
+        ok &= expect(responses[0].payload_json.find("\"request_id\":\"\"") != std::string::npos,
+                     "summon-candidates response should echo present empty request_id");
+    }
+    return ok;
+}
+
 bool test_route_summon_client_returns_ack_and_state_dump() {
     hyprmacs::WorkspaceManager manager([](const std::string&) {
         return 0;
@@ -1487,6 +1535,8 @@ int main() {
     ok &= test_route_list_summon_candidates_returns_candidate_array();
     ok &= test_route_list_summon_candidates_escapes_control_chars();
     ok &= test_route_list_summon_candidates_handles_escaped_request_id();
+    ok &= test_route_list_summon_candidates_handles_unicode_escape_request_id();
+    ok &= test_route_list_summon_candidates_echoes_empty_request_id();
     ok &= test_route_summon_client_returns_ack_and_state_dump();
     ok &= test_route_summon_client_escapes_control_chars_in_state_dump();
     ok &= test_route_request_state();

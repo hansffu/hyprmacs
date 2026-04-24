@@ -129,6 +129,7 @@ Payload:
 Rules:
 - The plugin responds with =summon-candidates=.
 - =request_id= is optional, opaque, and echoed by =summon-candidates= when present so clients can ignore stale delayed responses.
+- =request_id= is a JSON string; normal JSON escapes, including =\uXXXX= escapes, are decoded and re-serialized when echoed.
 - Candidates exclude clients already on the target workspace, floating clients, Emacs clients, and other ineligible auxiliary clients.
 - If the target workspace is not currently managed, the plugin returns an empty candidate list.
 
@@ -270,7 +271,7 @@ Payload:
 #+end_src
 
 Rules:
-- =request_id= is present only when the request included one.
+- =request_id= is present whenever the request included one, including an empty string.
 
 *** =client-summoned=
 Purpose:

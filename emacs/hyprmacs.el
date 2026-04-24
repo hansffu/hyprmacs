@@ -236,6 +236,12 @@ With PROMPT, ask for a managed client."
           (or (alist-get 'workspace_id candidate nil nil #'equal) "?")
           (or (alist-get 'title candidate nil nil #'equal) "untitled")))
 
+(defun hyprmacs--summon-candidate-key (candidate)
+  "Return unique completion key for summon CANDIDATE."
+  (format "%s <%s>"
+          (hyprmacs--summon-candidate-label candidate)
+          (or (alist-get 'client_id candidate nil nil #'equal) "unknown")))
+
 (defun hyprmacs--summon-request-id ()
   "Return an opaque request id for one summon-candidates request."
   (format "%s-%s" (float-time) (random most-positive-fixnum)))
@@ -264,7 +270,7 @@ With PROMPT, ask for a managed client."
                            (or (plist-get hyprmacs-session-state :summon-candidates) '())
                          '()))
            (choices (mapcar (lambda (candidate)
-                              (cons (hyprmacs--summon-candidate-label candidate) candidate))
+                              (cons (hyprmacs--summon-candidate-key candidate) candidate))
                             candidates))
            (label (completing-read "Summon client: " choices nil t))
            (candidate (cdr (assoc label choices)))

@@ -170,6 +170,28 @@
     (should (equal (alist-get 'type second nil nil #'equal) "summon-client"))
     (should (equal (alist-get 'client_id (alist-get 'payload second) nil nil #'equal) "0xabc"))))
 
+(ert-deftest hyprmacs-summon-client-allows-selecting-duplicate-label-candidate ()
+  (hyprmacs-session-reset)
+  (hyprmacs-session-use-fake-transport)
+  (cl-letf (((symbol-function 'hyprmacs--wait-seconds)
+             (lambda (&rest _)
+               (hyprmacs-session-fake-receive
+                "{\"version\":1,\"type\":\"summon-candidates\",\"workspace_id\":\"1\",\"timestamp\":\"2026-04-24T00:00:00Z\",\"payload\":{\"request_id\":\"req-dup\",\"candidates\":[{\"client_id\":\"0xfirst\",\"workspace_id\":\"2\",\"app_id\":\"foot\",\"title\":\"same\"},{\"client_id\":\"0xsecond\",\"workspace_id\":\"2\",\"app_id\":\"foot\",\"title\":\"same\"}]}}\n")))
+            ((symbol-function 'hyprmacs--wait-until)
+             (lambda (predicate &rest _)
+               (hyprmacs--wait-seconds 0)
+               (funcall predicate)))
+            ((symbol-function 'hyprmacs--summon-request-id)
+             (lambda () "req-dup"))
+            ((symbol-function 'completing-read)
+             (lambda (_prompt choices &rest _)
+               (caar (cdr choices)))))
+    (hyprmacs-summon-client "1"))
+  (let* ((frames (hyprmacs-session-fake-outbox))
+         (summon (hyprmacs-test--decode (nth 1 frames))))
+    (should (equal (alist-get 'type summon nil nil #'equal) "summon-client"))
+    (should (equal (alist-get 'client_id (alist-get 'payload summon) nil nil #'equal) "0xsecond"))))
+
 (ert-deftest hyprmacs-session-tracks-summon-candidate-workspace ()
   (hyprmacs-session-reset)
   (hyprmacs-session-fake-receive
