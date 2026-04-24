@@ -250,6 +250,41 @@ bool test_route_float_managed_client_native_float_failure_does_not_unmanage() {
     return ok;
 }
 
+bool test_route_float_managed_client_restores_hidden_client_before_unmanage() {
+    hyprmacs::WorkspaceManager manager;
+    RecordingApplier recording;
+    auto applier = recording.make();
+    manager.seed_client("0xaaa", "1", "foot", "foot-a", false);
+    manager.manage_workspace("1");
+    (void)applier.hide_client("0xaaa", "1");
+
+    const hyprmacs::ProtocolMessage incoming {
+        .type = "float-managed-client",
+        .workspace_id = "1",
+        .timestamp = "2026-04-24T00:00:00Z",
+        .payload_json = "{\"client_id\":\"0xaaa\"}",
+    };
+    auto responses = hyprmacs::route_command_for_tests(incoming, manager, applier);
+    const auto state = manager.build_state_dump("1");
+
+    bool saw_restore_command = false;
+    for (const auto& command : recording.commands) {
+        if (command == "dispatch movetoworkspacesilent 1,address:0xaaa") {
+            saw_restore_command = true;
+        }
+    }
+
+    bool ok = true;
+    ok &= expect(responses.size() == 2, "hidden float-managed-client should return ack and state-dump");
+    ok &= expect(responses[0].type == "client-floated", "hidden float response should be client-floated");
+    ok &= expect(responses[0].payload_json.find("\"ok\":true") != std::string::npos,
+                 "hidden float response should include ok:true");
+    ok &= expect(state.managed_clients.empty(), "hidden floated client should leave managed set");
+    ok &= expect(!applier.is_hidden("0xaaa"), "hidden floated client should be restored before unmanage");
+    ok &= expect(saw_restore_command, "hidden floated client should issue restore command");
+    return ok;
+}
+
 bool test_route_request_state() {
     hyprmacs::WorkspaceManager manager;
     auto applier = make_noop_applier();
@@ -1258,6 +1293,7 @@ int main() {
     ok &= test_route_float_managed_client_returns_ack_and_state_dump();
     ok &= test_route_float_managed_client_rejects_non_managed_without_mutation();
     ok &= test_route_float_managed_client_native_float_failure_does_not_unmanage();
+    ok &= test_route_float_managed_client_restores_hidden_client_before_unmanage();
     ok &= test_route_request_state();
     ok &= test_route_request_state_refreshes_floating_membership_from_query();
     ok &= test_route_debug_hide_show();

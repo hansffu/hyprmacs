@@ -680,6 +680,9 @@ std::vector<ProtocolMessage> route_command_for_tests(
 
         bool ok = workspace_manager.can_float_managed_client(incoming.workspace_id, *client_id);
         if (ok) {
+            ok = layout_applier.show_client(*client_id);
+        }
+        if (ok) {
             ok = layout_applier.ensure_client_floating(*client_id);
         }
         if (ok) {
