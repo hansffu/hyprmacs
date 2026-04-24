@@ -32,7 +32,7 @@ std::vector<ProtocolMessage> route_command_for_tests(
     FocusController* focus_controller = nullptr,
     RecalcRequester recalc_requester = {}
 );
-ProtocolMessage focus_request_message_for_tests(const WorkspaceId& workspace_id, const ClientId& client_id);
+ProtocolMessage focus_request_message(const WorkspaceId& workspace_id, const ClientId& client_id);
 
 class IpcServer {
   public:

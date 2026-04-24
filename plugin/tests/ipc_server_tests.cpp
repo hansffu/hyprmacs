@@ -727,6 +727,110 @@ bool test_route_set_input_mode_updates_state_dump() {
     return ok;
 }
 
+bool test_route_set_input_mode_client_control_suppresses_internal_focus_event_once() {
+    hyprmacs::WorkspaceManager manager;
+    auto applier = make_noop_applier();
+    std::vector<std::string> commands;
+    hyprmacs::FocusController focus_controller([&commands](const std::string& command) {
+        commands.push_back(command);
+        return 0;
+    });
+    std::vector<std::string> focus_requests;
+    manager.set_focus_request_notifier(
+        [&focus_requests](const hyprmacs::WorkspaceId& workspace_id, const hyprmacs::ClientId& client_id) {
+            focus_requests.push_back(workspace_id + ":" + client_id);
+        }
+    );
+
+    manager.process_event_for_tests("openwindowv2>>0xaaa,1,foot,foot-a");
+    manager.process_event_for_tests("openwindowv2>>0xeee,1,emacs,emacs-main");
+    manager.manage_workspace("1");
+    manager.set_controller_connected(true);
+    manager.set_selected_client("1", "0xaaa");
+    focus_requests.clear();
+
+    const hyprmacs::ProtocolMessage incoming {
+        .version = 1,
+        .type = "set-input-mode",
+        .workspace_id = "1",
+        .timestamp = "2026-04-24T00:00:00Z",
+        .payload_json = "{\"mode\":\"client-control\"}",
+    };
+
+    const auto responses = hyprmacs::route_command_for_tests(incoming, manager, applier, &focus_controller);
+    bool ok = true;
+    ok &= expect(responses.size() == 2, "set-input-mode should produce two responses");
+    ok &= expect(std::find(commands.begin(), commands.end(), "dispatch focuswindow address:0xaaa") != commands.end(),
+                 "client-control should internally focus selected managed client");
+
+    manager.process_event_for_tests("activewindowv2>>0xaaa");
+    ok &= expect(focus_requests.empty(), "internal client-control focus event should be suppressed once");
+
+    manager.process_event_for_tests("activewindowv2>>0xaaa");
+    ok &= expect(focus_requests.size() == 1, "later external focus event should emit focus request");
+    if (!focus_requests.empty()) {
+        ok &= expect(focus_requests[0] == "1:0xaaa", "external focus request should include workspace and client");
+    }
+
+    return ok;
+}
+
+bool test_route_set_layout_show_suppresses_internal_focus_event_once() {
+    hyprmacs::WorkspaceManager manager;
+    RecordingApplier recording;
+    auto applier = recording.make();
+    std::vector<std::string> focus_requests;
+    manager.set_focus_request_notifier(
+        [&focus_requests](const hyprmacs::WorkspaceId& workspace_id, const hyprmacs::ClientId& client_id) {
+            focus_requests.push_back(workspace_id + ":" + client_id);
+        }
+    );
+
+    manager.process_event_for_tests("openwindowv2>>0xaaa,1,foot,foot-a");
+    manager.process_event_for_tests("openwindowv2>>0xbbb,1,foot,foot-b");
+
+    const hyprmacs::ProtocolMessage manage {
+        .version = 1,
+        .type = "manage-workspace",
+        .workspace_id = "1",
+        .timestamp = "2026-04-24T00:00:00Z",
+        .payload_json = "{\"adopt_existing_clients\":true}",
+    };
+    (void)hyprmacs::route_command_for_tests(manage, manager, applier);
+
+    const hyprmacs::ProtocolMessage set_layout {
+        .version = 1,
+        .type = "set-layout",
+        .workspace_id = "1",
+        .timestamp = "2026-04-24T00:00:01Z",
+        .payload_json =
+            "{\"selected_client\":\"0xbbb\",\"input_mode\":\"client-control\",\"visible_clients\":[\"0xbbb\"],"
+            "\"hidden_clients\":[\"0xaaa\"],"
+            "\"rectangles\":[{\"client_id\":\"0xbbb\",\"x\":10,\"y\":20,\"width\":300,\"height\":400}],"
+            "\"stacking_order\":[\"0xbbb\"]}",
+    };
+
+    focus_requests.clear();
+    const auto responses = hyprmacs::route_command_for_tests(set_layout, manager, applier);
+
+    bool ok = true;
+    ok &= expect(responses.size() == 2, "set-layout should produce two responses");
+    ok &= expect(std::find(recording.commands.begin(), recording.commands.end(),
+                           "dispatch movetoworkspacesilent 1,address:0xbbb") != recording.commands.end(),
+                 "set-layout should internally show visible client from hidden workspace");
+
+    manager.process_event_for_tests("activewindowv2>>0xbbb");
+    ok &= expect(focus_requests.empty(), "internal layout show focus event should be suppressed once");
+
+    manager.process_event_for_tests("activewindowv2>>0xbbb");
+    ok &= expect(focus_requests.size() == 1, "later external focus event after layout show should emit");
+    if (!focus_requests.empty()) {
+        ok &= expect(focus_requests[0] == "1:0xbbb", "external layout focus request should include workspace and client");
+    }
+
+    return ok;
+}
+
 bool test_route_set_input_mode_emacs_control_focuses_managing_frame() {
     hyprmacs::WorkspaceManager manager;
     auto applier = make_noop_applier();
@@ -1518,8 +1622,8 @@ bool test_route_unknown_type_returns_protocol_error() {
     return ok;
 }
 
-bool test_focus_request_message_for_tests_builds_client_focus_requested_event() {
-    const auto message = hyprmacs::focus_request_message_for_tests("1", "0xaaa");
+bool test_focus_request_message_builds_client_focus_requested_event() {
+    const auto message = hyprmacs::focus_request_message("1", "0xaaa");
     bool ok = true;
     ok &= expect(message.type == "client-focus-requested", "focus request event type mismatch");
     ok &= expect(message.workspace_id == "1", "focus request workspace mismatch");
@@ -1576,6 +1680,8 @@ int main() {
     ok &= test_route_set_layout_ignores_non_managed_selected_client();
     ok &= test_route_set_layout_with_null_selected_client_does_not_pick_visible_client();
     ok &= test_route_unknown_type_returns_protocol_error();
-    ok &= test_focus_request_message_for_tests_builds_client_focus_requested_event();
+    ok &= test_route_set_input_mode_client_control_suppresses_internal_focus_event_once();
+    ok &= test_route_set_layout_show_suppresses_internal_focus_event_once();
+    ok &= test_focus_request_message_builds_client_focus_requested_event();
     return ok ? 0 : 1;
 }

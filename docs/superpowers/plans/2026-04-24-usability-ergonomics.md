@@ -932,13 +932,13 @@ In `tests/emacs/session-tests.el`, add:
 In `plugin/include/hyprmacs/ipc_server.hpp`, add a narrow test helper declaration:
 
 ```cpp
-ProtocolMessage focus_request_message_for_tests(const WorkspaceId& workspace_id, const ClientId& client_id);
+ProtocolMessage focus_request_message(const WorkspaceId& workspace_id, const ClientId& client_id);
 ```
 
 In `plugin/src/ipc_server.cpp`, implement it using the same message builder used by the live server:
 
 ```cpp
-ProtocolMessage focus_request_message_for_tests(const WorkspaceId& workspace_id, const ClientId& client_id) {
+ProtocolMessage focus_request_message(const WorkspaceId& workspace_id, const ClientId& client_id) {
     return make_message(
         "client-focus-requested",
         workspace_id,
@@ -950,8 +950,8 @@ ProtocolMessage focus_request_message_for_tests(const WorkspaceId& workspace_id,
 In `plugin/tests/ipc_server_tests.cpp`, add:
 
 ```cpp
-bool test_focus_request_message_for_tests_builds_client_focus_requested_event() {
-    const auto message = hyprmacs::focus_request_message_for_tests("1", "0xaaa");
+bool test_focus_request_message_builds_client_focus_requested_event() {
+    const auto message = hyprmacs::focus_request_message("1", "0xaaa");
     bool ok = true;
     ok &= expect(message.type == "client-focus-requested", "focus request event type mismatch");
     ok &= expect(message.workspace_id == "1", "focus request workspace mismatch");

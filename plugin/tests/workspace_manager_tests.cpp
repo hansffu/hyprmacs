@@ -1160,6 +1160,34 @@ bool test_hidden_snapshot_client_stays_managed_when_query_reports_floating_overl
     return ok;
 }
 
+bool test_hidden_snapshot_client_real_floating_event_removes_managed_membership() {
+    bool ok = true;
+
+    hyprmacs::WorkspaceManager manager;
+    manager.process_event_for_tests("openwindowv2>>0xaaa,1,foot,foot-a");
+    ok &= expect(manager.manage_workspace("1"), "workspace 1 should become managed");
+
+    hyprmacs::ManagedWorkspaceLayoutSnapshot snapshot {
+        .workspace_id = "1",
+        .layout_version = 0,
+        .rectangles_by_client_id = {},
+        .visible_client_ids = {},
+        .hidden_client_ids = {"0xaaa"},
+        .stacking_order = {},
+        .selected_client = std::nullopt,
+        .input_mode = std::nullopt,
+        .managing_emacs_client_id = std::nullopt,
+    };
+    ok &= expect(manager.apply_managed_layout_snapshot(snapshot), "hidden snapshot should apply");
+
+    manager.process_event_for_tests("changefloatingmodev2>>0xaaa,true");
+    const auto state = manager.build_state_dump("1");
+
+    ok &= expect(state.managed_clients.empty(), "real floating event for hidden client should leave managed set");
+
+    return ok;
+}
+
 bool test_unmanaged_only_floating_refresh_adopts_tiled_client_without_reclassifying_managed() {
     bool ok = true;
 
@@ -1328,6 +1356,7 @@ int main() {
     ok &= test_seed_client_inserts_new_managed_client_hidden_by_default();
     ok &= test_visible_snapshot_client_stays_managed_when_query_reports_floating_overlay();
     ok &= test_hidden_snapshot_client_stays_managed_when_query_reports_floating_overlay();
+    ok &= test_hidden_snapshot_client_real_floating_event_removes_managed_membership();
     ok &= test_unmanaged_only_floating_refresh_adopts_tiled_client_without_reclassifying_managed();
     ok &= test_float_managed_client_marks_client_floating_and_unmanaged();
     ok &= test_summon_candidates_include_only_other_workspace_tiled_eligible_clients();

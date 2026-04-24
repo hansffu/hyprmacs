@@ -1020,7 +1020,9 @@ std::vector<ProtocolMessage> route_command_for_tests(
                         }
                     }
                     if (selected.has_value()) {
-                        (void)focus_controller->focus_client(*selected);
+                        if (focus_controller->focus_client(*selected)) {
+                            workspace_manager.note_internal_focus_request(incoming.workspace_id, *selected);
+                        }
                     }
                 } else if (*mode == InputMode::kEmacsControl) {
                     const auto emacs_client = workspace_manager.emacs_client(incoming.workspace_id);
@@ -1158,9 +1160,12 @@ std::vector<ProtocolMessage> route_command_for_tests(
                         }
                     }
                     for (const auto& visible_client : *visible_clients_opt) {
+                        const bool was_hidden = layout_applier.is_hidden(visible_client);
                         if (!layout_applier.show_client(visible_client)) {
                             std::cerr << "[hyprmacs] set-layout show failed workspace=" << incoming.workspace_id
                                       << " client=" << visible_client << '\n';
+                        } else if (was_hidden) {
+                            workspace_manager.note_internal_focus_request(incoming.workspace_id, visible_client);
                         }
                     }
 
@@ -1250,7 +1255,7 @@ std::vector<ProtocolMessage> route_command_for_tests(
     return out;
 }
 
-ProtocolMessage focus_request_message_for_tests(const WorkspaceId& workspace_id, const ClientId& client_id) {
+ProtocolMessage focus_request_message(const WorkspaceId& workspace_id, const ClientId& client_id) {
     return make_message("client-focus-requested", workspace_id, payload_for_focus_request(client_id));
 }
 
@@ -1762,15 +1767,24 @@ void IpcServer::on_workspace_state_changed(const WorkspaceId& workspace_id) {
 
 void IpcServer::on_focus_request(const WorkspaceId& workspace_id, const ClientId& client_id) {
     int fd = -1;
+    std::uint64_t controller_generation = 0;
     {
         std::scoped_lock lock(controller_mutex_);
         fd = controller_fd_;
+        controller_generation = controller_generation_;
     }
     if (!running_.load() || fd < 0) {
         return;
     }
 
-    send_message(fd, focus_request_message_for_tests(workspace_id, client_id));
+    {
+        std::scoped_lock lock(controller_mutex_);
+        if (fd != controller_fd_ || controller_generation != controller_generation_) {
+            return;
+        }
+    }
+
+    send_message(fd, focus_request_message(workspace_id, client_id));
 }
 
 }  // namespace hyprmacs

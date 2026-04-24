@@ -302,6 +302,7 @@ Payload:
 
 Rules:
 - Emitted only for managed tiled clients in the managed workspace.
+- Not emitted for plugin-initiated focus/layout operations; one matching internal focus event is suppressed.
 - Not emitted for Emacs clients, floating clients, unmanaged clients, or auxiliary clients.
 - The plugin only notifies; Emacs decides buffer display and window selection policy.
 

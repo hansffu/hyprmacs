@@ -78,6 +78,7 @@ class WorkspaceManager {
     std::optional<WorkspaceId> managed_workspace() const;
     std::optional<ClientId> selected_managed_client(const WorkspaceId& workspace_id) const;
     std::optional<ClientId> emacs_client(const WorkspaceId& workspace_id) const;
+    void note_internal_focus_request(const WorkspaceId& workspace_id, const ClientId& client_id);
     void set_client_transition_notifier(ClientTransitionNotifier notifier);
     void set_state_change_notifier(StateChangeNotifier notifier);
     void set_focus_request_notifier(FocusRequestNotifier notifier);
@@ -96,10 +97,15 @@ class WorkspaceManager {
         std::optional<int> animations_enabled;
         std::optional<int> focus_on_activate;
     };
+    struct QueriedClientState {
+        bool floating = false;
+        bool in_internal_hidden_workspace = false;
+    };
 
     static std::optional<int> parse_int_field(std::string_view json, std::string_view key);
     std::optional<int> query_option_int_locked(std::string_view option_name) const;
     std::optional<std::string> query_option_string_locked(std::string_view option_name) const;
+    std::optional<QueriedClientState> query_client_state_locked(std::string_view client_id) const;
     std::optional<bool> query_client_floating_locked(std::string_view client_id) const;
     std::optional<std::string> query_workspace_tiled_layout_locked(std::string_view workspace_id) const;
     bool dispatch_keyword_locked(std::string_view key, std::string_view value) const;
@@ -107,7 +113,9 @@ class WorkspaceManager {
     std::optional<ClientId> selected_managed_client_locked(const WorkspaceId& workspace_id) const;
     bool is_snapshot_visible_client_locked(std::string_view client_id) const;
     bool is_snapshot_hidden_client_locked(std::string_view client_id) const;
-    bool should_ignore_overlay_floating_update_locked(std::string_view client_id, bool floating);
+    bool should_ignore_overlay_floating_update_locked(std::string_view client_id, bool floating,
+                                                      bool in_internal_hidden_workspace);
+    bool consume_internal_focus_request_locked(const WorkspaceId& workspace_id, std::string_view client_id);
     bool refresh_workspace_floating_state_locked(const WorkspaceId& workspace_id, bool include_managed_clients);
     void sync_committed_layout_snapshot_locked();
     void refresh_managing_emacs_client_locked();
@@ -138,6 +146,7 @@ class WorkspaceManager {
     std::unordered_map<WorkspaceId, std::string> workspace_layout_snapshot_;
     std::unordered_set<ClientId> managed_client_seen_;
     std::unordered_set<ClientId> overlay_float_pending_clients_;
+    std::vector<std::pair<WorkspaceId, ClientId>> pending_internal_focus_requests_;
     std::optional<ClientId> managing_emacs_client_id_;
     std::optional<ManagedWorkspaceLayoutSnapshot> managed_layout_snapshot_;
     std::uint64_t managed_layout_version_ = 0;
