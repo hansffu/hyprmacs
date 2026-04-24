@@ -986,7 +986,8 @@ std::vector<ProtocolMessage> route_command_for_tests(
                 if (state.selected_client.has_value()) {
                     for (const auto& managed_client : state.managed_clients) {
                         if (managed_client == *state.selected_client && selected_can_be_shown) {
-                            if (layout_applier.show_client(managed_client)) {
+                            const bool was_hidden = layout_applier.is_hidden(managed_client);
+                            if (layout_applier.show_client(managed_client) && was_hidden) {
                                 workspace_manager.note_internal_focus_request(incoming.workspace_id, managed_client);
                             }
                         } else {

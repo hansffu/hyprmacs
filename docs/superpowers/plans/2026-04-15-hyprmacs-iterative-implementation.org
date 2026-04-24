@@ -2089,6 +2089,23 @@ Steps:
   - =nix develop -c sh -lc 'cmake --build build/plugin --target hyprmacs_ipc_server_tests hyprmacs_workspace_manager_tests -j8 && ctest --test-dir build/plugin --output-on-failure -R "hyprmacs_(ipc_server_tests|workspace_manager_tests)"'=: pass, 2/2.
   - =just e2e=: pass with artifact =artifacts/e2e/20260424-051150=.
 
+*** DONE Session note: Task 17.4 selected-client no-op show suppression fix (2026-04-24)
+- Fixed remaining quality review issue without advancing the Task 17 =WAIT= checkpoint or starting Task 17.5.
+- Root issue:
+  - =set-selected-client= recorded an internal focus suppression whenever =LayoutApplier::show_client= returned true.
+  - =show_client= returns true for no-op already-visible clients, so a suppression could be recorded without any internal Hyprland show/move and later swallow a real external focus event within the TTL.
+- Implementation:
+  - =set-selected-client= now checks =LayoutApplier::is_hidden= before =show_client= and records internal focus suppression only when the selected visible-snapshot client was actually hidden/restored.
+  - Existing hidden selected-client restore suppression remains unchanged.
+- Red verification:
+  - Added =test_route_set_selected_client_visible_noop_show_does_not_suppress_focus_event=.
+  - =nix develop -c sh -lc 'cmake --build build/plugin --target hyprmacs_ipc_server_tests -j8 && ctest --test-dir build/plugin --output-on-failure -R hyprmacs_ipc_server_tests'= failed:
+    =external focus after no-op selected show should emit once=.
+- Green verification:
+  - =emacs -Q --batch -L emacs -L tests/emacs -l tests/emacs/session-tests.el -f ert-run-tests-batch-and-exit=: pass, 10/10.
+  - =nix develop -c sh -lc 'cmake --build build/plugin --target hyprmacs_ipc_server_tests hyprmacs_workspace_manager_tests -j8 && ctest --test-dir build/plugin --output-on-failure -R "hyprmacs_(ipc_server_tests|workspace_manager_tests)"'=: pass, 2/2.
+  - =just e2e=: pass with artifact =artifacts/e2e/20260424-052019=.
+
 *** Session note: Task 16 layering blocker from compositor focus/render semantics (2026-04-22)
 - Task 16 single-window geometry regression is now fixed in E2E (client rectangle aligns with Emacs body area).
 - Remaining failing E2E assertions are the two managed layering/click assertions while Emacs is focused.

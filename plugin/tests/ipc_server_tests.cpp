@@ -760,6 +760,60 @@ bool test_route_set_selected_client_show_suppresses_internal_focus_event_once() 
     return ok;
 }
 
+bool test_route_set_selected_client_visible_noop_show_does_not_suppress_focus_event() {
+    hyprmacs::WorkspaceManager manager;
+    RecordingApplier recording;
+    auto applier = recording.make();
+    std::vector<std::string> focus_requests;
+    manager.set_focus_request_notifier(
+        [&focus_requests](const hyprmacs::WorkspaceId& workspace_id, const hyprmacs::ClientId& client_id) {
+            focus_requests.push_back(workspace_id + ":" + client_id);
+        }
+    );
+
+    manager.process_event_for_tests("openwindowv2>>0xaaa,1,foot,foot-a");
+    manager.manage_workspace("1");
+    manager.set_controller_connected(true);
+
+    hyprmacs::ManagedWorkspaceLayoutSnapshot snapshot {
+        .workspace_id = "1",
+        .layout_version = 1,
+        .rectangles_by_client_id = {
+            {"0xaaa", hyprmacs::ClientRect {.x = 10, .y = 20, .width = 300, .height = 400}},
+        },
+        .visible_client_ids = {"0xaaa"},
+        .hidden_client_ids = {},
+        .stacking_order = {"0xaaa"},
+        .selected_client = std::nullopt,
+        .input_mode = hyprmacs::InputMode::kEmacsControl,
+        .managing_emacs_client_id = std::nullopt,
+    };
+    manager.apply_managed_layout_snapshot(snapshot);
+    recording.commands.clear();
+
+    const hyprmacs::ProtocolMessage select {
+        .version = 1,
+        .type = "set-selected-client",
+        .workspace_id = "1",
+        .timestamp = "2026-04-24T00:00:00Z",
+        .payload_json = "{\"client_id\":\"0xaaa\"}",
+    };
+
+    const auto responses = hyprmacs::route_command_for_tests(select, manager, applier);
+
+    bool ok = true;
+    ok &= expect(responses.size() == 2, "set-selected-client should produce two responses");
+    ok &= expect(recording.commands.empty(), "already visible selected client should not dispatch a show command");
+
+    manager.process_event_for_tests("activewindowv2>>0xaaa");
+    ok &= expect(focus_requests.size() == 1, "external focus after no-op selected show should emit once");
+    if (!focus_requests.empty()) {
+        ok &= expect(focus_requests[0] == "1:0xaaa", "external focus request should include selected client");
+    }
+
+    return ok;
+}
+
 bool test_route_set_input_mode_updates_state_dump() {
     hyprmacs::WorkspaceManager manager;
     auto applier = make_noop_applier();
@@ -1873,6 +1927,7 @@ int main() {
     ok &= test_route_set_selected_client_keeps_selected_hidden_without_snapshot_geometry();
     ok &= test_route_set_selected_client_shows_selected_with_snapshot_geometry();
     ok &= test_route_set_selected_client_show_suppresses_internal_focus_event_once();
+    ok &= test_route_set_selected_client_visible_noop_show_does_not_suppress_focus_event();
     ok &= test_route_set_input_mode_updates_state_dump();
     ok &= test_route_set_input_mode_emacs_control_focuses_managing_frame();
     ok &= test_route_seed_client_adopts_existing_window();
