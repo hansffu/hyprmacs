@@ -970,6 +970,7 @@ bool WorkspaceManager::should_ignore_overlay_floating_update_locked(
         return false;
     }
     if (source == FloatingUpdateSource::PassiveQuery) {
+        overlay_float_pending_clients_.erase(normalized_client_id);
         return true;
     }
 
