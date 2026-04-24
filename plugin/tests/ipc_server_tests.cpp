@@ -1,8 +1,11 @@
 #include "hyprmacs/ipc_server.hpp"
 
+#include <cerrno>
 #include <iostream>
 #include <sstream>
 #include <string>
+#include <sys/socket.h>
+#include <unistd.h>
 #include <vector>
 
 namespace {
@@ -1709,6 +1712,31 @@ bool test_controller_send_target_is_current_rejects_stale_generation_and_fd() {
     return ok;
 }
 
+bool test_send_protocol_message_nonblocking_reports_backpressure() {
+    int fds[2] = {-1, -1};
+    bool ok = expect(::socketpair(AF_UNIX, SOCK_STREAM, 0, fds) == 0, "socketpair should succeed");
+    if (!ok) {
+        return false;
+    }
+
+    std::string filler(65536, 'x');
+    for (;;) {
+        const ssize_t sent = ::send(fds[0], filler.data(), filler.size(), MSG_DONTWAIT);
+        if (sent < 0) {
+            ok &= expect(errno == EAGAIN || errno == EWOULDBLOCK, "socket send buffer should saturate");
+            break;
+        }
+    }
+
+    const auto message = hyprmacs::focus_request_message("1", "0xaaa");
+    ok &= expect(!hyprmacs::send_protocol_message(fds[0], message, MSG_DONTWAIT),
+                 "nonblocking protocol send should report backpressure instead of blocking");
+
+    ::close(fds[0]);
+    ::close(fds[1]);
+    return ok;
+}
+
 }  // namespace
 
 int main() {
@@ -1762,5 +1790,6 @@ int main() {
     ok &= test_route_set_layout_show_preserves_multiple_pending_internal_focus_suppressions();
     ok &= test_focus_request_message_builds_client_focus_requested_event();
     ok &= test_controller_send_target_is_current_rejects_stale_generation_and_fd();
+    ok &= test_send_protocol_message_nonblocking_reports_backpressure();
     return ok ? 0 : 1;
 }

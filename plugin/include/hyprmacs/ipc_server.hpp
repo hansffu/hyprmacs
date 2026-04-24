@@ -35,6 +35,7 @@ std::vector<ProtocolMessage> route_command_for_tests(
 ProtocolMessage focus_request_message(const WorkspaceId& workspace_id, const ClientId& client_id);
 bool controller_send_target_is_current(int candidate_fd, std::uint64_t candidate_generation, int current_fd,
                                        std::uint64_t current_generation);
+bool send_protocol_message(int fd, const ProtocolMessage& message, int flags = 0);
 
 class IpcServer {
   public:

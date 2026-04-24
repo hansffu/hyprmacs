@@ -1991,6 +1991,28 @@ Steps:
   - =nix develop -c sh -lc 'cmake --build build/plugin --target hyprmacs_ipc_server_tests hyprmacs_workspace_manager_tests -j8 && ctest --test-dir build/plugin --output-on-failure -R "hyprmacs_(ipc_server_tests|workspace_manager_tests)"'=: pass, 2/2.
   - =just e2e=: pass with artifact =artifacts/e2e/20260424-041848=.
 
+*** DONE Session note: Task 17.4 final quality review fixes (2026-04-24)
+- Fixed final quality review findings without advancing the Task 17 =WAIT= checkpoint.
+- Pending internal focus suppression lifecycle:
+  - Pending one-shot suppressions are now cleared on managed workspace switch, explicit unmanage, and controller disconnect/unmanage.
+  - Pending suppressions for a client are pruned on =closewindow=.
+  - Before consuming a suppression, the manager prunes entries that no longer belong to the active managed workspace or no longer reference a managed, eligible, tiled client.
+  - Added regression coverage proving a stale internal suppression does not survive unmanage/remanage or client close/reopen to swallow a later external focus request.
+- Focus send lifetime/backpressure:
+  - Added a shared =send_protocol_message= helper with caller-supplied send flags.
+  - =on_focus_request= keeps the controller/send lock ordering that prevents close/reuse races, but sends the focus event with =MSG_DONTWAIT= so controller shutdown/disconnect is not blocked indefinitely by controller socket backpressure.
+  - Added socketpair backpressure coverage proving the nonblocking helper reports a saturated send buffer instead of blocking.
+  - Exact shutdown/fd-reuse interleaving remains impractical to unit test through the current private threaded server path; coverage exercises the guard predicate from the prior fix and the bounded-send behavior added here.
+- Red verification:
+  - =nix develop -c sh -lc 'cmake --build build/plugin --target hyprmacs_ipc_server_tests hyprmacs_workspace_manager_tests -j8 && ctest --test-dir build/plugin --output-on-failure -R "hyprmacs_(ipc_server_tests|workspace_manager_tests)"'= failed to link before =send_protocol_message= existed.
+  - =nix develop -c sh -lc 'cmake --build build/plugin --target hyprmacs_workspace_manager_tests -j8 && ctest --test-dir build/plugin --output-on-failure -R hyprmacs_workspace_manager_tests'= failed:
+    =stale internal focus suppression should not survive unmanage/remanage=
+    and =stale internal focus suppression should not survive client close=.
+- Green verification:
+  - =emacs -Q --batch -L emacs -L tests/emacs -l tests/emacs/session-tests.el -f ert-run-tests-batch-and-exit=: pass, 10/10.
+  - =nix develop -c sh -lc 'cmake --build build/plugin --target hyprmacs_ipc_server_tests hyprmacs_workspace_manager_tests -j8 && ctest --test-dir build/plugin --output-on-failure -R "hyprmacs_(ipc_server_tests|workspace_manager_tests)"'=: pass, 2/2.
+  - =just e2e=: pass with artifact =artifacts/e2e/20260424-043148=.
+
 *** Session note: Task 16 layering blocker from compositor focus/render semantics (2026-04-22)
 - Task 16 single-window geometry regression is now fixed in E2E (client rectangle aligns with Emacs body area).
 - Remaining failing E2E assertions are the two managed layering/click assertions while Emacs is focused.

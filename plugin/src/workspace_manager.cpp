@@ -389,6 +389,7 @@ bool WorkspaceManager::manage_workspace(const WorkspaceId& workspace_id) {
         apply_managed_layout_locked(workspace_id);
         managed_client_seen_.clear();
         overlay_float_pending_clients_.clear();
+        clear_pending_internal_focus_requests_locked();
         const auto snapshot = client_registry_.snapshot();
         for (const auto& client : snapshot.clients) {
             if (client.managed) {
@@ -415,6 +416,7 @@ bool WorkspaceManager::unmanage_workspace(const WorkspaceId& workspace_id) {
     client_registry_.reconcile_management(managed_workspace_id_);
     managed_client_seen_.clear();
     overlay_float_pending_clients_.clear();
+    clear_pending_internal_focus_requests_locked();
     return true;
 }
 
@@ -612,6 +614,7 @@ void WorkspaceManager::set_controller_connected(bool connected) {
             client_registry_.reconcile_management(managed_workspace_id_);
             managed_client_seen_.clear();
             overlay_float_pending_clients_.clear();
+            clear_pending_internal_focus_requests_locked();
         }
     }
 }
@@ -924,6 +927,7 @@ bool WorkspaceManager::should_ignore_overlay_floating_update_locked(
 }
 
 bool WorkspaceManager::consume_internal_focus_request_locked(const WorkspaceId& workspace_id, std::string_view client_id) {
+    prune_pending_internal_focus_requests_locked();
     const std::string normalized_client_id = normalize_client_id_for_query(client_id);
     const auto it = std::find_if(
         pending_internal_focus_requests_.begin(),
@@ -938,6 +942,42 @@ bool WorkspaceManager::consume_internal_focus_request_locked(const WorkspaceId& 
 
     pending_internal_focus_requests_.erase(it);
     return true;
+}
+
+void WorkspaceManager::clear_pending_internal_focus_requests_locked() {
+    pending_internal_focus_requests_.clear();
+}
+
+void WorkspaceManager::prune_pending_internal_focus_requests_for_client_locked(std::string_view client_id) {
+    const std::string normalized_client_id = normalize_client_id_for_query(client_id);
+    pending_internal_focus_requests_.erase(
+        std::remove_if(
+            pending_internal_focus_requests_.begin(),
+            pending_internal_focus_requests_.end(),
+            [&](const auto& pending) {
+                return pending.second == normalized_client_id;
+            }
+        ),
+        pending_internal_focus_requests_.end()
+    );
+}
+
+void WorkspaceManager::prune_pending_internal_focus_requests_locked() {
+    pending_internal_focus_requests_.erase(
+        std::remove_if(
+            pending_internal_focus_requests_.begin(),
+            pending_internal_focus_requests_.end(),
+            [&](const auto& pending) {
+                if (!managed_workspace_id_.has_value() || pending.first != *managed_workspace_id_) {
+                    return true;
+                }
+                const auto* client = client_registry_.find(pending.second);
+                return client == nullptr || client->workspace_id != pending.first || !client->managed ||
+                       client->floating || !client->eligible;
+            }
+        ),
+        pending_internal_focus_requests_.end()
+    );
 }
 
 bool WorkspaceManager::refresh_workspace_floating_state_locked(
@@ -1307,6 +1347,7 @@ void WorkspaceManager::handle_line(const std::string& line) {
                 }
                 managed_client_seen_.erase(normalize_client_id_for_query(parts[0]));
                 overlay_float_pending_clients_.erase(normalize_client_id_for_query(parts[0]));
+                prune_pending_internal_focus_requests_for_client_locked(parts[0]);
                 client_registry_.reconcile_management(managed_workspace_id_);
                 state_mutated = true;
             }

@@ -531,6 +531,60 @@ bool test_focus_request_notifier_ignores_emacs_floating_unmanaged_and_auxiliary_
     return ok;
 }
 
+bool test_pending_internal_focus_request_cleared_by_unmanage_remanage() {
+    bool ok = true;
+
+    hyprmacs::WorkspaceManager manager;
+    std::vector<std::string> focus_requests;
+    manager.set_focus_request_notifier(
+        [&focus_requests](const hyprmacs::WorkspaceId& workspace_id, const hyprmacs::ClientId& client_id) {
+            focus_requests.push_back(workspace_id + ":" + client_id);
+        }
+    );
+
+    manager.process_event_for_tests("openwindowv2>>0xaaa,1,foot,foot-a");
+    ok &= expect(manager.manage_workspace("1"), "workspace 1 should become managed");
+    manager.set_controller_connected(true);
+    manager.note_internal_focus_request("1", "0xaaa");
+    ok &= expect(manager.unmanage_workspace("1"), "workspace 1 should unmanage");
+    ok &= expect(manager.manage_workspace("1"), "workspace 1 should remanage");
+
+    manager.process_event_for_tests("activewindowv2>>0xaaa");
+    ok &= expect(focus_requests.size() == 1, "stale internal focus suppression should not survive unmanage/remanage");
+    if (!focus_requests.empty()) {
+        ok &= expect(focus_requests[0] == "1:0xaaa", "external focus after remanage should include client");
+    }
+
+    return ok;
+}
+
+bool test_pending_internal_focus_request_cleared_by_client_close() {
+    bool ok = true;
+
+    hyprmacs::WorkspaceManager manager;
+    std::vector<std::string> focus_requests;
+    manager.set_focus_request_notifier(
+        [&focus_requests](const hyprmacs::WorkspaceId& workspace_id, const hyprmacs::ClientId& client_id) {
+            focus_requests.push_back(workspace_id + ":" + client_id);
+        }
+    );
+
+    manager.process_event_for_tests("openwindowv2>>0xaaa,1,foot,foot-a");
+    ok &= expect(manager.manage_workspace("1"), "workspace 1 should become managed");
+    manager.set_controller_connected(true);
+    manager.note_internal_focus_request("1", "0xaaa");
+    manager.process_event_for_tests("closewindow>>0xaaa");
+    manager.process_event_for_tests("openwindowv2>>0xaaa,1,foot,foot-a-new");
+
+    manager.process_event_for_tests("activewindowv2>>0xaaa");
+    ok &= expect(focus_requests.size() == 1, "stale internal focus suppression should not survive client close");
+    if (!focus_requests.empty()) {
+        ok &= expect(focus_requests[0] == "1:0xaaa", "external focus after reopen should include client");
+    }
+
+    return ok;
+}
+
 bool test_managed_layout_snapshot_apply_get_and_versioning() {
     bool ok = true;
 
@@ -1399,6 +1453,8 @@ int main() {
     ok &= test_state_change_notifier_on_focus_and_close_events();
     ok &= test_focus_request_notifier_on_managed_tiled_focus_event();
     ok &= test_focus_request_notifier_ignores_emacs_floating_unmanaged_and_auxiliary_clients();
+    ok &= test_pending_internal_focus_request_cleared_by_unmanage_remanage();
+    ok &= test_pending_internal_focus_request_cleared_by_client_close();
     ok &= test_managed_layout_snapshot_apply_get_and_versioning();
     ok &= test_managed_layout_snapshot_rejects_non_managed_workspace_and_clears_on_switch();
     ok &= test_controller_disconnect_clears_active_managed_layout_snapshot();

@@ -1264,6 +1264,20 @@ bool controller_send_target_is_current(int candidate_fd, std::uint64_t candidate
     return candidate_fd >= 0 && candidate_fd == current_fd && candidate_generation == current_generation;
 }
 
+bool send_protocol_message(int fd, const ProtocolMessage& message, int flags) {
+    if (fd < 0) {
+        return false;
+    }
+
+    const std::string encoded = serialize_message(message) + "\n";
+    int send_flags = flags;
+#ifdef MSG_NOSIGNAL
+    send_flags |= MSG_NOSIGNAL;
+#endif
+    const ssize_t sent = ::send(fd, encoded.data(), encoded.size(), send_flags);
+    return sent == static_cast<ssize_t>(encoded.size());
+}
+
 IpcServer::IpcServer(WorkspaceManager* workspace_manager, LayoutApplier* layout_applier, FocusController* focus_controller,
                      RecalcRequester recalc_requester)
     : workspace_manager_(workspace_manager)
@@ -1698,9 +1712,7 @@ void IpcServer::send_message(int fd, const ProtocolMessage& message) {
 }
 
 void IpcServer::send_message_unlocked(int fd, const ProtocolMessage& message) {
-    const std::string encoded = serialize_message(message) + "\n";
-    const ssize_t sent = ::send(fd, encoded.data(), encoded.size(), 0);
-    if (sent < 0) {
+    if (!send_protocol_message(fd, message, 0)) {
         std::cerr << "[hyprmacs] ipc send failed for type=" << message.type << ": " << std::strerror(errno) << '\n';
         return;
     }
@@ -1790,7 +1802,14 @@ void IpcServer::on_focus_request(const WorkspaceId& workspace_id, const ClientId
         return;
     }
 
-    send_message_unlocked(fd, focus_request_message(workspace_id, client_id));
+    const auto message = focus_request_message(workspace_id, client_id);
+    if (!send_protocol_message(fd, message, MSG_DONTWAIT)) {
+        std::cerr << "[hyprmacs] ipc nonblocking focus send failed for workspace=" << workspace_id
+                  << " client=" << client_id << ": " << std::strerror(errno) << '\n';
+        return;
+    }
+
+    std::cerr << "[hyprmacs] ipc send type=" << message.type << " workspace=" << message.workspace_id << '\n';
 }
 
 }  // namespace hyprmacs

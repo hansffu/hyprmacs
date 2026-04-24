@@ -120,6 +120,9 @@ class WorkspaceManager {
     bool is_snapshot_hidden_client_locked(std::string_view client_id) const;
     bool should_ignore_overlay_floating_update_locked(std::string_view client_id, bool floating,
                                                       bool in_internal_hidden_workspace, FloatingUpdateSource source);
+    void clear_pending_internal_focus_requests_locked();
+    void prune_pending_internal_focus_requests_for_client_locked(std::string_view client_id);
+    void prune_pending_internal_focus_requests_locked();
     bool consume_internal_focus_request_locked(const WorkspaceId& workspace_id, std::string_view client_id);
     bool refresh_workspace_floating_state_locked(const WorkspaceId& workspace_id, bool include_managed_clients);
     void sync_committed_layout_snapshot_locked();
