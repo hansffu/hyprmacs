@@ -1,6 +1,7 @@
 #include "hyprmacs/workspace_manager.hpp"
 
 #include <algorithm>
+#include <chrono>
 #include <iostream>
 #include <optional>
 #include <string>
@@ -350,6 +351,36 @@ bool test_manage_workspace_refreshes_floating_state_from_clients_query() {
     return ok;
 }
 
+bool test_request_state_refresh_discovers_unknown_workspace_client_from_query() {
+    bool ok = true;
+
+    std::string clients_json = R"([])";
+
+    hyprmacs::WorkspaceManager manager(
+        [](const std::string&) { return 0; },
+        [&clients_json](const std::string& command) -> std::optional<std::string> {
+            if (command == "j/clients") {
+                return clients_json;
+            }
+            return std::nullopt;
+        }
+    );
+
+    manager.manage_workspace("1");
+    clients_json = R"([
+      {"address":"0xaaa","workspace":{"id":1},"class":"foot","title":"hyprmacs-float-command","floating":false}
+    ])";
+    const bool mutated = manager.refresh_workspace_floating_state_from_query("1");
+    const auto state = manager.build_state_dump("1");
+
+    ok &= expect(mutated, "request-state refresh should discover unknown tiled workspace client");
+    ok &= expect(state.managed_clients == std::vector<std::string>({"0xaaa"}),
+                 "discovered tiled workspace client should become managed");
+    ok &= expect(state.eligible_clients.size() == 1 && state.eligible_clients[0].client_id == "0xaaa",
+                 "discovered tiled workspace client should become eligible");
+    return ok;
+}
+
 bool test_refresh_based_float_transition_notifier_without_floating_event() {
     bool ok = true;
 
@@ -580,6 +611,39 @@ bool test_pending_internal_focus_request_cleared_by_client_close() {
     ok &= expect(focus_requests.size() == 1, "stale internal focus suppression should not survive client close");
     if (!focus_requests.empty()) {
         ok &= expect(focus_requests[0] == "1:0xaaa", "external focus after reopen should include client");
+    }
+
+    return ok;
+}
+
+bool test_pending_internal_focus_request_expires_while_client_still_managed() {
+    bool ok = true;
+
+    auto now = std::chrono::steady_clock::time_point {};
+    hyprmacs::WorkspaceManager::DispatchExecutor dispatch = [](const std::string&) {
+        return 0;
+    };
+    hyprmacs::WorkspaceManager manager(dispatch, {}, [&now]() {
+        return now;
+    });
+    std::vector<std::string> focus_requests;
+    manager.set_focus_request_notifier(
+        [&focus_requests](const hyprmacs::WorkspaceId& workspace_id, const hyprmacs::ClientId& client_id) {
+            focus_requests.push_back(workspace_id + ":" + client_id);
+        }
+    );
+
+    manager.process_event_for_tests("openwindowv2>>0xaaa,1,foot,foot-a");
+    ok &= expect(manager.manage_workspace("1"), "workspace 1 should become managed");
+    manager.set_controller_connected(true);
+    manager.note_internal_focus_request("1", "0xaaa");
+
+    now += std::chrono::seconds(2);
+    manager.process_event_for_tests("activewindowv2>>0xaaa");
+    ok &= expect(focus_requests.size() == 1,
+                 "expired internal focus suppression should not swallow later external focus");
+    if (!focus_requests.empty()) {
+        ok &= expect(focus_requests[0] == "1:0xaaa", "expired suppression focus should include client");
     }
 
     return ok;
@@ -1221,7 +1285,7 @@ bool test_visible_snapshot_client_stays_managed_across_repeated_floating_overlay
     return ok;
 }
 
-bool test_hidden_snapshot_client_stays_managed_when_query_reports_floating_overlay() {
+bool test_hidden_snapshot_explicit_query_preserves_hidden_overlay_floating_state() {
     bool ok = true;
 
     std::string clients_json = R"([
@@ -1261,9 +1325,9 @@ bool test_hidden_snapshot_client_stays_managed_when_query_reports_floating_overl
     const bool mutated = manager.refresh_workspace_floating_state_from_query("1");
     const auto state = manager.build_state_dump("1");
 
-    ok &= expect(!mutated, "hidden snapshot overlay floating refresh should not mutate managed registry state");
+    ok &= expect(!mutated, "explicit hidden overlay floating refresh should not mutate managed registry state");
     ok &= expect(state.managed_clients == std::vector<std::string>({"0xaaa"}),
-                 "hidden snapshot client should stay managed when query reports floating");
+                 "hidden snapshot client should stay managed when explicit query reports hidden floating state");
 
     return ok;
 }
@@ -1448,6 +1512,7 @@ int main() {
     ok &= test_float_state_transitions_update_managed_set_and_emit_notifications();
     ok &= test_openwindow_refreshes_floating_state_from_clients_query();
     ok &= test_manage_workspace_refreshes_floating_state_from_clients_query();
+    ok &= test_request_state_refresh_discovers_unknown_workspace_client_from_query();
     ok &= test_refresh_based_float_transition_notifier_without_floating_event();
     ok &= test_open_managed_client_emits_transition_without_controller_connection();
     ok &= test_state_change_notifier_on_focus_and_close_events();
@@ -1455,6 +1520,7 @@ int main() {
     ok &= test_focus_request_notifier_ignores_emacs_floating_unmanaged_and_auxiliary_clients();
     ok &= test_pending_internal_focus_request_cleared_by_unmanage_remanage();
     ok &= test_pending_internal_focus_request_cleared_by_client_close();
+    ok &= test_pending_internal_focus_request_expires_while_client_still_managed();
     ok &= test_managed_layout_snapshot_apply_get_and_versioning();
     ok &= test_managed_layout_snapshot_rejects_non_managed_workspace_and_clears_on_switch();
     ok &= test_controller_disconnect_clears_active_managed_layout_snapshot();
@@ -1466,7 +1532,7 @@ int main() {
     ok &= test_seed_client_inserts_new_managed_client_hidden_by_default();
     ok &= test_visible_snapshot_client_stays_managed_when_query_reports_floating_overlay();
     ok &= test_visible_snapshot_client_stays_managed_across_repeated_floating_overlay_queries();
-    ok &= test_hidden_snapshot_client_stays_managed_when_query_reports_floating_overlay();
+    ok &= test_hidden_snapshot_explicit_query_preserves_hidden_overlay_floating_state();
     ok &= test_hidden_snapshot_client_real_floating_event_removes_managed_membership();
     ok &= test_unmanaged_only_floating_refresh_adopts_tiled_client_without_reclassifying_managed();
     ok &= test_float_managed_client_marks_client_floating_and_unmanaged();

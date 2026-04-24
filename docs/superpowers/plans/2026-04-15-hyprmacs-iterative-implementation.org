@@ -2013,6 +2013,37 @@ Steps:
   - =nix develop -c sh -lc 'cmake --build build/plugin --target hyprmacs_ipc_server_tests hyprmacs_workspace_manager_tests -j8 && ctest --test-dir build/plugin --output-on-failure -R "hyprmacs_(ipc_server_tests|workspace_manager_tests)"'=: pass, 2/2.
   - =just e2e=: pass with artifact =artifacts/e2e/20260424-043148=.
 
+*** DONE Session note: Task 17.4 final review follow-up fixes (2026-04-24)
+- Fixed final review findings without advancing the Task 17 =WAIT= checkpoint or starting Task 17.5.
+- Internal focus suppression:
+  - =set-selected-client= now records a pending internal focus suppression when it successfully restores/shows the selected managed client through =LayoutApplier::show_client=.
+  - Added IPC route coverage proving the first matching =activewindowv2= from that internal show is suppressed and a later external focus event still emits =client-focus-requested=.
+  - Pending internal focus suppressions now carry a monotonic deadline; stale-but-still-managed entries expire before consuming so a later real user focus is not swallowed.
+  - Added workspace-manager coverage proving an expired suppression does not swallow a later external focus event.
+- Hidden explicit-query floating contract:
+  - Investigation confirmed the relevant hidden special-workspace query shape is not distinguishable from hyprmacs' internal hidden-overlay representation in the current v1 manager state.
+  - Codified the v1 contract: explicit =request-state= preserves hidden snapshot clients reported as floating in =special:hyprmacs-hidden=, while direct floating-transition events are authoritative for hidden clients.
+  - Updated =docs/protocol/ipc-v1.org= and renamed/kept workspace-manager tests to make that contract explicit.
+- Focus send backpressure/stream safety:
+  - =send_protocol_message= now returns =Sent=, =WouldBlock=, =Partial=, or =Failed=.
+  - Nonblocking focus sends drop cleanly on =WouldBlock= before writing bytes.
+  - If a nonblocking focus send reports =Partial= or =Failed= after bytes may have reached the newline-delimited stream, =IpcServer= shuts down/closes the controller fd and advances the generation so no later frame is appended to a corrupted partial frame.
+  - Added socketpair helper coverage for nonblocking backpressure and partial-write classification. Exact kernel partial-write interleaving is buffer-size dependent, so production handles it conservatively by disconnecting the controller stream on partial write.
+- E2E blocker investigation/fix:
+  - =just e2e= first failed at =make-buffer-floating probe client becomes managed= in artifact =artifacts/e2e/20260424-044601=.
+  - Artifact comparison against passing runs showed the probe emitted =windowtitlev2= but no =openwindow= before the 5s wait expired.
+  - Root cause: the E2E wait calls =request-state= as a recovery path, but explicit refresh only updated clients already present in =ClientRegistry=; query-only unknown eligible clients were not discovered.
+  - Added explicit-refresh discovery for missing workspace clients from =hyprctl -j clients= while preserving existing =manage_workspace= open-event transition semantics.
+  - Added workspace-manager regression coverage proving =request-state= refresh discovers an unknown tiled client from query state.
+- Red verification:
+  - =nix develop -c sh -lc 'cmake --build build/plugin --target hyprmacs_workspace_manager_tests -j8 && ctest --test-dir build/plugin --output-on-failure -R hyprmacs_workspace_manager_tests'= failed =test_request_state_refresh_discovers_unknown_workspace_client_from_query= because query-only clients were not seeded.
+  - The first discovery implementation then failed existing workspace-manager transition tests because =manage_workspace= discovered clients too early; discovery was narrowed to explicit refresh.
+  - Earlier red runs in this follow-up also failed before the production clock/deadline and send-result APIs existed, proving the new suppression-expiry and nonblocking send tests were exercising missing behavior.
+- Green verification:
+  - =emacs -Q --batch -L emacs -L tests/emacs -l tests/emacs/session-tests.el -f ert-run-tests-batch-and-exit=: pass, 10/10.
+  - =nix develop -c sh -lc 'cmake --build build/plugin --target hyprmacs_ipc_server_tests hyprmacs_workspace_manager_tests -j8 && ctest --test-dir build/plugin --output-on-failure -R "hyprmacs_(ipc_server_tests|workspace_manager_tests)"'=: pass, 2/2.
+  - =just e2e=: pass with artifact =artifacts/e2e/20260424-045254=.
+
 *** Session note: Task 16 layering blocker from compositor focus/render semantics (2026-04-22)
 - Task 16 single-window geometry regression is now fixed in E2E (client rectangle aligns with Emacs body area).
 - Remaining failing E2E assertions are the two managed layering/click assertions while Emacs is focused.

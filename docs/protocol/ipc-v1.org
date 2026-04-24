@@ -74,6 +74,8 @@ Payload:
 
 Rules:
 - The plugin replies with =state-dump=.
+- Floating-state detection from explicit state refresh is authoritative for visible managed clients.
+- Hidden managed clients in the internal =special:hyprmacs-hidden= workspace may be reported by Hyprland as =floating=true= as part of hyprmacs' hidden-overlay representation. In v1, explicit state refresh preserves those hidden snapshot clients as managed; direct floating-transition events are the authoritative signal that a hidden managed client became native floating.
 
 *** =set-layout=
 Purpose:
@@ -206,6 +208,7 @@ Payload field rules:
 - =managed_clients=: currently managed clients. In the earliest prototype this may be empty even when eligible clients exist.
 - =selected_client=: current managed client ID or =null= when none is selected.
 - =input_mode=: =null= until focus-mode support exists. Current values are =emacs-control= or =client-control=.
+- Hidden managed clients may remain in =managed_clients= even if Hyprland query state reports them as floating while they are in the internal hidden workspace. This preserves hyprmacs hidden-overlay state; native floating transitions for hidden clients are event-driven in protocol v1.
 
 *** =layout-applied=
 Purpose:

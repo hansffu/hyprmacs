@@ -986,7 +986,9 @@ std::vector<ProtocolMessage> route_command_for_tests(
                 if (state.selected_client.has_value()) {
                     for (const auto& managed_client : state.managed_clients) {
                         if (managed_client == *state.selected_client && selected_can_be_shown) {
-                            (void)layout_applier.show_client(managed_client);
+                            if (layout_applier.show_client(managed_client)) {
+                                workspace_manager.note_internal_focus_request(incoming.workspace_id, managed_client);
+                            }
                         } else {
                             (void)layout_applier.hide_client(managed_client, incoming.workspace_id);
                         }
@@ -1264,9 +1266,9 @@ bool controller_send_target_is_current(int candidate_fd, std::uint64_t candidate
     return candidate_fd >= 0 && candidate_fd == current_fd && candidate_generation == current_generation;
 }
 
-bool send_protocol_message(int fd, const ProtocolMessage& message, int flags) {
+SendProtocolResult send_protocol_message(int fd, const ProtocolMessage& message, int flags) {
     if (fd < 0) {
-        return false;
+        return SendProtocolResult::Failed;
     }
 
     const std::string encoded = serialize_message(message) + "\n";
@@ -1274,8 +1276,26 @@ bool send_protocol_message(int fd, const ProtocolMessage& message, int flags) {
 #ifdef MSG_NOSIGNAL
     send_flags |= MSG_NOSIGNAL;
 #endif
-    const ssize_t sent = ::send(fd, encoded.data(), encoded.size(), send_flags);
-    return sent == static_cast<ssize_t>(encoded.size());
+    size_t offset = 0;
+    while (offset < encoded.size()) {
+        const ssize_t sent = ::send(fd, encoded.data() + offset, encoded.size() - offset, send_flags);
+        if (sent > 0) {
+            offset += static_cast<size_t>(sent);
+            continue;
+        }
+        if (sent == 0) {
+            return offset == 0 ? SendProtocolResult::Failed : SendProtocolResult::Partial;
+        }
+        if (errno == EINTR) {
+            continue;
+        }
+        if (errno == EAGAIN || errno == EWOULDBLOCK) {
+            return offset == 0 ? SendProtocolResult::WouldBlock : SendProtocolResult::Partial;
+        }
+        return offset == 0 ? SendProtocolResult::Failed : SendProtocolResult::Partial;
+    }
+
+    return SendProtocolResult::Sent;
 }
 
 IpcServer::IpcServer(WorkspaceManager* workspace_manager, LayoutApplier* layout_applier, FocusController* focus_controller,
@@ -1712,7 +1732,7 @@ void IpcServer::send_message(int fd, const ProtocolMessage& message) {
 }
 
 void IpcServer::send_message_unlocked(int fd, const ProtocolMessage& message) {
-    if (!send_protocol_message(fd, message, 0)) {
+    if (send_protocol_message(fd, message, 0) != SendProtocolResult::Sent) {
         std::cerr << "[hyprmacs] ipc send failed for type=" << message.type << ": " << std::strerror(errno) << '\n';
         return;
     }
@@ -1803,13 +1823,22 @@ void IpcServer::on_focus_request(const WorkspaceId& workspace_id, const ClientId
     }
 
     const auto message = focus_request_message(workspace_id, client_id);
-    if (!send_protocol_message(fd, message, MSG_DONTWAIT)) {
-        std::cerr << "[hyprmacs] ipc nonblocking focus send failed for workspace=" << workspace_id
-                  << " client=" << client_id << ": " << std::strerror(errno) << '\n';
+    const auto send_result = send_protocol_message(fd, message, MSG_DONTWAIT);
+    if (send_result == SendProtocolResult::Sent) {
+        std::cerr << "[hyprmacs] ipc send type=" << message.type << " workspace=" << message.workspace_id << '\n';
         return;
     }
 
-    std::cerr << "[hyprmacs] ipc send type=" << message.type << " workspace=" << message.workspace_id << '\n';
+    std::cerr << "[hyprmacs] ipc nonblocking focus send failed for workspace=" << workspace_id
+              << " client=" << client_id << ": " << std::strerror(errno) << '\n';
+    if (send_result == SendProtocolResult::Partial || send_result == SendProtocolResult::Failed) {
+        if (controller_send_target_is_current(fd, controller_generation, controller_fd_, controller_generation_)) {
+            ::shutdown(controller_fd_, SHUT_RDWR);
+            ::close(controller_fd_);
+            controller_fd_ = -1;
+            controller_generation_ += 1;
+        }
+    }
 }
 
 }  // namespace hyprmacs

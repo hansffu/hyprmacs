@@ -698,6 +698,68 @@ bool test_route_set_selected_client_shows_selected_with_snapshot_geometry() {
     return ok;
 }
 
+bool test_route_set_selected_client_show_suppresses_internal_focus_event_once() {
+    hyprmacs::WorkspaceManager manager;
+    RecordingApplier recording;
+    auto applier = recording.make();
+    std::vector<std::string> focus_requests;
+    manager.set_focus_request_notifier(
+        [&focus_requests](const hyprmacs::WorkspaceId& workspace_id, const hyprmacs::ClientId& client_id) {
+            focus_requests.push_back(workspace_id + ":" + client_id);
+        }
+    );
+
+    manager.process_event_for_tests("openwindowv2>>0xaaa,1,foot,foot-a");
+    manager.process_event_for_tests("openwindowv2>>0xbbb,1,foot,foot-b");
+    manager.manage_workspace("1");
+    manager.set_controller_connected(true);
+
+    hyprmacs::ManagedWorkspaceLayoutSnapshot snapshot {
+        .workspace_id = "1",
+        .layout_version = 1,
+        .rectangles_by_client_id = {
+            {"0xbbb", hyprmacs::ClientRect {.x = 10, .y = 20, .width = 300, .height = 400}},
+        },
+        .visible_client_ids = {"0xbbb"},
+        .hidden_client_ids = {"0xaaa"},
+        .stacking_order = {"0xbbb"},
+        .selected_client = std::nullopt,
+        .input_mode = hyprmacs::InputMode::kEmacsControl,
+        .managing_emacs_client_id = std::nullopt,
+    };
+    manager.apply_managed_layout_snapshot(snapshot);
+    (void)applier.hide_client("0xbbb", "1");
+    recording.commands.clear();
+
+    const hyprmacs::ProtocolMessage select {
+        .version = 1,
+        .type = "set-selected-client",
+        .workspace_id = "1",
+        .timestamp = "2026-04-24T00:00:00Z",
+        .payload_json = "{\"client_id\":\"0xbbb\"}",
+    };
+
+    focus_requests.clear();
+    const auto responses = hyprmacs::route_command_for_tests(select, manager, applier);
+
+    bool ok = true;
+    ok &= expect(responses.size() == 2, "set-selected-client should produce two responses");
+    ok &= expect(std::find(recording.commands.begin(), recording.commands.end(),
+                           "dispatch movetoworkspacesilent 1,address:0xbbb") != recording.commands.end(),
+                 "set-selected-client should internally show selected visible snapshot client");
+
+    manager.process_event_for_tests("activewindowv2>>0xbbb");
+    ok &= expect(focus_requests.empty(), "internal set-selected-client show focus event should be suppressed once");
+
+    manager.process_event_for_tests("activewindowv2>>0xbbb");
+    ok &= expect(focus_requests.size() == 1, "later external focus after set-selected-client show should emit once");
+    if (!focus_requests.empty()) {
+        ok &= expect(focus_requests[0] == "1:0xbbb", "external selected focus request should include workspace and client");
+    }
+
+    return ok;
+}
+
 bool test_route_set_input_mode_updates_state_dump() {
     hyprmacs::WorkspaceManager manager;
     auto applier = make_noop_applier();
@@ -1729,8 +1791,38 @@ bool test_send_protocol_message_nonblocking_reports_backpressure() {
     }
 
     const auto message = hyprmacs::focus_request_message("1", "0xaaa");
-    ok &= expect(!hyprmacs::send_protocol_message(fds[0], message, MSG_DONTWAIT),
+    ok &= expect(hyprmacs::send_protocol_message(fds[0], message, MSG_DONTWAIT) ==
+                     hyprmacs::SendProtocolResult::WouldBlock,
                  "nonblocking protocol send should report backpressure instead of blocking");
+
+    ::close(fds[0]);
+    ::close(fds[1]);
+    return ok;
+}
+
+bool test_send_protocol_message_nonblocking_reports_partial_write() {
+    int fds[2] = {-1, -1};
+    bool ok = expect(::socketpair(AF_UNIX, SOCK_STREAM, 0, fds) == 0, "socketpair should succeed");
+    if (!ok) {
+        return false;
+    }
+
+    const std::string large_payload = std::string("{\"blob\":\"") + std::string(4 * 1024 * 1024, 'x') + "\"}";
+    const hyprmacs::ProtocolMessage message {
+        .version = 1,
+        .type = "debug-large-frame",
+        .workspace_id = "1",
+        .timestamp = "2026-04-24T00:00:00Z",
+        .payload_json = large_payload,
+    };
+
+    const auto result = hyprmacs::send_protocol_message(fds[0], message, MSG_DONTWAIT);
+    ok &= expect(result == hyprmacs::SendProtocolResult::Sent ||
+                     result == hyprmacs::SendProtocolResult::Partial ||
+                     result == hyprmacs::SendProtocolResult::WouldBlock,
+                 "nonblocking large protocol send should return a classified stream result");
+    ok &= expect(result != hyprmacs::SendProtocolResult::Failed,
+                 "nonblocking large protocol send should not collapse partial/backpressure into generic failure");
 
     ::close(fds[0]);
     ::close(fds[1]);
@@ -1763,6 +1855,7 @@ int main() {
     ok &= test_route_debug_hide_show();
     ok &= test_route_set_selected_client_keeps_selected_hidden_without_snapshot_geometry();
     ok &= test_route_set_selected_client_shows_selected_with_snapshot_geometry();
+    ok &= test_route_set_selected_client_show_suppresses_internal_focus_event_once();
     ok &= test_route_set_input_mode_updates_state_dump();
     ok &= test_route_set_input_mode_emacs_control_focuses_managing_frame();
     ok &= test_route_seed_client_adopts_existing_window();
@@ -1791,5 +1884,6 @@ int main() {
     ok &= test_focus_request_message_builds_client_focus_requested_event();
     ok &= test_controller_send_target_is_current_rejects_stale_generation_and_fd();
     ok &= test_send_protocol_message_nonblocking_reports_backpressure();
+    ok &= test_send_protocol_message_nonblocking_reports_partial_write();
     return ok ? 0 : 1;
 }

@@ -2,6 +2,7 @@
 
 #include <cstdint>
 #include <atomic>
+#include <chrono>
 #include <functional>
 #include <mutex>
 #include <optional>
@@ -52,9 +53,10 @@ class WorkspaceManager {
     using ClientTransitionNotifier = std::function<void(const WorkspaceId&, const ClientId&, bool)>;
     using StateChangeNotifier = std::function<void(const WorkspaceId&)>;
     using FocusRequestNotifier = std::function<void(const WorkspaceId&, const ClientId&)>;
+    using Clock = std::function<std::chrono::steady_clock::time_point()>;
 
     WorkspaceManager();
-    explicit WorkspaceManager(DispatchExecutor dispatch_executor, QueryExecutor query_executor = {});
+    explicit WorkspaceManager(DispatchExecutor dispatch_executor, QueryExecutor query_executor = {}, Clock clock = {});
     ~WorkspaceManager();
 
     WorkspaceManager(const WorkspaceManager&) = delete;
@@ -106,6 +108,11 @@ class WorkspaceManager {
         PassiveQuery,
         ExplicitQuery,
     };
+    struct PendingInternalFocusRequest {
+        WorkspaceId workspace_id;
+        ClientId client_id;
+        std::chrono::steady_clock::time_point deadline;
+    };
 
     static std::optional<int> parse_int_field(std::string_view json, std::string_view key);
     std::optional<int> query_option_int_locked(std::string_view option_name) const;
@@ -124,7 +131,9 @@ class WorkspaceManager {
     void prune_pending_internal_focus_requests_for_client_locked(std::string_view client_id);
     void prune_pending_internal_focus_requests_locked();
     bool consume_internal_focus_request_locked(const WorkspaceId& workspace_id, std::string_view client_id);
-    bool refresh_workspace_floating_state_locked(const WorkspaceId& workspace_id, bool include_managed_clients);
+    bool refresh_workspace_floating_state_locked(
+        const WorkspaceId& workspace_id, bool include_managed_clients, bool discover_missing_clients
+    );
     void sync_committed_layout_snapshot_locked();
     void refresh_managing_emacs_client_locked();
 
@@ -154,7 +163,7 @@ class WorkspaceManager {
     std::unordered_map<WorkspaceId, std::string> workspace_layout_snapshot_;
     std::unordered_set<ClientId> managed_client_seen_;
     std::unordered_set<ClientId> overlay_float_pending_clients_;
-    std::vector<std::pair<WorkspaceId, ClientId>> pending_internal_focus_requests_;
+    std::vector<PendingInternalFocusRequest> pending_internal_focus_requests_;
     std::optional<ClientId> managing_emacs_client_id_;
     std::optional<ManagedWorkspaceLayoutSnapshot> managed_layout_snapshot_;
     std::uint64_t managed_layout_version_ = 0;
@@ -163,6 +172,7 @@ class WorkspaceManager {
     ClientTransitionNotifier client_transition_notifier_;
     StateChangeNotifier state_change_notifier_;
     FocusRequestNotifier focus_request_notifier_;
+    Clock clock_;
 };
 
 }  // namespace hyprmacs
