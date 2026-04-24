@@ -1836,6 +1836,22 @@ Steps:
   - =nix develop -c sh -lc 'cmake --build build/plugin --target hyprmacs_workspace_manager_tests hyprmacs_ipc_server_tests -j8 && ctest --test-dir build/plugin --output-on-failure -R "hyprmacs_(workspace_manager_tests|ipc_server_tests)"'=: pass, 2/2.
   - =just e2e=: pass with artifact =artifacts/e2e/20260424-024636=.
 
+*** DONE Session note: Task 17.3 re-review follow-up for summon protocol serialization (2026-04-24)
+- Code-quality re-review found two protocol-side issues:
+  - =summon-client= emits =client-summoned= followed by =state-dump=, but the shared =state-dump= serializer still emitted raw control characters below =0x20= except newline/carriage-return/tab.
+  - optional summon =request_id= parsing stopped at the next quote and did not handle JSON-escaped quotes even though request ids are opaque.
+- Added red IPC route coverage for:
+  - =list-summon-candidates= with escaped quote in =request_id= requiring the response to parse and re-escape the full opaque id.
+  - =summon-client= for a client title containing =0x01= requiring the post-ack =state-dump= to contain =\u0001=.
+- Fixed protocol serialization by escaping every control character below =0x20= as =\u00XX= in the shared =protocol.cpp= string serializer used by =state-dump=.
+- Fixed optional string-field parsing in the IPC route helper to parse JSON string literals with normal JSON escapes instead of scanning for the next quote.
+- Red verification before fix:
+  - =nix develop -c sh -lc 'cmake --build build/plugin --target hyprmacs_workspace_manager_tests hyprmacs_ipc_server_tests -j8 && ctest --test-dir build/plugin --output-on-failure -R "hyprmacs_(workspace_manager_tests|ipc_server_tests)"'= failed in =hyprmacs_ipc_server_tests= with =summon-candidates response should parse and re-escape quoted request_id= and =post-summon state-dump should escape control char as unicode escape=.
+- Green verification after fix:
+  - =emacs -Q --batch -L emacs -L tests/emacs -l tests/emacs/protocol-tests.el -f ert-run-tests-batch-and-exit=: pass, 22/22.
+  - =nix develop -c sh -lc 'cmake --build build/plugin --target hyprmacs_workspace_manager_tests hyprmacs_ipc_server_tests -j8 && ctest --test-dir build/plugin --output-on-failure -R "hyprmacs_(workspace_manager_tests|ipc_server_tests)"'=: pass, 2/2.
+  - =just e2e=: pass with artifact =artifacts/e2e/20260424-025545=.
+
 *** Session note: Task 16 layering blocker from compositor focus/render semantics (2026-04-22)
 - Task 16 single-window geometry regression is now fixed in E2E (client rectangle aligns with Emacs body area).
 - Remaining failing E2E assertions are the two managed layering/click assertions while Emacs is focused.

@@ -214,6 +214,56 @@ std::optional<std::string> parse_client_id_from_payload(std::string_view payload
     return std::string(payload_json.substr(first_quote + 1, second_quote - first_quote - 1));
 }
 
+std::optional<std::string> parse_json_string_literal(std::string_view text, size_t* pos) {
+    if (*pos >= text.size() || text[*pos] != '"') {
+        return std::nullopt;
+    }
+    ++(*pos);
+
+    std::string out;
+    while (*pos < text.size()) {
+        const char ch = text[*pos];
+        ++(*pos);
+        if (ch == '"') {
+            return out;
+        }
+        if (ch != '\\') {
+            out.push_back(ch);
+            continue;
+        }
+        if (*pos >= text.size()) {
+            return std::nullopt;
+        }
+        const char escaped = text[*pos];
+        ++(*pos);
+        switch (escaped) {
+            case '"':
+            case '\\':
+            case '/':
+                out.push_back(escaped);
+                break;
+            case 'b':
+                out.push_back('\b');
+                break;
+            case 'f':
+                out.push_back('\f');
+                break;
+            case 'n':
+                out.push_back('\n');
+                break;
+            case 'r':
+                out.push_back('\r');
+                break;
+            case 't':
+                out.push_back('\t');
+                break;
+            default:
+                return std::nullopt;
+        }
+    }
+    return std::nullopt;
+}
+
 std::optional<std::string> parse_string_field_from_payload(std::string_view payload_json, std::string_view key) {
     const std::string token = "\"" + std::string(key) + "\"";
     const size_t key_pos = payload_json.find(token);
@@ -235,13 +285,7 @@ std::optional<std::string> parse_string_field_from_payload(std::string_view payl
         return std::nullopt;
     }
 
-    const size_t first_quote = value_start;
-    const size_t second_quote = payload_json.find('"', first_quote + 1);
-    if (second_quote == std::string_view::npos) {
-        return std::nullopt;
-    }
-
-    return std::string(payload_json.substr(first_quote + 1, second_quote - first_quote - 1));
+    return parse_json_string_literal(payload_json, &value_start);
 }
 
 std::optional<bool> parse_bool_field_from_payload(std::string_view payload_json, std::string_view key) {

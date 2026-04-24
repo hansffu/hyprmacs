@@ -1,6 +1,7 @@
 #include "hyprmacs/protocol.hpp"
 
 #include <cctype>
+#include <iomanip>
 #include <sstream>
 #include <string>
 #include <string_view>
@@ -253,6 +254,7 @@ std::string escape_json(std::string_view value) {
     std::string out;
     out.reserve(value.size() + 8);
     for (const char c : value) {
+        const auto uch = static_cast<unsigned char>(c);
         switch (c) {
             case '"':
                 out += "\\\"";
@@ -270,7 +272,15 @@ std::string escape_json(std::string_view value) {
                 out += "\\t";
                 break;
             default:
-                out.push_back(c);
+                if (uch < 0x20) {
+                    std::ostringstream escaped;
+                    escaped << "\\u"
+                            << std::hex << std::setw(4) << std::setfill('0')
+                            << static_cast<int>(uch);
+                    out += escaped.str();
+                } else {
+                    out.push_back(c);
+                }
                 break;
         }
     }
