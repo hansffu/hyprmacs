@@ -1652,7 +1652,7 @@ Steps:
 - Replace older duplicate visible windows with =*scratch*= and schedule layout sync through existing layout hooks.
 *** DONE Task 17.2: Managed buffer floating/unmanage command
 *** DONE Task 17.3: Completing-read summon command
-*** TODO Task 17.4: Managed-client focus request handling
+*** DONE Task 17.4: Managed-client focus request handling
 *** WAIT Review task 17 with user
 - Stop when all usability features pass ERT/plugin tests and nested E2E.
 
@@ -1870,6 +1870,37 @@ Steps:
   - =emacs -Q --batch -L emacs -L tests/emacs -l tests/emacs/protocol-tests.el -f ert-run-tests-batch-and-exit=: pass, 23/23.
   - =nix develop -c sh -lc 'cmake --build build/plugin --target hyprmacs_workspace_manager_tests hyprmacs_ipc_server_tests -j8 && ctest --test-dir build/plugin --output-on-failure -R "hyprmacs_(workspace_manager_tests|ipc_server_tests)"'=: pass, 2/2.
   - =just e2e=: pass with artifact =artifacts/e2e/20260424-030344=.
+
+*** DONE Session note: Task 17.4 managed-client focus request handling (2026-04-24)
+- Added Emacs-side focus request handling:
+  - =hyprmacs-focus-request-function= is customizable and called with =CLIENT-ID=, =WORKSPACE-ID=, and the decoded =PAYLOAD=.
+  - Default handler selects the visible managed-buffer window when present, displays the buffer in the selected Emacs window when hidden, and requests state when no buffer exists.
+  - Inbound =client-focus-requested= frames are routed through the custom handler and fall back to =request-state= when missing client data or handler.
+  - Default managed-buffer display now uses =switch-to-buffer= for hidden buffers so the selected window and current buffer agree for ordinary interactive commands.
+- Added plugin focus request notification:
+  - =WorkspaceManager= exposes =set_focus_request_notifier=.
+  - =activewindowv2= for an eligible managed tiled client in the managed workspace emits a notification.
+  - Emacs clients, floating clients, unmanaged clients, and auxiliary clients do not emit focus requests.
+  - =IpcServer= publishes =client-focus-requested= with payload ={"client_id":"..."}=.
+- Added protocol documentation for =client-focus-requested=.
+- Added nested E2E assertions:
+  - focusing a visible managed client via =hyprctl dispatch focuswindow address:<client>= selects the Emacs window already showing its buffer.
+  - focusing a hidden managed client displays that buffer in the selected Emacs window.
+- Discovered implementation detail:
+  - Hidden managed clients can be reported as native floating by =hyprctl -j clients= while they are in the internal hidden workspace.
+  - Added a hidden-snapshot overlay guard so this compositor representation does not remove hidden managed clients from managed membership.
+  - This required adjacent coverage in =plugin/tests/workspace_manager_tests.cpp= in addition to the user-listed plugin test files.
+- Red verification before implementation/fixes:
+  - =emacs -Q --batch -L emacs -L tests/emacs -l tests/emacs/session-tests.el -f ert-run-tests-batch-and-exit= failed the three new focus request tests because =client-focus-requested= was ignored.
+  - =nix develop -c sh -lc 'cmake --build build/plugin --target hyprmacs_ipc_server_tests hyprmacs_workspace_manager_tests -j8 && ctest --test-dir build/plugin --output-on-failure -R "hyprmacs_(ipc_server_tests|workspace_manager_tests)"'= failed before the IPC focus-request helper existed.
+  - =just e2e= initially failed the hidden-buffer focus request assertion; investigation showed hidden managed clients were reclassified as unmanaged/floating after focus.
+  - Added red workspace-manager coverage for hidden snapshot clients reported floating by =j/clients=; it failed until the hidden-snapshot guard was added.
+  - A later =just e2e= run failed after the focus request assertions because the selected window displayed the target buffer while the dynamic =current-buffer= still referenced the focus-source buffer before a pre-existing =kill-current-buffer= assertion; the E2E now restores the original kill-test precondition with =switch-to-buffer=.
+  - One =just e2e= rerun failed later at a nested =hyprctl dispatch togglefloating= timeout (=Hyprland IPC didn't respond in time=); a clean rerun passed without code changes.
+- Green verification after implementation:
+  - =emacs -Q --batch -L emacs -L tests/emacs -l tests/emacs/session-tests.el -f ert-run-tests-batch-and-exit=: pass, 10/10.
+  - =nix develop -c sh -lc 'cmake --build build/plugin --target hyprmacs_ipc_server_tests hyprmacs_workspace_manager_tests -j8 && ctest --test-dir build/plugin --output-on-failure -R "hyprmacs_(ipc_server_tests|workspace_manager_tests)"'=: pass, 2/2.
+  - =just e2e=: pass with artifact =artifacts/e2e/20260424-032840=.
 
 *** Session note: Task 16 layering blocker from compositor focus/render semantics (2026-04-22)
 - Task 16 single-window geometry regression is now fixed in E2E (client rectangle aligns with Emacs body area).

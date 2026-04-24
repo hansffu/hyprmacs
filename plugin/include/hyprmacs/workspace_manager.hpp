@@ -51,6 +51,7 @@ class WorkspaceManager {
     using QueryExecutor = std::function<std::optional<std::string>(const std::string&)>;
     using ClientTransitionNotifier = std::function<void(const WorkspaceId&, const ClientId&, bool)>;
     using StateChangeNotifier = std::function<void(const WorkspaceId&)>;
+    using FocusRequestNotifier = std::function<void(const WorkspaceId&, const ClientId&)>;
 
     WorkspaceManager();
     explicit WorkspaceManager(DispatchExecutor dispatch_executor, QueryExecutor query_executor = {});
@@ -79,6 +80,7 @@ class WorkspaceManager {
     std::optional<ClientId> emacs_client(const WorkspaceId& workspace_id) const;
     void set_client_transition_notifier(ClientTransitionNotifier notifier);
     void set_state_change_notifier(StateChangeNotifier notifier);
+    void set_focus_request_notifier(FocusRequestNotifier notifier);
     void set_controller_connected(bool connected);
     bool apply_managed_layout_snapshot(ManagedWorkspaceLayoutSnapshot snapshot);
     std::optional<ManagedWorkspaceLayoutSnapshot> managed_layout_snapshot(const WorkspaceId& workspace_id) const;
@@ -104,6 +106,7 @@ class WorkspaceManager {
     std::optional<ClientId> find_emacs_client_locked(const WorkspaceId& workspace_id) const;
     std::optional<ClientId> selected_managed_client_locked(const WorkspaceId& workspace_id) const;
     bool is_snapshot_visible_client_locked(std::string_view client_id) const;
+    bool is_snapshot_hidden_client_locked(std::string_view client_id) const;
     bool should_ignore_overlay_floating_update_locked(std::string_view client_id, bool floating);
     bool refresh_workspace_floating_state_locked(const WorkspaceId& workspace_id, bool include_managed_clients);
     void sync_committed_layout_snapshot_locked();
@@ -142,6 +145,7 @@ class WorkspaceManager {
     QueryExecutor query_executor_;
     ClientTransitionNotifier client_transition_notifier_;
     StateChangeNotifier state_change_notifier_;
+    FocusRequestNotifier focus_request_notifier_;
 };
 
 }  // namespace hyprmacs

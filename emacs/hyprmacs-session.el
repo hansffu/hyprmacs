@@ -208,6 +208,11 @@ If the buffer exists but is not visible, leave window selection unchanged."
        (hyprmacs-session--set-last-error
         (or (alist-get 'message payload nil nil #'equal)
             "unknown protocol error")))
+      ("client-focus-requested"
+       (let ((client-id (alist-get 'client_id payload nil nil #'equal)))
+         (if (and client-id (functionp hyprmacs-focus-request-function))
+             (funcall hyprmacs-focus-request-function client-id workspace-id payload)
+           (hyprmacs-session-request-state workspace-id))))
       ("state-dump"
        (let ((eligible-clients (alist-get 'eligible_clients payload nil nil #'equal))
              (managed-clients (alist-get 'managed_clients payload nil nil #'equal))

@@ -32,6 +32,7 @@ std::vector<ProtocolMessage> route_command_for_tests(
     FocusController* focus_controller = nullptr,
     RecalcRequester recalc_requester = {}
 );
+ProtocolMessage focus_request_message_for_tests(const WorkspaceId& workspace_id, const ClientId& client_id);
 
 class IpcServer {
   public:
@@ -57,6 +58,7 @@ class IpcServer {
     void restore_workspace_on_disconnect();
     void on_client_transition(const WorkspaceId& workspace_id, const ClientId& client_id, bool floating);
     void on_workspace_state_changed(const WorkspaceId& workspace_id);
+    void on_focus_request(const WorkspaceId& workspace_id, const ClientId& client_id);
     int resolve_state_notify_debounce_ms() const;
     void enqueue_debounced_state_dump(const WorkspaceId& workspace_id);
     void publish_state_dump_now(const WorkspaceId& workspace_id, std::optional<std::uint64_t> expected_generation = std::nullopt);

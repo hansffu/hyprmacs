@@ -1518,6 +1518,16 @@ bool test_route_unknown_type_returns_protocol_error() {
     return ok;
 }
 
+bool test_focus_request_message_for_tests_builds_client_focus_requested_event() {
+    const auto message = hyprmacs::focus_request_message_for_tests("1", "0xaaa");
+    bool ok = true;
+    ok &= expect(message.type == "client-focus-requested", "focus request event type mismatch");
+    ok &= expect(message.workspace_id == "1", "focus request workspace mismatch");
+    ok &= expect(message.payload_json.find("\"client_id\":\"0xaaa\"") != std::string::npos,
+                 "focus request payload should include client_id");
+    return ok;
+}
+
 }  // namespace
 
 int main() {
@@ -1566,5 +1576,6 @@ int main() {
     ok &= test_route_set_layout_ignores_non_managed_selected_client();
     ok &= test_route_set_layout_with_null_selected_client_does_not_pick_visible_client();
     ok &= test_route_unknown_type_returns_protocol_error();
+    ok &= test_focus_request_message_for_tests_builds_client_focus_requested_event();
     return ok ? 0 : 1;
 }

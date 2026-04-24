@@ -1023,6 +1023,80 @@ This covers the implemented runtime contract through Task 11."
                          (not (string= workspace-name "special:hyprmacs-hidden")))))
                 5.0 0.20)
                path "managed client is restored visible after reopening managed buffer")
+              (let* ((left (selected-window))
+                     (right (split-window-right))
+                     (focus-source (get-buffer-create "*hyprmacs-focus-source*")))
+                (set-window-buffer left focus-source)
+                (set-window-buffer right buffer)
+                (select-window left)
+                (pcase-let ((`(:exit ,focus-emacs-exit :out ,focus-emacs-out)
+                             (hyprmacs--run-command "hyprctl dispatch hyprmacs:set-emacs-control-mode")))
+                  (append-to-file (format "focus-request-focus-emacs-visible-out:\n%s\n" focus-emacs-out) nil path)
+                  (hyprmacs--e2e-assert
+                   (zerop focus-emacs-exit)
+                   path
+                   "focus request visible assertion starts with emacs-control"))
+                (pcase-let ((`(:exit ,focus-target-exit :out ,focus-target-out)
+                             (hyprmacs--run-command
+                              (format "hyprctl dispatch focuswindow address:%s" target-client))))
+                  (append-to-file (format "focus-request-visible-out:\n%s\n" focus-target-out) nil path)
+                  (hyprmacs--e2e-assert
+                   (zerop focus-target-exit)
+                   path
+                   "focuswindow target succeeds for visible focus-request assertion"))
+                (hyprmacs--e2e-assert
+                 (hyprmacs--wait-until
+                  (lambda ()
+                    (eq (selected-window) right))
+                  5.0 0.10)
+                 path
+                 "focus request selects visible target buffer window")
+                (delete-other-windows)
+                (switch-to-buffer focus-source)
+                (hyprmacs-sync-layout workspace-id t)
+                (hyprmacs--wait-seconds 0.25)
+                (hyprmacs--e2e-assert
+                 (hyprmacs--wait-until
+                  (lambda ()
+                    (let ((workspace-name (or (hyprmacs--client-workspace-name target-client) "")))
+                      (or (string= workspace-name "special:hyprmacs-hidden")
+                          (hyprmacs--client-hidden-p target-client))))
+                  5.0 0.20)
+                 path
+                 "focus request target is hidden before hidden-buffer assertion")
+                (pcase-let ((`(:exit ,focus-emacs-hidden-exit :out ,focus-emacs-hidden-out)
+                             (hyprmacs--run-command "hyprctl dispatch hyprmacs:set-emacs-control-mode")))
+                  (append-to-file (format "focus-request-focus-emacs-hidden-out:\n%s\n" focus-emacs-hidden-out) nil path)
+                  (hyprmacs--e2e-assert
+                   (zerop focus-emacs-hidden-exit)
+                   path
+                   "focus request hidden assertion starts with emacs-control"))
+                (pcase-let ((`(:exit ,focus-hidden-exit :out ,focus-hidden-out)
+                             (hyprmacs--run-command
+                              (format "hyprctl dispatch focuswindow address:%s" target-client))))
+                  (append-to-file (format "focus-request-hidden-out:\n%s\n" focus-hidden-out) nil path)
+                  (hyprmacs--e2e-assert
+                   (zerop focus-hidden-exit)
+                   path
+                   "focuswindow target succeeds for hidden focus-request assertion"))
+                (hyprmacs--e2e-assert
+                 (hyprmacs--wait-until
+                  (lambda ()
+                    (eq (window-buffer (selected-window)) buffer))
+                  5.0 0.10)
+                 path
+                 "focus request displays hidden target buffer in selected Emacs window")
+                (hyprmacs-sync-layout workspace-id t)
+                (hyprmacs--e2e-assert
+                 (hyprmacs--wait-until
+	                  (lambda ()
+	                    (let ((workspace-name (or (hyprmacs--client-workspace-name target-client) "")))
+	                      (and (not (string-empty-p workspace-name))
+	                           (not (string= workspace-name "special:hyprmacs-hidden")))))
+	                  5.0 0.20)
+	                path
+	                "focus request target is restored visible before close assertion"))
+              (switch-to-buffer buffer)
               (let ((kill-result (kill-current-buffer)))
                 (append-to-file (format "kill-current-buffer-result: %S\n" kill-result) nil path)
                 (hyprmacs--e2e-assert (not kill-result)

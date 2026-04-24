@@ -468,6 +468,69 @@ bool test_state_change_notifier_on_focus_and_close_events() {
     return ok;
 }
 
+bool test_focus_request_notifier_on_managed_tiled_focus_event() {
+    bool ok = true;
+
+    hyprmacs::WorkspaceManager manager;
+    std::vector<std::string> focus_requests;
+    manager.set_focus_request_notifier(
+        [&focus_requests](const hyprmacs::WorkspaceId& workspace_id, const hyprmacs::ClientId& client_id) {
+            focus_requests.push_back(workspace_id + ":" + client_id);
+        }
+    );
+
+    manager.process_event_for_tests("openwindowv2>>0xaaa,1,foot,foot-a");
+    manager.process_event_for_tests("openwindowv2>>0xeee,1,emacs,emacs-main");
+    manager.manage_workspace("1");
+    manager.set_controller_connected(true);
+    focus_requests.clear();
+
+    manager.process_event_for_tests("activewindowv2>>0xaaa");
+    ok &= expect(focus_requests.size() == 1, "managed tiled focus should emit one focus request");
+    if (!focus_requests.empty()) {
+        ok &= expect(focus_requests[0] == "1:0xaaa", "managed tiled focus request should include workspace and client");
+    }
+
+    return ok;
+}
+
+bool test_focus_request_notifier_ignores_emacs_floating_unmanaged_and_auxiliary_clients() {
+    bool ok = true;
+
+    hyprmacs::WorkspaceManager manager;
+    std::vector<std::string> focus_requests;
+    manager.set_focus_request_notifier(
+        [&focus_requests](const hyprmacs::WorkspaceId& workspace_id, const hyprmacs::ClientId& client_id) {
+            focus_requests.push_back(workspace_id + ":" + client_id);
+        }
+    );
+
+    manager.process_event_for_tests("openwindowv2>>0xeee,1,emacs,emacs-main");
+    manager.process_event_for_tests("openwindowv2>>0xfloat,1,foot,float");
+    manager.process_event_for_tests("openwindowv2>>0xother,2,foot,other");
+    manager.process_event_for_tests("openwindowv2>>0xaux,1,xdg-desktop-portal,Open File");
+    manager.process_event_for_tests("openwindowv2>>0xaaa,1,foot,foot-a");
+    manager.process_event_for_tests("changefloatingmodev2>>0xfloat,1");
+    manager.manage_workspace("1");
+    manager.set_controller_connected(true);
+    focus_requests.clear();
+
+    manager.process_event_for_tests("activewindowv2>>0xeee");
+    manager.process_event_for_tests("activewindowv2>>0xfloat");
+    manager.process_event_for_tests("activewindowv2>>0xother");
+    manager.process_event_for_tests("activewindowv2>>0xaux");
+    ok &= expect(focus_requests.empty(),
+                 "Emacs, floating, unmanaged, and auxiliary focus events should not emit focus requests");
+
+    manager.process_event_for_tests("activewindowv2>>0xaaa");
+    ok &= expect(focus_requests.size() == 1, "eligible managed focus still emits after ignored focus events");
+    if (!focus_requests.empty()) {
+        ok &= expect(focus_requests[0] == "1:0xaaa", "eligible focus request should include managed client");
+    }
+
+    return ok;
+}
+
 bool test_managed_layout_snapshot_apply_get_and_versioning() {
     bool ok = true;
 
@@ -1050,6 +1113,53 @@ bool test_visible_snapshot_client_stays_managed_when_query_reports_floating_over
     return ok;
 }
 
+bool test_hidden_snapshot_client_stays_managed_when_query_reports_floating_overlay() {
+    bool ok = true;
+
+    std::string clients_json = R"([
+      {"address":"0xaaa","workspace":{"id":1},"class":"foot","title":"foot-a","floating":false}
+    ])";
+
+    hyprmacs::WorkspaceManager manager(
+        [](const std::string&) { return 0; },
+        [&clients_json](const std::string& command) -> std::optional<std::string> {
+            if (command == "j/clients") {
+                return clients_json;
+            }
+            return std::nullopt;
+        }
+    );
+
+    manager.process_event_for_tests("openwindowv2>>0xaaa,1,foot,foot-a");
+    ok &= expect(manager.manage_workspace("1"), "workspace 1 should become managed");
+
+    hyprmacs::ManagedWorkspaceLayoutSnapshot snapshot {
+        .workspace_id = "1",
+        .layout_version = 0,
+        .rectangles_by_client_id = {},
+        .visible_client_ids = {},
+        .hidden_client_ids = {"0xaaa"},
+        .stacking_order = {},
+        .selected_client = std::nullopt,
+        .input_mode = std::nullopt,
+        .managing_emacs_client_id = std::nullopt,
+    };
+    ok &= expect(manager.apply_managed_layout_snapshot(snapshot), "hidden snapshot should apply");
+
+    clients_json = R"([
+      {"address":"0xaaa","workspace":{"id":-98,"name":"special:hyprmacs-hidden"},"class":"foot","title":"foot-a","floating":true}
+    ])";
+
+    const bool mutated = manager.refresh_workspace_floating_state_from_query("1");
+    const auto state = manager.build_state_dump("1");
+
+    ok &= expect(!mutated, "hidden snapshot overlay floating refresh should not mutate managed registry state");
+    ok &= expect(state.managed_clients == std::vector<std::string>({"0xaaa"}),
+                 "hidden snapshot client should stay managed when query reports floating");
+
+    return ok;
+}
+
 bool test_unmanaged_only_floating_refresh_adopts_tiled_client_without_reclassifying_managed() {
     bool ok = true;
 
@@ -1205,6 +1315,8 @@ int main() {
     ok &= test_refresh_based_float_transition_notifier_without_floating_event();
     ok &= test_open_managed_client_emits_transition_without_controller_connection();
     ok &= test_state_change_notifier_on_focus_and_close_events();
+    ok &= test_focus_request_notifier_on_managed_tiled_focus_event();
+    ok &= test_focus_request_notifier_ignores_emacs_floating_unmanaged_and_auxiliary_clients();
     ok &= test_managed_layout_snapshot_apply_get_and_versioning();
     ok &= test_managed_layout_snapshot_rejects_non_managed_workspace_and_clears_on_switch();
     ok &= test_controller_disconnect_clears_active_managed_layout_snapshot();
@@ -1215,6 +1327,7 @@ int main() {
     ok &= test_seed_client_refreshes_committed_snapshot_coherence();
     ok &= test_seed_client_inserts_new_managed_client_hidden_by_default();
     ok &= test_visible_snapshot_client_stays_managed_when_query_reports_floating_overlay();
+    ok &= test_hidden_snapshot_client_stays_managed_when_query_reports_floating_overlay();
     ok &= test_unmanaged_only_floating_refresh_adopts_tiled_client_without_reclassifying_managed();
     ok &= test_float_managed_client_marks_client_floating_and_unmanaged();
     ok &= test_summon_candidates_include_only_other_workspace_tiled_eligible_clients();

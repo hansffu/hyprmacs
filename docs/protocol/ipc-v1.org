@@ -289,6 +289,22 @@ Rules:
 - =ok=false= means the request was rejected or the compositor move failed.
 - The following =state-dump= is authoritative for whether the client entered managed membership.
 
+*** =client-focus-requested=
+Purpose:
+- Notify Emacs that a managed tiled client received/requested compositor focus.
+
+Payload:
+#+begin_src json
+{
+  "client_id": "0xabc123"
+}
+#+end_src
+
+Rules:
+- Emitted only for managed tiled clients in the managed workspace.
+- Not emitted for Emacs clients, floating clients, unmanaged clients, or auxiliary clients.
+- The plugin only notifies; Emacs decides buffer display and window selection policy.
+
 *** =client-became-floating=
 Purpose:
 - Notify Emacs that a previously managed client left managed membership due to floating transition.

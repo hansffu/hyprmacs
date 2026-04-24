@@ -573,6 +573,11 @@ void WorkspaceManager::set_state_change_notifier(StateChangeNotifier notifier) {
     state_change_notifier_ = std::move(notifier);
 }
 
+void WorkspaceManager::set_focus_request_notifier(FocusRequestNotifier notifier) {
+    std::scoped_lock lock(mutex_);
+    focus_request_notifier_ = std::move(notifier);
+}
+
 void WorkspaceManager::set_controller_connected(bool connected) {
     std::scoped_lock lock(mutex_);
     const bool transition_to_disconnected = controller_connected_ && !connected;
@@ -843,11 +848,27 @@ bool WorkspaceManager::is_snapshot_visible_client_locked(std::string_view client
            ) != managed_layout_snapshot_->visible_client_ids.end();
 }
 
+bool WorkspaceManager::is_snapshot_hidden_client_locked(std::string_view client_id) const {
+    if (!managed_layout_snapshot_.has_value()) {
+        return false;
+    }
+
+    const std::string normalized_client_id = normalize_client_id_for_query(client_id);
+    return std::find(
+               managed_layout_snapshot_->hidden_client_ids.begin(),
+               managed_layout_snapshot_->hidden_client_ids.end(),
+               normalized_client_id
+           ) != managed_layout_snapshot_->hidden_client_ids.end();
+}
+
 bool WorkspaceManager::should_ignore_overlay_floating_update_locked(std::string_view client_id, bool floating) {
     const std::string normalized_client_id = normalize_client_id_for_query(client_id);
     if (!floating) {
         overlay_float_pending_clients_.erase(normalized_client_id);
         return false;
+    }
+    if (is_snapshot_hidden_client_locked(normalized_client_id)) {
+        return true;
     }
     if (!is_snapshot_visible_client_locked(normalized_client_id)) {
         return false;
@@ -1110,6 +1131,10 @@ void WorkspaceManager::handle_line(const std::string& line) {
     ClientTransitionNotifier transition_notifier;
     WorkspaceId state_change_workspace;
     StateChangeNotifier state_change_notifier;
+    bool focus_request_notify = false;
+    WorkspaceId focus_request_workspace;
+    ClientId focus_request_client_id;
+    FocusRequestNotifier focus_request_notifier;
 
     {
         std::scoped_lock lock(mutex_);
@@ -1178,6 +1203,20 @@ void WorkspaceManager::handle_line(const std::string& line) {
             }
             sync_managed_seen_for_client(raw_client_id);
         };
+        auto maybe_set_focus_request = [&](std::string_view raw_client_id) {
+            if (focus_request_notify || focus_request_notifier_ == nullptr || !managed_workspace_id_.has_value()) {
+                return;
+            }
+            const auto* focused = client_registry_.find(std::string(raw_client_id));
+            if (focused == nullptr || focused->workspace_id != *managed_workspace_id_ || !focused->managed ||
+                focused->floating || !focused->eligible) {
+                return;
+            }
+            focus_request_notify = true;
+            focus_request_workspace = *managed_workspace_id_;
+            focus_request_client_id = focused->client_id;
+            focus_request_notifier = focus_request_notifier_;
+        };
 
         if (frame->name == "openwindow" || frame->name == "openwindowv2") {
             const auto parts = split_csv_limited(frame->payload, 4);
@@ -1218,6 +1257,7 @@ void WorkspaceManager::handle_line(const std::string& line) {
                 client_registry_.set_focus(parts[0]);
                 refresh_floating_from_query(parts[0]);
                 sync_managed_seen_for_client(parts[0]);
+                maybe_set_focus_request(parts[0]);
                 state_mutated = true;
             }
         } else if (frame->name == "windowtitlev2") {
@@ -1284,6 +1324,9 @@ void WorkspaceManager::handle_line(const std::string& line) {
     }
     if (state_change_notify && state_change_notifier != nullptr) {
         state_change_notifier(state_change_workspace);
+    }
+    if (focus_request_notify && focus_request_notifier != nullptr) {
+        focus_request_notifier(focus_request_workspace, focus_request_client_id);
     }
 }
 

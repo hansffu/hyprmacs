@@ -138,3 +138,51 @@
     (when-let ((buf (get-buffer "*before-selected-old*")))
       (kill-buffer buf))
     (hyprmacs-buffer-reset)))
+
+(ert-deftest hyprmacs-focus-request-selects-visible-buffer-window ()
+  (hyprmacs-session-reset)
+  (hyprmacs-buffer-reset)
+  (delete-other-windows)
+  (let* ((buffer (hyprmacs-buffer-ensure-for-client "0xaaa" "foot" "shell" "1"))
+         (left (selected-window))
+         (right (split-window-right)))
+    (unwind-protect
+        (progn
+          (set-window-buffer left (get-buffer-create "*left-focus*"))
+          (set-window-buffer right buffer)
+          (select-window left)
+          (hyprmacs-session-fake-receive
+           "{\"version\":1,\"type\":\"client-focus-requested\",\"workspace_id\":\"1\",\"timestamp\":\"2026-04-24T12:00:00Z\",\"payload\":{\"client_id\":\"0xaaa\"}}\n")
+          (should (eq (selected-window) right)))
+      (delete-other-windows)
+      (when-let ((buf (get-buffer "*left-focus*")))
+        (kill-buffer buf))
+      (hyprmacs-buffer-reset))))
+
+(ert-deftest hyprmacs-focus-request-displays-hidden-buffer-in-selected-window ()
+  (hyprmacs-session-reset)
+  (hyprmacs-buffer-reset)
+  (delete-other-windows)
+  (let ((buffer (hyprmacs-buffer-ensure-for-client "0xaaa" "foot" "shell" "1")))
+    (unwind-protect
+        (progn
+          (switch-to-buffer (get-buffer-create "*focus-source*"))
+          (hyprmacs-session-fake-receive
+           "{\"version\":1,\"type\":\"client-focus-requested\",\"workspace_id\":\"1\",\"timestamp\":\"2026-04-24T12:00:00Z\",\"payload\":{\"client_id\":\"0xaaa\"}}\n")
+          (should (eq (window-buffer (selected-window)) buffer))
+          (should (eq (current-buffer) buffer)))
+      (delete-other-windows)
+      (when-let ((buf (get-buffer "*focus-source*")))
+        (kill-buffer buf))
+      (hyprmacs-buffer-reset))))
+
+(ert-deftest hyprmacs-focus-request-uses-custom-handler ()
+  (hyprmacs-session-reset)
+  (let (seen)
+    (let ((hyprmacs-focus-request-function
+           (lambda (client-id workspace-id payload)
+             (setq seen (list client-id workspace-id payload)))))
+      (hyprmacs-session-fake-receive
+       "{\"version\":1,\"type\":\"client-focus-requested\",\"workspace_id\":\"1\",\"timestamp\":\"2026-04-24T12:00:00Z\",\"payload\":{\"client_id\":\"0xaaa\",\"reason\":\"urgent\"}}\n"))
+    (should (equal (car seen) "0xaaa"))
+    (should (equal (cadr seen) "1"))))

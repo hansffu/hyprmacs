@@ -56,6 +56,12 @@ Called with BUFFER, CLIENT-ID, WORKSPACE-ID, and REASON."
   :type 'function
   :group 'hyprmacs)
 
+(defcustom hyprmacs-focus-request-function #'hyprmacs-focus-request-default
+  "Function called when a managed client requests focus.
+Called with CLIENT-ID, WORKSPACE-ID, and PAYLOAD."
+  :type 'function
+  :group 'hyprmacs)
+
 (defvar hyprmacs-window-title-change-functions nil
   "Hook run when a managed client title changes.
 Functions receive: CLIENT-ID OLD-TITLE NEW-TITLE BUFFER.")
@@ -91,6 +97,7 @@ Functions receive: NEW-MODE OLD-MODE.")
 
 (declare-function hyprmacs-set-input-mode "hyprmacs")
 (declare-function hyprmacs--schedule-auto-sync-layout "hyprmacs")
+(declare-function hyprmacs-session-request-state "hyprmacs-session")
 
 (defun hyprmacs--normalize-client-id (client-id)
   "Return CLIENT-ID as a normalized Hyprland address string."
@@ -264,7 +271,7 @@ currently selected window. Return the window that displays BUFFER."
         (progn
           (select-window visible-window)
           visible-window)
-      (set-window-buffer (selected-window) buffer)
+      (switch-to-buffer buffer)
       (selected-window))))
 
 (defun hyprmacs--managed-buffer-p (buffer)
@@ -346,6 +353,13 @@ enforces the one-visible-window invariant for BUFFER."
     (hyprmacs-enforce-single-visible-managed-buffer
      buffer
      (and (window-live-p window) window))))
+
+(defun hyprmacs-focus-request-default (client-id workspace-id _payload)
+  "Default focus request behavior for CLIENT-ID in WORKSPACE-ID."
+  (let ((buffer (hyprmacs-buffer-for-client client-id)))
+    (if (buffer-live-p buffer)
+        (hyprmacs-display-managed-buffer buffer client-id workspace-id 'focus-request)
+      (hyprmacs-session-request-state workspace-id))))
 
 (defun hyprmacs-buffer-sync-managed (managed-client-ids eligible-clients)
   "Sync managed buffers for MANAGED-CLIENT-IDS using ELIGIBLE-CLIENTS metadata.

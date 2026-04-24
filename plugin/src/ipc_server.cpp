@@ -171,6 +171,14 @@ std::string payload_for_client_summoned(std::string_view client_id, bool ok) {
     return out.str();
 }
 
+std::string payload_for_focus_request(std::string_view client_id) {
+    std::ostringstream out;
+    out << "{";
+    out << "\"client_id\":\"" << escape_payload_json(client_id) << "\"";
+    out << "}";
+    return out.str();
+}
+
 std::string payload_for_protocol_error(std::string_view code, std::string_view message, std::string_view detail = "") {
     std::ostringstream out;
     out << "{";
@@ -1242,6 +1250,10 @@ std::vector<ProtocolMessage> route_command_for_tests(
     return out;
 }
 
+ProtocolMessage focus_request_message_for_tests(const WorkspaceId& workspace_id, const ClientId& client_id) {
+    return make_message("client-focus-requested", workspace_id, payload_for_focus_request(client_id));
+}
+
 IpcServer::IpcServer(WorkspaceManager* workspace_manager, LayoutApplier* layout_applier, FocusController* focus_controller,
                      RecalcRequester recalc_requester)
     : workspace_manager_(workspace_manager)
@@ -1259,6 +1271,11 @@ IpcServer::IpcServer(WorkspaceManager* workspace_manager, LayoutApplier* layout_
                 on_workspace_state_changed(workspace_id);
             }
         );
+        workspace_manager_->set_focus_request_notifier(
+            [this](const WorkspaceId& workspace_id, const ClientId& client_id) {
+                on_focus_request(workspace_id, client_id);
+            }
+        );
     }
 }
 
@@ -1266,6 +1283,7 @@ IpcServer::~IpcServer() {
     if (workspace_manager_ != nullptr) {
         workspace_manager_->set_client_transition_notifier({});
         workspace_manager_->set_state_change_notifier({});
+        workspace_manager_->set_focus_request_notifier({});
     }
     stop();
 }
@@ -1740,6 +1758,19 @@ void IpcServer::on_workspace_state_changed(const WorkspaceId& workspace_id) {
     } else {
         enqueue_debounced_state_dump(workspace_id);
     }
+}
+
+void IpcServer::on_focus_request(const WorkspaceId& workspace_id, const ClientId& client_id) {
+    int fd = -1;
+    {
+        std::scoped_lock lock(controller_mutex_);
+        fd = controller_fd_;
+    }
+    if (!running_.load() || fd < 0) {
+        return;
+    }
+
+    send_message(fd, focus_request_message_for_tests(workspace_id, client_id));
 }
 
 }  // namespace hyprmacs
