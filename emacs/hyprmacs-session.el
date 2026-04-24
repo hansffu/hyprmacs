@@ -45,6 +45,7 @@
               :managed-clients nil
               :summon-candidates nil
               :summon-candidates-workspace-id nil
+              :summon-candidates-request-id nil
               :selected-client nil
               :input-mode nil
               :last-error nil
@@ -82,6 +83,8 @@
         (plist-put hyprmacs-session-state :summon-candidates nil))
   (setq hyprmacs-session-state
         (plist-put hyprmacs-session-state :summon-candidates-workspace-id nil))
+  (setq hyprmacs-session-state
+        (plist-put hyprmacs-session-state :summon-candidates-request-id nil))
   (setq hyprmacs-session-state
         (plist-put hyprmacs-session-state :selected-client nil))
   (setq hyprmacs-session-state
@@ -197,7 +200,10 @@ If the buffer exists but is not visible, leave window selection unchanged."
                         (alist-get 'candidates payload nil nil #'equal)))
        (setq hyprmacs-session-state
              (plist-put hyprmacs-session-state :summon-candidates-workspace-id
-                        workspace-id)))
+                        workspace-id))
+       (setq hyprmacs-session-state
+             (plist-put hyprmacs-session-state :summon-candidates-request-id
+                        (alist-get 'request_id payload nil nil #'equal))))
       ("protocol-error"
        (hyprmacs-session--set-last-error
         (or (alist-get 'message payload nil nil #'equal)
@@ -311,9 +317,14 @@ When ADOPT-EXISTING is nil, defaults to true."
    workspace-id
    `((client_id . ,client-id))))
 
-(defun hyprmacs-session-list-summon-candidates (workspace-id)
+(defun hyprmacs-session-list-summon-candidates (workspace-id &optional request-id)
   "Request summon candidates for WORKSPACE-ID."
-  (hyprmacs-session-send "list-summon-candidates" workspace-id '()))
+  (hyprmacs-session-send
+   "list-summon-candidates"
+   workspace-id
+   (if request-id
+       `((request_id . ,request-id))
+     '())))
 
 (defun hyprmacs-session-summon-client (workspace-id client-id)
   "Request summon of CLIENT-ID into WORKSPACE-ID."

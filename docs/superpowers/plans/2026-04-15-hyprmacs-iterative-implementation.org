@@ -1813,6 +1813,29 @@ Steps:
   - =nix develop -c sh -lc 'cmake --build build/plugin --target hyprmacs_workspace_manager_tests hyprmacs_ipc_server_tests -j8 && ctest --test-dir build/plugin --output-on-failure -R "hyprmacs_(workspace_manager_tests|ipc_server_tests)"'=: pass, 2/2.
   - =just e2e=: pass with artifact =artifacts/e2e/20260424-023706=.
 
+*** DONE Session note: Task 17.3 review follow-up for request freshness and candidate validity (2026-04-24)
+- Code-quality review found three remaining summon issues:
+  - Fixed-delay Emacs candidate waiting could accept stale same-workspace responses.
+  - =WorkspaceManager::summon_candidates= returned candidates even when the target workspace was not managed.
+  - Summon candidate JSON escaping only handled a subset of JSON control characters.
+- Added red ERT coverage for:
+  - outbound =list-summon-candidates= including a =request_id=.
+  - inbound =summon-candidates= storing the response =request_id=.
+  - ignoring a stale same-workspace =summon-candidates= response whose =request_id= does not match the current request.
+- Fixed Emacs summon behavior by generating an opaque request id, sending it with =list-summon-candidates=, waiting with a predicate for matching =workspace_id= and =request_id=, and presenting only that response.
+- Added red plugin coverage for:
+  - no candidates when target workspace is not currently managed.
+  - =summon-candidates= echoing =request_id= and escaping an unusual control character as a JSON unicode escape.
+- Fixed plugin behavior by requiring =managed_workspace_id_ == target_workspace_id= in =summon_candidates=, echoing optional =request_id=, and escaping all JSON control characters below =0x20= as =\u00XX=.
+- Updated =docs/protocol/ipc-v1.org= to document optional summon =request_id= and unmanaged-target empty candidate behavior.
+- Red verification before fix:
+  - =emacs -Q --batch -L emacs -L tests/emacs -l tests/emacs/protocol-tests.el -f ert-run-tests-batch-and-exit= failed 3/22 on missing request-id send/store and stale same-workspace response handling.
+  - =nix develop -c sh -lc 'cmake --build build/plugin --target hyprmacs_workspace_manager_tests hyprmacs_ipc_server_tests -j8 && ctest --test-dir build/plugin --output-on-failure -R "hyprmacs_(workspace_manager_tests|ipc_server_tests)"'= failed in both target tests: unmanaged target listed candidates, =request_id= was not echoed, and =0x01= was not escaped.
+- Green verification after fix:
+  - =emacs -Q --batch -L emacs -L tests/emacs -l tests/emacs/protocol-tests.el -f ert-run-tests-batch-and-exit=: pass, 22/22.
+  - =nix develop -c sh -lc 'cmake --build build/plugin --target hyprmacs_workspace_manager_tests hyprmacs_ipc_server_tests -j8 && ctest --test-dir build/plugin --output-on-failure -R "hyprmacs_(workspace_manager_tests|ipc_server_tests)"'=: pass, 2/2.
+  - =just e2e=: pass with artifact =artifacts/e2e/20260424-024636=.
+
 *** Session note: Task 16 layering blocker from compositor focus/render semantics (2026-04-22)
 - Task 16 single-window geometry regression is now fixed in E2E (client rectangle aligns with Emacs body area).
 - Remaining failing E2E assertions are the two managed layering/click assertions while Emacs is focused.

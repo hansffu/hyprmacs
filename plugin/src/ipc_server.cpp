@@ -9,6 +9,7 @@
 #include <cstdlib>
 #include <cstring>
 #include <ctime>
+#include <iomanip>
 #include <iostream>
 #include <sstream>
 #include <unordered_set>
@@ -103,6 +104,7 @@ std::string payload_for_client_floated(std::string_view client_id, bool ok) {
 std::string escape_payload_json(std::string_view value) {
     std::ostringstream out;
     for (const char ch : value) {
+        const auto uch = static_cast<unsigned char>(ch);
         switch (ch) {
             case '"':
                 out << "\\\"";
@@ -120,16 +122,27 @@ std::string escape_payload_json(std::string_view value) {
                 out << "\\t";
                 break;
             default:
-                out << ch;
+                if (uch < 0x20) {
+                    out << "\\u"
+                        << std::hex << std::setw(4) << std::setfill('0')
+                        << static_cast<int>(uch)
+                        << std::dec << std::setfill(' ');
+                } else {
+                    out << ch;
+                }
                 break;
         }
     }
     return out.str();
 }
 
-std::string payload_for_summon_candidates(const std::vector<SummonCandidate>& candidates) {
+std::string payload_for_summon_candidates(const std::vector<SummonCandidate>& candidates, std::string_view request_id = "") {
     std::ostringstream out;
-    out << "{\"candidates\":[";
+    out << "{";
+    if (!request_id.empty()) {
+        out << "\"request_id\":\"" << escape_payload_json(request_id) << "\",";
+    }
+    out << "\"candidates\":[";
     for (size_t i = 0; i < candidates.size(); ++i) {
         if (i != 0) {
             out << ",";
@@ -759,10 +772,14 @@ std::vector<ProtocolMessage> route_command_for_tests(
     }
 
     if (incoming.type == "list-summon-candidates") {
+        const auto request_id = parse_string_field_from_payload(incoming.payload_json, "request_id");
         out.push_back(make_message(
             "summon-candidates",
             incoming.workspace_id,
-            payload_for_summon_candidates(workspace_manager.summon_candidates(incoming.workspace_id))
+            payload_for_summon_candidates(
+                workspace_manager.summon_candidates(incoming.workspace_id),
+                request_id.value_or("")
+            )
         ));
         return out;
     }

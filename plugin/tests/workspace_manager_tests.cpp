@@ -1128,6 +1128,14 @@ bool test_summon_candidates_include_only_other_workspace_tiled_eligible_clients(
     return ok;
 }
 
+bool test_summon_candidates_empty_for_unmanaged_target_workspace() {
+    hyprmacs::WorkspaceManager manager;
+    manager.seed_client("0xbbb", "2", "foot", "remote", false);
+
+    const auto candidates = manager.summon_candidates("1");
+    return expect(candidates.empty(), "unmanaged target workspace should not list summon candidates");
+}
+
 bool test_summon_client_moves_and_adopts_candidate() {
     std::vector<std::string> commands;
     hyprmacs::WorkspaceManager manager(
@@ -1210,6 +1218,7 @@ int main() {
     ok &= test_unmanaged_only_floating_refresh_adopts_tiled_client_without_reclassifying_managed();
     ok &= test_float_managed_client_marks_client_floating_and_unmanaged();
     ok &= test_summon_candidates_include_only_other_workspace_tiled_eligible_clients();
+    ok &= test_summon_candidates_empty_for_unmanaged_target_workspace();
     ok &= test_summon_client_moves_and_adopts_candidate();
     return ok ? 0 : 1;
 }

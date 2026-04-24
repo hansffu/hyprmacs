@@ -445,6 +445,9 @@ bool WorkspaceManager::float_managed_client(const WorkspaceId& workspace_id, con
 std::vector<SummonCandidate> WorkspaceManager::summon_candidates(const WorkspaceId& target_workspace_id) const {
     std::scoped_lock lock(mutex_);
     std::vector<SummonCandidate> out;
+    if (!managed_workspace_id_.has_value() || *managed_workspace_id_ != target_workspace_id) {
+        return out;
+    }
 
     const auto snapshot = client_registry_.snapshot();
     for (const auto& client : snapshot.clients) {

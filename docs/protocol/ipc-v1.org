@@ -121,12 +121,16 @@ Purpose:
 
 Payload:
 #+begin_src json
-{}
+{
+  "request_id": "summon-1"
+}
 #+end_src
 
 Rules:
 - The plugin responds with =summon-candidates=.
+- =request_id= is optional, opaque, and echoed by =summon-candidates= when present so clients can ignore stale delayed responses.
 - Candidates exclude clients already on the target workspace, floating clients, Emacs clients, and other ineligible auxiliary clients.
+- If the target workspace is not currently managed, the plugin returns an empty candidate list.
 
 *** =summon-client=
 Purpose:
@@ -253,6 +257,7 @@ Purpose:
 Payload:
 #+begin_src json
 {
+  "request_id": "summon-1",
   "candidates": [
     {
       "client_id": "0xbbb",
@@ -263,6 +268,9 @@ Payload:
   ]
 }
 #+end_src
+
+Rules:
+- =request_id= is present only when the request included one.
 
 *** =client-summoned=
 Purpose:

@@ -236,18 +236,31 @@ With PROMPT, ask for a managed client."
           (or (alist-get 'workspace_id candidate nil nil #'equal) "?")
           (or (alist-get 'title candidate nil nil #'equal) "untitled")))
 
+(defun hyprmacs--summon-request-id ()
+  "Return an opaque request id for one summon-candidates request."
+  (format "%s-%s" (float-time) (random most-positive-fixnum)))
+
 (defun hyprmacs-summon-client (&optional workspace-id)
   "Summon an eligible tiled client from another workspace."
   (interactive)
-  (let ((workspace-id (or workspace-id (hyprmacs--default-workspace-id))))
+  (let ((workspace-id (or workspace-id (hyprmacs--default-workspace-id)))
+        (request-id (hyprmacs--summon-request-id)))
     (setq hyprmacs-session-state
           (plist-put hyprmacs-session-state :summon-candidates nil))
     (setq hyprmacs-session-state
           (plist-put hyprmacs-session-state :summon-candidates-workspace-id nil))
-    (hyprmacs-session-list-summon-candidates workspace-id)
-    (hyprmacs--wait-seconds 0.20)
+    (setq hyprmacs-session-state
+          (plist-put hyprmacs-session-state :summon-candidates-request-id nil))
+    (hyprmacs-session-list-summon-candidates workspace-id request-id)
+    (hyprmacs--wait-until
+     (lambda ()
+       (and (equal (plist-get hyprmacs-session-state :summon-candidates-workspace-id) workspace-id)
+            (equal (plist-get hyprmacs-session-state :summon-candidates-request-id) request-id)))
+     2.0 0.05)
     (let* ((candidate-workspace-id (plist-get hyprmacs-session-state :summon-candidates-workspace-id))
-           (candidates (if (equal candidate-workspace-id workspace-id)
+           (candidate-request-id (plist-get hyprmacs-session-state :summon-candidates-request-id))
+           (candidates (if (and (equal candidate-workspace-id workspace-id)
+                                (equal candidate-request-id request-id))
                            (or (plist-get hyprmacs-session-state :summon-candidates) '())
                          '()))
            (choices (mapcar (lambda (candidate)

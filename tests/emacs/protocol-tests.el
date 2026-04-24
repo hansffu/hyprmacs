@@ -136,12 +136,13 @@
 (ert-deftest hyprmacs-session-sends-summon-candidate-requests ()
   (hyprmacs-session-reset)
   (hyprmacs-session-use-fake-transport)
-  (hyprmacs-session-list-summon-candidates "1")
+  (hyprmacs-session-list-summon-candidates "1" "req-1")
   (hyprmacs-session-summon-client "1" "0xabc")
   (let* ((frames (hyprmacs-session-fake-outbox))
          (first (hyprmacs-test--decode (nth 0 frames)))
          (second (hyprmacs-test--decode (nth 1 frames))))
     (should (equal (alist-get 'type first nil nil #'equal) "list-summon-candidates"))
+    (should (equal (alist-get 'request_id (alist-get 'payload first) nil nil #'equal) "req-1"))
     (should (equal (alist-get 'type second nil nil #'equal) "summon-client"))
     (should (equal (alist-get 'client_id (alist-get 'payload second) nil nil #'equal) "0xabc"))))
 
@@ -151,7 +152,13 @@
   (cl-letf (((symbol-function 'hyprmacs--wait-seconds)
              (lambda (&rest _)
                (hyprmacs-session-fake-receive
-                "{\"version\":1,\"type\":\"summon-candidates\",\"workspace_id\":\"1\",\"timestamp\":\"2026-04-24T00:00:00Z\",\"payload\":{\"candidates\":[{\"client_id\":\"0xabc\",\"workspace_id\":\"2\",\"app_id\":\"foot\",\"title\":\"remote shell\"}]}}\n")))
+                "{\"version\":1,\"type\":\"summon-candidates\",\"workspace_id\":\"1\",\"timestamp\":\"2026-04-24T00:00:00Z\",\"payload\":{\"request_id\":\"req-1\",\"candidates\":[{\"client_id\":\"0xabc\",\"workspace_id\":\"2\",\"app_id\":\"foot\",\"title\":\"remote shell\"}]}}\n")))
+            ((symbol-function 'hyprmacs--wait-until)
+             (lambda (predicate &rest _)
+               (hyprmacs--wait-seconds 0)
+               (funcall predicate)))
+            ((symbol-function 'hyprmacs--summon-request-id)
+             (lambda () "req-1"))
             ((symbol-function 'completing-read)
              (lambda (_prompt choices &rest _)
                (caar choices))))
@@ -166,8 +173,9 @@
 (ert-deftest hyprmacs-session-tracks-summon-candidate-workspace ()
   (hyprmacs-session-reset)
   (hyprmacs-session-fake-receive
-   "{\"version\":1,\"type\":\"summon-candidates\",\"workspace_id\":\"7\",\"timestamp\":\"2026-04-24T00:00:00Z\",\"payload\":{\"candidates\":[{\"client_id\":\"0xabc\",\"workspace_id\":\"2\",\"app_id\":\"foot\",\"title\":\"remote\"}]}}\n")
+   "{\"version\":1,\"type\":\"summon-candidates\",\"workspace_id\":\"7\",\"timestamp\":\"2026-04-24T00:00:00Z\",\"payload\":{\"request_id\":\"req-7\",\"candidates\":[{\"client_id\":\"0xabc\",\"workspace_id\":\"2\",\"app_id\":\"foot\",\"title\":\"remote\"}]}}\n")
   (should (equal (plist-get hyprmacs-session-state :summon-candidates-workspace-id) "7"))
+  (should (equal (plist-get hyprmacs-session-state :summon-candidates-request-id) "req-7"))
   (should (equal (alist-get 'client_id
                             (car (plist-get hyprmacs-session-state :summon-candidates))
                             nil nil #'equal)
@@ -184,7 +192,13 @@
   (cl-letf (((symbol-function 'hyprmacs--wait-seconds)
              (lambda (&rest _)
                (hyprmacs-session-fake-receive
-                "{\"version\":1,\"type\":\"summon-candidates\",\"workspace_id\":\"1\",\"timestamp\":\"2026-04-24T00:00:00Z\",\"payload\":{\"candidates\":[{\"client_id\":\"0xfresh\",\"workspace_id\":\"2\",\"app_id\":\"foot\",\"title\":\"fresh\"}]}}\n")))
+                "{\"version\":1,\"type\":\"summon-candidates\",\"workspace_id\":\"1\",\"timestamp\":\"2026-04-24T00:00:00Z\",\"payload\":{\"request_id\":\"req-1\",\"candidates\":[{\"client_id\":\"0xfresh\",\"workspace_id\":\"2\",\"app_id\":\"foot\",\"title\":\"fresh\"}]}}\n")))
+            ((symbol-function 'hyprmacs--wait-until)
+             (lambda (predicate &rest _)
+               (hyprmacs--wait-seconds 0)
+               (funcall predicate)))
+            ((symbol-function 'hyprmacs--summon-request-id)
+             (lambda () "req-1"))
             ((symbol-function 'completing-read)
              (lambda (_prompt choices &rest _)
                (caar choices))))
@@ -196,6 +210,36 @@
     (should (equal (alist-get 'workspace_id first nil nil #'equal) "1"))
     (should (equal (alist-get 'type second nil nil #'equal) "summon-client"))
     (should (equal (alist-get 'client_id (alist-get 'payload second) nil nil #'equal) "0xfresh"))))
+
+(ert-deftest hyprmacs-summon-client-ignores-stale-same-workspace-response ()
+  (hyprmacs-session-reset)
+  (hyprmacs-session-use-fake-transport)
+  (setq hyprmacs-session-state
+        (plist-put hyprmacs-session-state :summon-candidates-workspace-id "1"))
+  (setq hyprmacs-session-state
+        (plist-put hyprmacs-session-state :summon-candidates-request-id "old-req"))
+  (setq hyprmacs-session-state
+        (plist-put hyprmacs-session-state :summon-candidates
+                   '(((client_id . "0xstale") (workspace_id . "2") (app_id . "foot") (title . "stale")))))
+  (cl-letf (((symbol-function 'hyprmacs--summon-request-id)
+             (lambda () "new-req"))
+            ((symbol-function 'hyprmacs--wait-until)
+             (lambda (predicate &rest _)
+               (hyprmacs-session-fake-receive
+                "{\"version\":1,\"type\":\"summon-candidates\",\"workspace_id\":\"1\",\"timestamp\":\"2026-04-24T00:00:00Z\",\"payload\":{\"request_id\":\"old-req\",\"candidates\":[{\"client_id\":\"0xstale\",\"workspace_id\":\"2\",\"app_id\":\"foot\",\"title\":\"stale\"}]}}\n")
+               (should-not (funcall predicate))
+               (hyprmacs-session-fake-receive
+                "{\"version\":1,\"type\":\"summon-candidates\",\"workspace_id\":\"1\",\"timestamp\":\"2026-04-24T00:00:01Z\",\"payload\":{\"request_id\":\"new-req\",\"candidates\":[{\"client_id\":\"0xfresh\",\"workspace_id\":\"3\",\"app_id\":\"foot\",\"title\":\"fresh\"}]}}\n")
+               (funcall predicate)))
+            ((symbol-function 'completing-read)
+             (lambda (_prompt choices &rest _)
+               (caar choices))))
+    (hyprmacs-summon-client "1"))
+  (let* ((frames (hyprmacs-session-fake-outbox))
+         (request (hyprmacs-test--decode (nth 0 frames)))
+         (summon (hyprmacs-test--decode (nth 1 frames))))
+    (should (equal (alist-get 'request_id (alist-get 'payload request) nil nil #'equal) "new-req"))
+    (should (equal (alist-get 'client_id (alist-get 'payload summon) nil nil #'equal) "0xfresh"))))
 
 (ert-deftest hyprmacs-command-set-input-mode-defaults-to-client-control ()
   (hyprmacs-session-reset)
