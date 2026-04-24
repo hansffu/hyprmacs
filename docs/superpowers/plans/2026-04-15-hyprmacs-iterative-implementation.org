@@ -1917,16 +1917,19 @@ Steps:
   - =WorkspaceManager= now tracks a narrow pending internal focus request and consumes one matching =activewindowv2= event before notifying Emacs.
   - The =set-input-mode= client-control route records an internal focus request only after =FocusController= reports a successful =focus_client= call.
   - The =set-layout= route also records an internal focus request when it actually shows a client from the internal hidden workspace, because Hyprland can focus that client as a compositor side effect of the internal move/show operation.
-  - Pending internal focus suppressions are cleared on the next active-window event for the workspace to avoid stale suppression of later external focus requests.
+  - Pending internal focus suppression consumes only one matching =(workspace, client)= entry so multi-client layout/show operations preserve each client's one-shot suppression.
   - Added coverage proving the internal route suppresses one matching focus event and a later external =activewindowv2= still emits =client-focus-requested=.
   - Added coverage proving an internal layout show suppresses one matching focus event and a later external =activewindowv2= still emits.
+  - Added coverage proving a layout that shows two hidden clients suppresses both internal focus events while a later external focus event still emits.
 - Hidden floating guard tightening:
   - Hidden-client floating updates are ignored only when the queried compositor client is in the internal hidden workspace.
   - Direct native floating transition events for hidden managed clients are no longer swallowed.
   - Added workspace-manager regression coverage proving the internal hidden-overlay case remains managed and a real hidden-client floating transition removes managed membership.
 - IPC generation protection:
-  - =IpcServer::on_focus_request= now captures =controller_generation_= and rechecks the active controller fd plus generation before sending, matching the existing debounced state-dump stale-fd guard pattern.
-  - No dedicated stale-fd test was added because the existing IPC harness exercises route/event behavior synchronously and does not expose a practical interleaving point between the private fd/generation capture and send; implementation was kept aligned with the existing state-dump generation-check shape.
+  - =IpcServer::on_focus_request= now holds =controller_mutex_= and then =send_mutex_= while validating the controller fd/generation and sending the focus event.
+  - Controller close/replacement paths use the same controller-then-send lock order before closing the fd, so the fd cannot be closed/reused between focus validation and send.
+  - Added a focused helper-level test for =controller_send_target_is_current= to reject stale generation, replaced fd, and negative fd cases.
+  - The exact OS fd reuse race is not directly tested because the current IPC harness does not expose an interleaving point between the private focus-event callback, controller replacement/close, and kernel fd reuse; the implementation instead makes that interleaving unrepresentable by holding the send lifetime lock through the focus send.
 - Cleanup:
   - Renamed the production focus event builder from =focus_request_message_for_tests= to =focus_request_message= and updated tests/plan references.
   - Updated =docs/protocol/ipc-v1.org= to state that plugin-initiated focus/layout operations do not emit external focus-request events.
@@ -1935,10 +1938,36 @@ Steps:
   - =nix develop -c sh -lc 'cmake --build build/plugin --target hyprmacs_workspace_manager_tests -j8 && ctest --test-dir build/plugin --output-on-failure -R hyprmacs_workspace_manager_tests'= failed =test_hidden_snapshot_client_real_floating_event_removes_managed_membership= because a real floating event for a hidden client was still swallowed.
   - =nix develop -c sh -lc 'cmake --build build/plugin --target hyprmacs_ipc_server_tests -j8 && ctest --test-dir build/plugin --output-on-failure -R hyprmacs_ipc_server_tests'= failed =test_route_set_layout_show_suppresses_internal_focus_event_once= because the internal layout show focus event emitted before the show-side suppression hook existed.
   - =just e2e= failed before the focus-specific assertions with =managed client is visible when managed buffer is shown=; artifacts showed an unsolicited =client-focus-requested= from an internal layout show caused Emacs to switch to the other managed buffer.
+  - =nix develop -c sh -lc 'cmake --build build/plugin --target hyprmacs_ipc_server_tests -j8 && ctest --test-dir build/plugin --output-on-failure -R hyprmacs_ipc_server_tests'= failed =test_route_set_layout_show_preserves_multiple_pending_internal_focus_suppressions= because one internal focus event cleared all workspace pending suppressions.
+  - =nix develop -c sh -lc 'cmake --build build/plugin --target hyprmacs_ipc_server_tests -j8'= failed to compile because =controller_send_target_is_current= did not exist before the helper-level stale-send guard test was added.
 - Green verification after fixes:
   - =emacs -Q --batch -L emacs -L tests/emacs -l tests/emacs/session-tests.el -f ert-run-tests-batch-and-exit=: pass, 10/10.
   - =nix develop -c sh -lc 'cmake --build build/plugin --target hyprmacs_ipc_server_tests hyprmacs_workspace_manager_tests -j8 && ctest --test-dir build/plugin --output-on-failure -R "hyprmacs_(ipc_server_tests|workspace_manager_tests)"'=: pass, 2/2.
   - =just e2e=: pass with artifact =artifacts/e2e/20260424-035448=.
+
+*** DONE Session note: Task 17.4 quality re-review fixes (2026-04-24)
+- Fixed follow-up review findings without advancing the Task 17 =WAIT= checkpoint.
+- Focus send stale-fd race:
+  - =IpcServer::on_focus_request= now validates the fd/generation and sends while holding =controller_mutex_= and =send_mutex_=.
+  - Controller stop/disconnect close paths now take the same controller-then-send lock order before closing the controller fd, preventing close/reuse between validation and focus send.
+  - Added =controller_send_target_is_current= helper coverage for matching fd/generation, stale generation, replaced fd, and negative fd cases.
+  - Exact fd reuse interleaving remains impractical to unit test through the current synchronous IPC harness because =on_focus_request= and controller close/replacement are private threaded server paths; the helper test covers the guard predicate and the implementation removes the race by holding the send lifetime lock through the send.
+- Internal focus suppression:
+  - =consume_internal_focus_request_locked= now erases only one matching =(workspace, client)= suppression entry.
+  - Added IPC route coverage proving a layout that shows two hidden clients suppresses each client's internal focus event independently, while a later external focus event still emits.
+- Red verification:
+  - =nix develop -c sh -lc 'cmake --build build/plugin --target hyprmacs_ipc_server_tests -j8 && ctest --test-dir build/plugin --output-on-failure -R hyprmacs_ipc_server_tests'= failed =test_route_set_layout_show_preserves_multiple_pending_internal_focus_suppressions= because one internal focus event cleared all workspace pending suppressions.
+  - =nix develop -c sh -lc 'cmake --build build/plugin --target hyprmacs_ipc_server_tests -j8'= failed to compile because =controller_send_target_is_current= did not exist before the guard helper was implemented.
+- Green verification:
+  - =emacs -Q --batch -L emacs -L tests/emacs -l tests/emacs/session-tests.el -f ert-run-tests-batch-and-exit=: pass, 10/10.
+  - =nix develop -c sh -lc 'cmake --build build/plugin --target hyprmacs_ipc_server_tests hyprmacs_workspace_manager_tests -j8 && ctest --test-dir build/plugin --output-on-failure -R "hyprmacs_(ipc_server_tests|workspace_manager_tests)"'=: pass, 2/2.
+- Verification concern:
+  - =just e2e= was run twice and failed both times in the existing Task 16 compositor layering/click assertions while Emacs is focused:
+    =managed client is on top and receives click immediately while emacs focused=,
+    =managed client receives click while emacs focused (layer ordering)=, and
+    =floating client is on top and receives click immediately while emacs focused=.
+  - Artifacts: =artifacts/e2e/20260424-040619= and =artifacts/e2e/20260424-040720=.
+  - In both E2E runs, the Task 17.4 focus-request assertions passed before the later layering/click failures.
 
 *** Session note: Task 16 layering blocker from compositor focus/render semantics (2026-04-22)
 - Task 16 single-window geometry regression is now fixed in E2E (client rectangle aligns with Emacs body area).

@@ -1259,6 +1259,11 @@ ProtocolMessage focus_request_message(const WorkspaceId& workspace_id, const Cli
     return make_message("client-focus-requested", workspace_id, payload_for_focus_request(client_id));
 }
 
+bool controller_send_target_is_current(int candidate_fd, std::uint64_t candidate_generation, int current_fd,
+                                       std::uint64_t current_generation) {
+    return candidate_fd >= 0 && candidate_fd == current_fd && candidate_generation == current_generation;
+}
+
 IpcServer::IpcServer(WorkspaceManager* workspace_manager, LayoutApplier* layout_applier, FocusController* focus_controller,
                      RecalcRequester recalc_requester)
     : workspace_manager_(workspace_manager)
@@ -1377,7 +1382,8 @@ void IpcServer::stop() {
     }
 
     {
-        std::scoped_lock lock(controller_mutex_);
+        std::unique_lock controller_lock(controller_mutex_);
+        std::unique_lock send_lock(send_mutex_);
         if (controller_fd_ >= 0) {
             ::shutdown(controller_fd_, SHUT_RDWR);
             ::close(controller_fd_);
@@ -1585,7 +1591,8 @@ void IpcServer::accept_loop() {
         std::cerr << "[hyprmacs] ipc controller connected\n";
         serve_controller(controller_fd);
         {
-            std::scoped_lock lock(controller_mutex_);
+            std::unique_lock controller_lock(controller_mutex_);
+            std::unique_lock send_lock(send_mutex_);
             if (controller_fd_ == controller_fd) {
                 ::shutdown(controller_fd_, SHUT_RDWR);
                 ::close(controller_fd_);
@@ -1687,6 +1694,10 @@ void IpcServer::restore_workspace_on_disconnect() {
 
 void IpcServer::send_message(int fd, const ProtocolMessage& message) {
     std::scoped_lock lock(send_mutex_);
+    send_message_unlocked(fd, message);
+}
+
+void IpcServer::send_message_unlocked(int fd, const ProtocolMessage& message) {
     const std::string encoded = serialize_message(message) + "\n";
     const ssize_t sent = ::send(fd, encoded.data(), encoded.size(), 0);
     if (sent < 0) {
@@ -1766,25 +1777,20 @@ void IpcServer::on_workspace_state_changed(const WorkspaceId& workspace_id) {
 }
 
 void IpcServer::on_focus_request(const WorkspaceId& workspace_id, const ClientId& client_id) {
-    int fd = -1;
-    std::uint64_t controller_generation = 0;
-    {
-        std::scoped_lock lock(controller_mutex_);
-        fd = controller_fd_;
-        controller_generation = controller_generation_;
-    }
-    if (!running_.load() || fd < 0) {
+    if (!running_.load()) {
         return;
     }
 
-    {
-        std::scoped_lock lock(controller_mutex_);
-        if (fd != controller_fd_ || controller_generation != controller_generation_) {
-            return;
-        }
+    std::unique_lock controller_lock(controller_mutex_);
+    const int fd = controller_fd_;
+    const std::uint64_t controller_generation = controller_generation_;
+    std::unique_lock send_lock(send_mutex_);
+    if (!running_.load()
+        || !controller_send_target_is_current(fd, controller_generation, controller_fd_, controller_generation_)) {
+        return;
     }
 
-    send_message(fd, focus_request_message(workspace_id, client_id));
+    send_message_unlocked(fd, focus_request_message(workspace_id, client_id));
 }
 
 }  // namespace hyprmacs

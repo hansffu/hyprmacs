@@ -921,22 +921,19 @@ bool WorkspaceManager::should_ignore_overlay_floating_update_locked(std::string_
 
 bool WorkspaceManager::consume_internal_focus_request_locked(const WorkspaceId& workspace_id, std::string_view client_id) {
     const std::string normalized_client_id = normalize_client_id_for_query(client_id);
-    bool matched = false;
-    pending_internal_focus_requests_.erase(
-        std::remove_if(
-            pending_internal_focus_requests_.begin(),
-            pending_internal_focus_requests_.end(),
-            [&](const auto& pending) {
-                if (pending.first != workspace_id) {
-                    return false;
-                }
-                matched = matched || pending.second == normalized_client_id;
-                return true;
-            }
-        ),
-        pending_internal_focus_requests_.end()
+    const auto it = std::find_if(
+        pending_internal_focus_requests_.begin(),
+        pending_internal_focus_requests_.end(),
+        [&](const auto& pending) {
+            return pending.first == workspace_id && pending.second == normalized_client_id;
+        }
     );
-    return matched;
+    if (it == pending_internal_focus_requests_.end()) {
+        return false;
+    }
+
+    pending_internal_focus_requests_.erase(it);
+    return true;
 }
 
 bool WorkspaceManager::refresh_workspace_floating_state_locked(

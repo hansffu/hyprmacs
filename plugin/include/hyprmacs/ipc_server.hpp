@@ -33,6 +33,8 @@ std::vector<ProtocolMessage> route_command_for_tests(
     RecalcRequester recalc_requester = {}
 );
 ProtocolMessage focus_request_message(const WorkspaceId& workspace_id, const ClientId& client_id);
+bool controller_send_target_is_current(int candidate_fd, std::uint64_t candidate_generation, int current_fd,
+                                       std::uint64_t current_generation);
 
 class IpcServer {
   public:
@@ -55,6 +57,7 @@ class IpcServer {
     void accept_loop();
     void serve_controller(int controller_fd);
     void send_message(int fd, const ProtocolMessage& message);
+    void send_message_unlocked(int fd, const ProtocolMessage& message);
     void restore_workspace_on_disconnect();
     void on_client_transition(const WorkspaceId& workspace_id, const ClientId& client_id, bool floating);
     void on_workspace_state_changed(const WorkspaceId& workspace_id);

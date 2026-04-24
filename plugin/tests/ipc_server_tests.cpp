@@ -831,6 +831,70 @@ bool test_route_set_layout_show_suppresses_internal_focus_event_once() {
     return ok;
 }
 
+bool test_route_set_layout_show_preserves_multiple_pending_internal_focus_suppressions() {
+    hyprmacs::WorkspaceManager manager;
+    RecordingApplier recording;
+    auto applier = recording.make();
+    std::vector<std::string> focus_requests;
+    manager.set_focus_request_notifier(
+        [&focus_requests](const hyprmacs::WorkspaceId& workspace_id, const hyprmacs::ClientId& client_id) {
+            focus_requests.push_back(workspace_id + ":" + client_id);
+        }
+    );
+
+    manager.process_event_for_tests("openwindowv2>>0xaaa,1,foot,foot-a");
+    manager.process_event_for_tests("openwindowv2>>0xbbb,1,foot,foot-b");
+
+    const hyprmacs::ProtocolMessage manage {
+        .version = 1,
+        .type = "manage-workspace",
+        .workspace_id = "1",
+        .timestamp = "2026-04-24T00:00:00Z",
+        .payload_json = "{\"adopt_existing_clients\":true}",
+    };
+    (void)hyprmacs::route_command_for_tests(manage, manager, applier);
+
+    const hyprmacs::ProtocolMessage set_layout {
+        .version = 1,
+        .type = "set-layout",
+        .workspace_id = "1",
+        .timestamp = "2026-04-24T00:00:01Z",
+        .payload_json =
+            "{\"selected_client\":\"0xaaa\",\"input_mode\":\"client-control\",\"visible_clients\":[\"0xaaa\",\"0xbbb\"],"
+            "\"hidden_clients\":[],"
+            "\"rectangles\":["
+            "{\"client_id\":\"0xaaa\",\"x\":10,\"y\":20,\"width\":300,\"height\":400},"
+            "{\"client_id\":\"0xbbb\",\"x\":320,\"y\":20,\"width\":300,\"height\":400}"
+            "],\"stacking_order\":[\"0xaaa\",\"0xbbb\"]}",
+    };
+
+    focus_requests.clear();
+    const auto responses = hyprmacs::route_command_for_tests(set_layout, manager, applier);
+
+    bool ok = true;
+    ok &= expect(responses.size() == 2, "set-layout should produce two responses for multi-show");
+    ok &= expect(std::find(recording.commands.begin(), recording.commands.end(),
+                           "dispatch movetoworkspacesilent 1,address:0xaaa") != recording.commands.end(),
+                 "set-layout should internally show first visible client");
+    ok &= expect(std::find(recording.commands.begin(), recording.commands.end(),
+                           "dispatch movetoworkspacesilent 1,address:0xbbb") != recording.commands.end(),
+                 "set-layout should internally show second visible client");
+
+    manager.process_event_for_tests("activewindowv2>>0xaaa");
+    ok &= expect(focus_requests.empty(), "first internal layout show focus event should be suppressed");
+
+    manager.process_event_for_tests("activewindowv2>>0xbbb");
+    ok &= expect(focus_requests.empty(), "second internal layout show focus event should still be suppressed");
+
+    manager.process_event_for_tests("activewindowv2>>0xbbb");
+    ok &= expect(focus_requests.size() == 1, "later external focus event after multi-show should emit once");
+    if (!focus_requests.empty()) {
+        ok &= expect(focus_requests[0] == "1:0xbbb", "external multi-show focus request should include workspace and client");
+    }
+
+    return ok;
+}
+
 bool test_route_set_input_mode_emacs_control_focuses_managing_frame() {
     hyprmacs::WorkspaceManager manager;
     auto applier = make_noop_applier();
@@ -1632,6 +1696,19 @@ bool test_focus_request_message_builds_client_focus_requested_event() {
     return ok;
 }
 
+bool test_controller_send_target_is_current_rejects_stale_generation_and_fd() {
+    bool ok = true;
+    ok &= expect(hyprmacs::controller_send_target_is_current(7, 3, 7, 3),
+                 "matching controller fd and generation should be current");
+    ok &= expect(!hyprmacs::controller_send_target_is_current(7, 2, 7, 3),
+                 "stale controller generation should not be current");
+    ok &= expect(!hyprmacs::controller_send_target_is_current(7, 3, 8, 3),
+                 "replaced controller fd should not be current");
+    ok &= expect(!hyprmacs::controller_send_target_is_current(-1, 3, -1, 3),
+                 "negative controller fd should not be current");
+    return ok;
+}
+
 }  // namespace
 
 int main() {
@@ -1682,6 +1759,8 @@ int main() {
     ok &= test_route_unknown_type_returns_protocol_error();
     ok &= test_route_set_input_mode_client_control_suppresses_internal_focus_event_once();
     ok &= test_route_set_layout_show_suppresses_internal_focus_event_once();
+    ok &= test_route_set_layout_show_preserves_multiple_pending_internal_focus_suppressions();
     ok &= test_focus_request_message_builds_client_focus_requested_event();
+    ok &= test_controller_send_target_is_current_rejects_stale_generation_and_fd();
     return ok ? 0 : 1;
 }
