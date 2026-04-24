@@ -896,8 +896,9 @@ bool WorkspaceManager::is_snapshot_hidden_client_locked(std::string_view client_
            ) != managed_layout_snapshot_->hidden_client_ids.end();
 }
 
-bool WorkspaceManager::should_ignore_overlay_floating_update_locked(std::string_view client_id, bool floating,
-                                                                    bool in_internal_hidden_workspace) {
+bool WorkspaceManager::should_ignore_overlay_floating_update_locked(
+    std::string_view client_id, bool floating, bool in_internal_hidden_workspace, FloatingUpdateSource source
+) {
     const std::string normalized_client_id = normalize_client_id_for_query(client_id);
     if (!floating) {
         overlay_float_pending_clients_.erase(normalized_client_id);
@@ -908,6 +909,9 @@ bool WorkspaceManager::should_ignore_overlay_floating_update_locked(std::string_
     }
     if (!is_snapshot_visible_client_locked(normalized_client_id)) {
         return false;
+    }
+    if (source == FloatingUpdateSource::PassiveQuery) {
+        return true;
     }
 
     const auto pending_it = overlay_float_pending_clients_.find(normalized_client_id);
@@ -957,7 +961,8 @@ bool WorkspaceManager::refresh_workspace_floating_state_locked(
         if (should_ignore_overlay_floating_update_locked(
                 client.client_id,
                 queried_state->floating,
-                queried_state->in_internal_hidden_workspace
+                queried_state->in_internal_hidden_workspace,
+                FloatingUpdateSource::ExplicitQuery
             )) {
             continue;
         }
@@ -1246,7 +1251,8 @@ void WorkspaceManager::handle_line(const std::string& line) {
             if (should_ignore_overlay_floating_update_locked(
                     raw_client_id,
                     queried_state->floating,
-                    queried_state->in_internal_hidden_workspace
+                    queried_state->in_internal_hidden_workspace,
+                    FloatingUpdateSource::PassiveQuery
                 )) {
                 return;
             }
@@ -1341,7 +1347,9 @@ void WorkspaceManager::handle_line(const std::string& line) {
                 const bool was_managed = before != nullptr && before->managed;
                 const auto floating = parse_floating_value(parts);
                 if (floating.has_value()) {
-                    if (should_ignore_overlay_floating_update_locked(parts[0], *floating, false)) {
+                    if (should_ignore_overlay_floating_update_locked(
+                            parts[0], *floating, false, FloatingUpdateSource::Event
+                        )) {
                         sync_managed_seen_for_client(parts[0]);
                     } else {
                         client_registry_.set_floating(parts[0], *floating);

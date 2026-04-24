@@ -1103,12 +1103,66 @@ bool test_visible_snapshot_client_stays_managed_when_query_reports_floating_over
       {"address":"0xeee","workspace":{"id":1},"class":"emacs","title":"emacs-main","floating":false},
       {"address":"0xaaa","workspace":{"id":1},"class":"foot","title":"foot-a","floating":true}
     ])";
-    const bool mutated = manager.refresh_workspace_floating_state_from_query("1");
+    manager.process_event_for_tests("activewindowv2>>0xaaa");
     const auto state = manager.build_state_dump("1");
 
-    ok &= expect(!mutated, "visible snapshot overlay floating refresh should not mutate managed registry state");
     ok &= expect(state.managed_clients == std::vector<std::string>({"0xaaa"}),
-                 "visible snapshot client should stay managed when query reports floating");
+                 "visible snapshot client should stay managed when passive query reports floating");
+
+    return ok;
+}
+
+bool test_visible_snapshot_client_stays_managed_across_repeated_floating_overlay_queries() {
+    bool ok = true;
+
+    std::string clients_json = R"([
+      {"address":"0xeee","workspace":{"id":1},"class":"emacs","title":"emacs-main","floating":false},
+      {"address":"0xaaa","workspace":{"id":1},"class":"foot","title":"foot-a","floating":false}
+    ])";
+
+    hyprmacs::WorkspaceManager manager(
+        [](const std::string&) { return 0; },
+        [&clients_json](const std::string& command) -> std::optional<std::string> {
+            if (command == "j/clients") {
+                return clients_json;
+            }
+            return std::nullopt;
+        }
+    );
+
+    manager.process_event_for_tests("openwindowv2>>0xeee,1,emacs,emacs-main");
+    manager.process_event_for_tests("openwindowv2>>0xaaa,1,foot,foot-a");
+    manager.process_event_for_tests("activewindowv2>>0xeee");
+    ok &= expect(manager.manage_workspace("1"), "workspace 1 should become managed");
+    ok &= expect(manager.set_selected_client("1", "0xaaa"), "workspace 1 should set selected managed client");
+
+    hyprmacs::ManagedWorkspaceLayoutSnapshot snapshot {
+        .workspace_id = "1",
+        .layout_version = 0,
+        .rectangles_by_client_id = {
+            {"0xaaa", hyprmacs::ClientRect {.x = 10, .y = 20, .width = 300, .height = 400}},
+        },
+        .visible_client_ids = {"0xaaa"},
+        .hidden_client_ids = {},
+        .stacking_order = {"0xaaa"},
+        .selected_client = std::nullopt,
+        .input_mode = std::nullopt,
+        .managing_emacs_client_id = std::nullopt,
+    };
+    ok &= expect(manager.apply_managed_layout_snapshot(snapshot), "snapshot should apply");
+    manager.note_overlay_float_request("1", "0xaaa");
+
+    clients_json = R"([
+      {"address":"0xeee","workspace":{"id":1},"class":"emacs","title":"emacs-main","floating":false},
+      {"address":"0xaaa","workspace":{"id":1},"class":"foot","title":"foot-a","floating":true}
+    ])";
+
+    manager.process_event_for_tests("activewindowv2>>0xaaa");
+    manager.process_event_for_tests("activewindowv2>>0xaaa");
+
+    const auto state = manager.build_state_dump("1");
+    ok &= expect(state.managed_clients == std::vector<std::string>({"0xaaa"}),
+                 "visible snapshot client should stay managed across repeated passive floating overlay queries");
 
     return ok;
 }
@@ -1355,6 +1409,7 @@ int main() {
     ok &= test_seed_client_refreshes_committed_snapshot_coherence();
     ok &= test_seed_client_inserts_new_managed_client_hidden_by_default();
     ok &= test_visible_snapshot_client_stays_managed_when_query_reports_floating_overlay();
+    ok &= test_visible_snapshot_client_stays_managed_across_repeated_floating_overlay_queries();
     ok &= test_hidden_snapshot_client_stays_managed_when_query_reports_floating_overlay();
     ok &= test_hidden_snapshot_client_real_floating_event_removes_managed_membership();
     ok &= test_unmanaged_only_floating_refresh_adopts_tiled_client_without_reclassifying_managed();

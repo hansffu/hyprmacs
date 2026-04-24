@@ -1969,6 +1969,28 @@ Steps:
   - Artifacts: =artifacts/e2e/20260424-040619= and =artifacts/e2e/20260424-040720=.
   - In both E2E runs, the Task 17.4 focus-request assertions passed before the later layering/click failures.
 
+*** DONE Session note: Task 17.4 E2E blocker fix for passive overlay floating queries (2026-04-24)
+- Fixed the =just e2e= blocker that remained after =2471abc= without advancing the Task 17 =WAIT= checkpoint.
+- Root cause:
+  - Artifact comparison showed the failing runs reclassified plugin-controlled visible managed overlays as native floating/unmanaged during passive Hyprland =j/clients= refreshes triggered by focus/title events.
+  - Those stale full-size floating clients could remain above the intended managed overlay and intercept later layering clicks.
+  - A first broad fix that ignored all visible-snapshot floating query state fixed the unit shape but broke the managed->floating E2E path because explicit =request-state= refresh is still needed to detect user floating transitions when no =changefloatingmode= event is emitted.
+- Implementation:
+  - Split floating update handling by source: direct events, passive query refreshes, and explicit full query refreshes.
+  - Passive query refreshes ignore =floating=true= for visible clients in the current managed layout snapshot, preserving managed membership for compositor overlay representation across repeated focus/title refreshes.
+  - Explicit full query refreshes keep the existing ability to detect real managed->floating transitions, preserving the Task 15/16 managed-buffer floating assertions.
+- Regression coverage:
+  - Added workspace-manager tests proving visible snapshot overlay clients remain managed when passive query refreshes report =floating=true=, including repeated passive refreshes.
+- Red verification:
+  - Initial regression run failed =hyprmacs_workspace_manager_tests= with:
+    =second visible overlay query should not mutate state either=
+    and =visible snapshot client should stay managed across repeated floating overlay queries=.
+  - The first broad implementation then failed =just e2e= at =floating client is removed from managed set after togglefloating=, proving explicit full refresh could not be treated the same as passive overlay refresh.
+- Green verification:
+  - =emacs -Q --batch -L emacs -L tests/emacs -l tests/emacs/session-tests.el -f ert-run-tests-batch-and-exit=: pass, 10/10.
+  - =nix develop -c sh -lc 'cmake --build build/plugin --target hyprmacs_ipc_server_tests hyprmacs_workspace_manager_tests -j8 && ctest --test-dir build/plugin --output-on-failure -R "hyprmacs_(ipc_server_tests|workspace_manager_tests)"'=: pass, 2/2.
+  - =just e2e=: pass with artifact =artifacts/e2e/20260424-041848=.
+
 *** Session note: Task 16 layering blocker from compositor focus/render semantics (2026-04-22)
 - Task 16 single-window geometry regression is now fixed in E2E (client rectangle aligns with Emacs body area).
 - Remaining failing E2E assertions are the two managed layering/click assertions while Emacs is focused.
