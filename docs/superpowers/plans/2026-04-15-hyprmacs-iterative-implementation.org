@@ -1732,6 +1732,22 @@ Steps:
   - =emacs -Q --batch -L emacs -f batch-byte-compile emacs/hyprmacs.el=: pass with pre-existing docstring-width warning.
   - =just e2e=: pass with artifact =artifacts/e2e/20260424-015529=.
 
+*** DONE Session note: Task 17.2 review follow-up for float failure semantics (2026-04-24)
+- Review found that =float-managed-client= mutated manager state before native Hyprland =setfloating= was confirmed, and returned a success-shaped =client-floated= payload even when the manager rejected the request.
+- Added red IPC route tests for:
+  - wrong-workspace/non-managed client rejection returning =client-floated= with =ok:false= plus =state-dump= while preserving managed membership.
+  - native =LayoutApplier::ensure_client_floating= failure returning =ok:false= while preserving managed membership.
+  - happy path returning =ok:true=.
+- Fixed route ordering by adding read-only =WorkspaceManager::can_float_managed_client= validation, calling native =ensure_client_floating= next, and committing =WorkspaceManager::float_managed_client= only after native floating succeeds.
+- Updated =client-floated= protocol payload to include =ok=.
+- Red verification before fix:
+  - =nix develop -c sh -lc 'cmake --build build/plugin --target hyprmacs_workspace_manager_tests hyprmacs_ipc_server_tests -j8 && ctest --test-dir build/plugin --output-on-failure -R "hyprmacs_(workspace_manager_tests|ipc_server_tests)"'= failed in =hyprmacs_ipc_server_tests= because =ok= was missing and native float failure removed managed membership.
+- Green verification after fix:
+  - =nix develop -c sh -lc 'cmake --build build/plugin --target hyprmacs_workspace_manager_tests hyprmacs_ipc_server_tests -j8 && ctest --test-dir build/plugin --output-on-failure -R "hyprmacs_(workspace_manager_tests|ipc_server_tests)"'=: pass, 2/2.
+  - =emacs -Q --batch -L emacs -L tests/emacs -l tests/emacs/protocol-tests.el -f ert-run-tests-batch-and-exit=: pass, 17/17.
+  - =emacs -Q --batch -L emacs -L tests/emacs -l tests/emacs/buffer-tests.el -f ert-run-tests-batch-and-exit=: pass, 14/14.
+  - =just e2e=: pass with artifact =artifacts/e2e/20260424-020350=.
+
 *** Session note: Task 16 layering blocker from compositor focus/render semantics (2026-04-22)
 - Task 16 single-window geometry regression is now fixed in E2E (client rectangle aligns with Emacs body area).
 - Remaining failing E2E assertions are the two managed layering/click assertions while Emacs is focused.

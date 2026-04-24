@@ -408,6 +408,17 @@ bool WorkspaceManager::unmanage_workspace(const WorkspaceId& workspace_id) {
     return true;
 }
 
+bool WorkspaceManager::can_float_managed_client(const WorkspaceId& workspace_id, const ClientId& client_id) const {
+    std::scoped_lock lock(mutex_);
+    if (!managed_workspace_id_.has_value() || *managed_workspace_id_ != workspace_id) {
+        return false;
+    }
+
+    const std::string normalized = normalize_client_id_for_query(client_id);
+    const ClientRecord* record = client_registry_.find(normalized);
+    return record != nullptr && record->managed;
+}
+
 bool WorkspaceManager::float_managed_client(const WorkspaceId& workspace_id, const ClientId& client_id) {
     std::scoped_lock lock(mutex_);
     if (!managed_workspace_id_.has_value() || *managed_workspace_id_ != workspace_id) {

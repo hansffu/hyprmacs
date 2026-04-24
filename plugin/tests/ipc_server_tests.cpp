@@ -191,8 +191,62 @@ bool test_route_float_managed_client_returns_ack_and_state_dump() {
     bool ok = true;
     ok &= expect(responses.size() == 2, "float-managed-client should return ack and state-dump");
     ok &= expect(responses[0].type == "client-floated", "first response should be client-floated");
+    ok &= expect(responses[0].payload_json.find("\"ok\":true") != std::string::npos,
+                 "client-floated success should include ok:true");
     ok &= expect(responses[1].type == "state-dump", "second response should be state-dump");
     ok &= expect(manager.build_state_dump("1").managed_clients.empty(), "client should be unmanaged after route");
+    return ok;
+}
+
+bool test_route_float_managed_client_rejects_non_managed_without_mutation() {
+    hyprmacs::WorkspaceManager manager;
+    auto applier = make_noop_applier();
+    manager.seed_client("0xaaa", "1", "foot", "foot-a", false);
+    manager.manage_workspace("1");
+
+    const hyprmacs::ProtocolMessage incoming {
+        .type = "float-managed-client",
+        .workspace_id = "2",
+        .timestamp = "2026-04-24T00:00:00Z",
+        .payload_json = "{\"client_id\":\"0xaaa\"}",
+    };
+    auto responses = hyprmacs::route_command_for_tests(incoming, manager, applier);
+    const auto state = manager.build_state_dump("1");
+
+    bool ok = true;
+    ok &= expect(responses.size() == 2, "rejected float-managed-client should return ack and state-dump");
+    ok &= expect(responses[0].type == "client-floated", "rejection response should be client-floated");
+    ok &= expect(responses[0].payload_json.find("\"ok\":false") != std::string::npos,
+                 "rejection response should include ok:false");
+    ok &= expect(std::find(state.managed_clients.begin(), state.managed_clients.end(), "0xaaa") != state.managed_clients.end(),
+                 "wrong-workspace rejection should leave original managed membership intact");
+    return ok;
+}
+
+bool test_route_float_managed_client_native_float_failure_does_not_unmanage() {
+    hyprmacs::WorkspaceManager manager;
+    hyprmacs::LayoutApplier failing_applier([](const std::string&) {
+        return 1;
+    });
+    manager.seed_client("0xaaa", "1", "foot", "foot-a", false);
+    manager.manage_workspace("1");
+
+    const hyprmacs::ProtocolMessage incoming {
+        .type = "float-managed-client",
+        .workspace_id = "1",
+        .timestamp = "2026-04-24T00:00:00Z",
+        .payload_json = "{\"client_id\":\"0xaaa\"}",
+    };
+    auto responses = hyprmacs::route_command_for_tests(incoming, manager, failing_applier);
+    const auto state = manager.build_state_dump("1");
+
+    bool ok = true;
+    ok &= expect(responses.size() == 2, "native float failure should return ack and state-dump");
+    ok &= expect(responses[0].type == "client-floated", "native float failure response should be client-floated");
+    ok &= expect(responses[0].payload_json.find("\"ok\":false") != std::string::npos,
+                 "native float failure response should include ok:false");
+    ok &= expect(std::find(state.managed_clients.begin(), state.managed_clients.end(), "0xaaa") != state.managed_clients.end(),
+                 "native float failure should keep client managed");
     return ok;
 }
 
@@ -1202,6 +1256,8 @@ int main() {
     ok &= test_route_manage_workspace_focuses_managing_emacs_client();
     ok &= test_route_unmanage_workspace();
     ok &= test_route_float_managed_client_returns_ack_and_state_dump();
+    ok &= test_route_float_managed_client_rejects_non_managed_without_mutation();
+    ok &= test_route_float_managed_client_native_float_failure_does_not_unmanage();
     ok &= test_route_request_state();
     ok &= test_route_request_state_refreshes_floating_membership_from_query();
     ok &= test_route_debug_hide_show();

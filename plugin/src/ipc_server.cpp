@@ -90,6 +90,16 @@ std::string payload_for_client_transition(std::string_view client_id, bool float
     return out.str();
 }
 
+std::string payload_for_client_floated(std::string_view client_id, bool ok) {
+    std::ostringstream out;
+    out << "{";
+    out << "\"client_id\":\"" << client_id << "\",";
+    out << "\"floating\":true,";
+    out << "\"ok\":" << (ok ? "true" : "false");
+    out << "}";
+    return out.str();
+}
+
 std::string payload_for_protocol_error(std::string_view code, std::string_view message, std::string_view detail = "") {
     std::ostringstream out;
     out << "{";
@@ -668,11 +678,14 @@ std::vector<ProtocolMessage> route_command_for_tests(
             return out;
         }
 
-        const bool ok = workspace_manager.float_managed_client(incoming.workspace_id, *client_id);
+        bool ok = workspace_manager.can_float_managed_client(incoming.workspace_id, *client_id);
         if (ok) {
-            (void)layout_applier.ensure_client_floating(*client_id);
+            ok = layout_applier.ensure_client_floating(*client_id);
         }
-        out.push_back(make_message("client-floated", incoming.workspace_id, payload_for_client_transition(*client_id, true)));
+        if (ok) {
+            ok = workspace_manager.float_managed_client(incoming.workspace_id, *client_id);
+        }
+        out.push_back(make_message("client-floated", incoming.workspace_id, payload_for_client_floated(*client_id, ok)));
         out.push_back(make_message(
             "state-dump", incoming.workspace_id, serialize_state_dump_payload(workspace_manager.build_state_dump(incoming.workspace_id))
         ));

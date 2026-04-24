@@ -208,11 +208,13 @@ Payload:
 #+begin_src json
 {
   "client_id": "0xabc123",
-  "floating": true
+  "floating": true,
+  "ok": true
 }
 #+end_src
 
 Rules:
+- =ok=false= means the request was rejected or the compositor did not confirm native floating; the client remains managed in the following =state-dump=.
 - The following =state-dump= is authoritative for whether the client left managed membership.
 
 *** =client-became-floating=
