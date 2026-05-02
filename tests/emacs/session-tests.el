@@ -30,10 +30,16 @@
   (hyprmacs-session-use-fake-transport)
   (hyprmacs-session-manage-workspace "1")
   (hyprmacs-session-unmanage-workspace "1" "user-request")
+  (hyprmacs-session-manage-client "1" "0xaaa")
+  (hyprmacs-session-unmanage-client "1" "0xbbb")
   (let ((frames (hyprmacs-session-fake-outbox)))
-    (should (= (length frames) 2))
+    (should (= (length frames) 4))
     (should (string-match-p "\\\"type\\\":\\\"manage-workspace\\\"" (car frames)))
-    (should (string-match-p "\\\"type\\\":\\\"unmanage-workspace\\\"" (cadr frames)))))
+    (should (string-match-p "\\\"type\\\":\\\"unmanage-workspace\\\"" (cadr frames)))
+    (should (string-match-p "\\\"type\\\":\\\"manage-client\\\"" (nth 2 frames)))
+    (should (string-match-p "\\\"client_id\\\":\\\"0xaaa\\\"" (nth 2 frames)))
+    (should (string-match-p "\\\"type\\\":\\\"unmanage-client\\\"" (nth 3 frames)))
+    (should (string-match-p "\\\"client_id\\\":\\\"0xbbb\\\"" (nth 3 frames)))))
 
 (ert-deftest hyprmacs-state-buffer-renders-known-session-fields ()
   (hyprmacs-session-reset)
@@ -68,3 +74,51 @@
                       (hyprmacs-buffer-for-client "0xbbb")))))
     (delete-other-windows)
     (hyprmacs-buffer-reset)))
+
+(ert-deftest hyprmacs-session-state-dump-displays-new-managed-client-buffer ()
+  (hyprmacs-session-reset)
+  (hyprmacs-buffer-reset)
+  (delete-other-windows)
+  (unwind-protect
+      (progn
+        (switch-to-buffer (get-buffer-create "*hyprmacs-session-test*"))
+        (hyprmacs-session-fake-receive
+         "{\"version\":1,\"type\":\"state-dump\",\"workspace_id\":\"1\",\"timestamp\":\"2026-05-02T12:00:00Z\",\"payload\":{\"managed\":true,\"controller_connected\":true,\"eligible_clients\":[{\"client_id\":\"0xaaa\",\"title\":\"foot-a\",\"app_id\":\"foot\",\"floating\":false}],\"managed_clients\":[\"0xaaa\"],\"selected_client\":\"0xaaa\",\"input_mode\":\"emacs-control\"}}\n")
+        (switch-to-buffer (get-buffer-create "*hyprmacs-session-scratch*"))
+        (hyprmacs-session-fake-receive
+         "{\"version\":1,\"type\":\"state-dump\",\"workspace_id\":\"1\",\"timestamp\":\"2026-05-02T12:00:01Z\",\"payload\":{\"managed\":true,\"controller_connected\":true,\"eligible_clients\":[{\"client_id\":\"0xaaa\",\"title\":\"foot-a\",\"app_id\":\"foot\",\"floating\":false},{\"client_id\":\"0xbbb\",\"title\":\"foot-b\",\"app_id\":\"foot\",\"floating\":false}],\"managed_clients\":[\"0xaaa\",\"0xbbb\"],\"selected_client\":\"0xaaa\",\"input_mode\":\"emacs-control\"}}\n")
+        (should (eq (window-buffer (selected-window))
+                    (hyprmacs-buffer-for-client "0xbbb"))))
+    (delete-other-windows)
+    (hyprmacs-buffer-reset)))
+
+(ert-deftest hyprmacs-session-new-managed-client-triggers-immediate-layout-sync ()
+  (hyprmacs-session-reset)
+  (hyprmacs-buffer-reset)
+  (delete-other-windows)
+  (let ((hyprmacs-layout-sync-enabled nil)
+        (hyprmacs--layout-sync-in-flight nil)
+        (hyprmacs--layout-sync-timer nil)
+        (sync-count 0))
+    (unwind-protect
+        (progn
+          (switch-to-buffer (get-buffer-create "*hyprmacs-session-test*"))
+          (hyprmacs-session-fake-receive
+           "{\"version\":1,\"type\":\"state-dump\",\"workspace_id\":\"1\",\"timestamp\":\"2026-05-02T12:00:00Z\",\"payload\":{\"managed\":true,\"controller_connected\":true,\"eligible_clients\":[{\"client_id\":\"0xaaa\",\"title\":\"foot-a\",\"app_id\":\"foot\",\"floating\":false}],\"managed_clients\":[\"0xaaa\"],\"selected_client\":\"0xaaa\",\"input_mode\":\"emacs-control\"}}\n")
+          (setq hyprmacs-session-state
+                (plist-put hyprmacs-session-state :connection-status 'connected))
+          (setq hyprmacs-layout-sync-enabled t)
+          (cl-letf (((symbol-function 'hyprmacs-sync-layout)
+                     (lambda (workspace-id silent)
+                       (setq sync-count (1+ sync-count))
+                       (should (equal workspace-id "1"))
+                       (should silent)
+                       (should (eq (window-buffer (selected-window))
+                                   (hyprmacs-buffer-for-client "0xbbb"))))))
+            (hyprmacs-session-fake-receive
+             "{\"version\":1,\"type\":\"state-dump\",\"workspace_id\":\"1\",\"timestamp\":\"2026-05-02T12:00:01Z\",\"payload\":{\"managed\":true,\"controller_connected\":true,\"eligible_clients\":[{\"client_id\":\"0xaaa\",\"title\":\"foot-a\",\"app_id\":\"foot\",\"floating\":false},{\"client_id\":\"0xbbb\",\"title\":\"foot-b\",\"app_id\":\"foot\",\"floating\":false}],\"managed_clients\":[\"0xaaa\",\"0xbbb\"],\"selected_client\":\"0xaaa\",\"input_mode\":\"emacs-control\"}}\n"))
+          (should (= sync-count 1)))
+      (when (timerp hyprmacs--layout-sync-timer)
+        (cancel-timer hyprmacs--layout-sync-timer))
+      (delete-other-windows)
+      (hyprmacs-buffer-reset))))

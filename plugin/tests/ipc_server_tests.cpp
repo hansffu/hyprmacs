@@ -1,5 +1,6 @@
 #include "hyprmacs/ipc_server.hpp"
 
+#include <algorithm>
 #include <iostream>
 #include <sstream>
 #include <string>
@@ -174,6 +175,58 @@ bool test_route_unmanage_workspace() {
     return ok;
 }
 
+bool test_route_manage_and_unmanage_client() {
+    hyprmacs::WorkspaceManager manager;
+    auto applier = make_noop_applier();
+    manager.manage_workspace("1");
+    manager.process_event_for_tests("openwindowv2>>0xaaa,1,foot,foot-a");
+
+    const hyprmacs::ProtocolMessage manage {
+        .version = 1,
+        .type = "manage-client",
+        .workspace_id = "1",
+        .timestamp = "2026-05-02T00:00:00Z",
+        .payload_json = "{\"client_id\":\"0xaaa\"}",
+    };
+
+    bool ok = true;
+    const auto manage_responses = hyprmacs::route_command_for_tests(manage, manager, applier);
+    ok &= expect(manage_responses.size() == 2, "manage-client should produce two responses");
+    if (manage_responses.size() == 2) {
+        ok &= expect(manage_responses[0].type == "client-managed", "first manage-client response should be client-managed");
+        ok &= expect(manage_responses[1].type == "state-dump", "second manage-client response should be state-dump");
+        const auto payload = hyprmacs::parse_state_dump_payload(manage_responses[1].payload_json);
+        ok &= expect(payload.has_value(), "manage-client state-dump payload should parse");
+        if (payload.has_value()) {
+            ok &= expect(payload->managed_clients == std::vector<std::string>({"0xaaa"}),
+                         "manage-client should add client to managed set");
+        }
+    }
+
+    const hyprmacs::ProtocolMessage unmanage {
+        .version = 1,
+        .type = "unmanage-client",
+        .workspace_id = "1",
+        .timestamp = "2026-05-02T00:00:01Z",
+        .payload_json = "{\"client_id\":\"0xaaa\"}",
+    };
+
+    const auto unmanage_responses = hyprmacs::route_command_for_tests(unmanage, manager, applier);
+    ok &= expect(unmanage_responses.size() == 2, "unmanage-client should produce two responses");
+    if (unmanage_responses.size() == 2) {
+        ok &= expect(unmanage_responses[0].type == "client-unmanaged",
+                     "first unmanage-client response should be client-unmanaged");
+        ok &= expect(unmanage_responses[1].type == "state-dump", "second unmanage-client response should be state-dump");
+        const auto payload = hyprmacs::parse_state_dump_payload(unmanage_responses[1].payload_json);
+        ok &= expect(payload.has_value(), "unmanage-client state-dump payload should parse");
+        if (payload.has_value()) {
+            ok &= expect(payload->managed_clients.empty(), "unmanage-client should remove client from managed set");
+        }
+    }
+
+    return ok;
+}
+
 bool test_route_request_state() {
     hyprmacs::WorkspaceManager manager;
     auto applier = make_noop_applier();
@@ -195,7 +248,7 @@ bool test_route_request_state() {
     return ok;
 }
 
-bool test_route_request_state_refreshes_floating_membership_from_query() {
+bool test_route_request_state_refreshes_floating_state_without_unmanaging() {
     std::string clients_json = R"json([
       {"address":"aaa","workspace":{"id":1},"class":"foot","title":"foot-a","floating":false}
     ])json";
@@ -237,11 +290,59 @@ bool test_route_request_state_refreshes_floating_membership_from_query() {
         const auto payload = hyprmacs::parse_state_dump_payload(responses[0].payload_json);
         ok &= expect(payload.has_value(), "state-dump payload should parse");
         if (payload.has_value()) {
-            ok &= expect(payload->managed_clients.empty(),
-                         "request-state should refresh query state and remove floating client from managed set");
+            ok &= expect(payload->managed_clients == std::vector<std::string>({"0xaaa"}),
+                         "request-state floating refresh should not remove explicitly managed client");
+            ok &= expect(!payload->eligible_clients.empty() && payload->eligible_clients.front().floating,
+                         "request-state should still publish refreshed floating fact");
         }
     }
 
+    return ok;
+}
+
+bool test_route_request_state_repairs_only_managing_emacs_frame_to_tiled() {
+    std::string clients_json = R"json([
+      {"address":"eee","workspace":{"id":1},"class":"emacs","title":"hyprmacs-main","floating":true},
+      {"address":"fff","workspace":{"id":1},"class":"emacs","title":"hyprmacs-secondary","floating":true}
+    ])json";
+
+    hyprmacs::WorkspaceManager manager(
+        [](const std::string&) { return 0; },
+        [&clients_json](const std::string& command) -> std::optional<std::string> {
+            if (command == "j/clients") {
+                return clients_json;
+            }
+            return std::nullopt;
+        }
+    );
+    RecordingApplier recording;
+    auto applier = recording.make();
+    manager.process_event_for_tests("openwindowv2>>0xeee,1,emacs,hyprmacs-main");
+    manager.process_event_for_tests("activewindowv2>>0xeee");
+    manager.manage_workspace("1");
+    manager.process_event_for_tests("openwindowv2>>0xfff,1,emacs,hyprmacs-secondary");
+
+    const hyprmacs::ProtocolMessage incoming {
+        .version = 1,
+        .type = "request-state",
+        .workspace_id = "1",
+        .timestamp = "2026-05-02T00:00:00Z",
+        .payload_json = "{}",
+    };
+
+    const auto responses = hyprmacs::route_command_for_tests(incoming, manager, applier);
+    bool ok = true;
+    ok &= expect(responses.size() == 1, "request-state should produce one response");
+    ok &= expect(
+        std::find(recording.commands.begin(), recording.commands.end(), "dispatch settiled address:0xeee")
+            != recording.commands.end(),
+        "request-state should repair the managing emacs frame to tiled"
+    );
+    ok &= expect(
+        std::find(recording.commands.begin(), recording.commands.end(), "dispatch settiled address:0xfff")
+            == recording.commands.end(),
+        "request-state should not repair non-managing emacs frames"
+    );
     return ok;
 }
 
@@ -344,6 +445,51 @@ bool test_route_set_selected_client_shows_selected_with_snapshot_geometry() {
     ok &= expect(responses.size() == 2, "set-selected-client should produce two responses");
     ok &= expect(!applier.is_hidden("0xaaa"), "selected client should be shown when snapshot geometry exists");
     ok &= expect(applier.is_hidden("0xbbb"), "non-selected managed client should be hidden");
+    return ok;
+}
+
+bool test_route_set_selected_client_preserves_split_snapshot_visibility() {
+    hyprmacs::WorkspaceManager manager;
+    RecordingApplier recording;
+    auto applier = recording.make();
+
+    manager.process_event_for_tests("openwindowv2>>0xaaa,1,foot,foot-a");
+    manager.process_event_for_tests("openwindowv2>>0xbbb,1,foot,foot-b");
+    manager.process_event_for_tests("openwindowv2>>0xccc,1,foot,foot-c");
+    manager.manage_workspace("1");
+
+    const hyprmacs::ProtocolMessage set_layout {
+        .version = 1,
+        .type = "set-layout",
+        .workspace_id = "1",
+        .timestamp = "2026-05-02T00:00:00Z",
+        .payload_json =
+            "{\"selected_client\":\"0xaaa\",\"input_mode\":\"emacs-control\",\"visible_clients\":[\"0xaaa\",\"0xbbb\"],"
+            "\"hidden_clients\":[\"0xccc\"],\"rectangles\":[{\"client_id\":\"0xaaa\",\"x\":0,\"y\":0,\"width\":100,"
+            "\"height\":100},{\"client_id\":\"0xbbb\",\"x\":120,\"y\":0,\"width\":100,\"height\":100}],"
+            "\"stacking_order\":[\"0xaaa\",\"0xbbb\"]}",
+    };
+    (void)hyprmacs::route_command_for_tests(set_layout, manager, applier);
+
+    const hyprmacs::ProtocolMessage select {
+        .version = 1,
+        .type = "set-selected-client",
+        .workspace_id = "1",
+        .timestamp = "2026-05-02T00:00:01Z",
+        .payload_json = "{\"client_id\":\"0xaaa\"}",
+    };
+
+    const auto responses = hyprmacs::route_command_for_tests(select, manager, applier);
+    bool ok = true;
+    ok &= expect(responses.size() == 2, "set-selected-client split snapshot should produce two responses");
+    ok &= expect(!applier.is_hidden("0xaaa"), "selected split client should stay visible");
+    ok &= expect(!applier.is_hidden("0xbbb"), "unfocused split client should stay visible");
+    ok &= expect(applier.is_hidden("0xccc"), "hidden split snapshot client should remain hidden");
+    ok &= expect(
+        std::find(recording.commands.begin(), recording.commands.end(), "dispatch setfloating address:0xbbb")
+            != recording.commands.end(),
+        "set-selected-client should reassert floating overlay for unfocused visible split client"
+    );
     return ok;
 }
 
@@ -506,9 +652,9 @@ bool test_route_set_layout_commits_snapshot_with_overlay_floating_geometry_appli
         "set-layout should size visible managed overlays from snapshot rectangles"
     );
     ok &= expect(
-        std::find(recording.commands.begin(), recording.commands.end(), "dispatch alterzorder bottom,address:0xbbb")
+        std::find(recording.commands.begin(), recording.commands.end(), "dispatch alterzorder top,address:0xbbb")
             != recording.commands.end(),
-        "set-layout should lower managed overlays in floating z-order band"
+        "set-layout should raise managed overlays above the managing emacs frame"
     );
     ok &= expect(recalc.workspaces == std::vector<std::string>({"1"}),
                  "successful set-layout commit should request one recalc for the workspace");
@@ -695,7 +841,7 @@ bool test_route_set_layout_emacs_control_focuses_and_lowers_managing_frame() {
     return ok;
 }
 
-bool test_transition_events_update_managed_membership_and_visibility() {
+bool test_floating_transition_events_keep_explicit_managed_membership() {
     hyprmacs::WorkspaceManager manager;
     RecordingApplier recording;
     auto applier = recording.make();
@@ -707,39 +853,26 @@ bool test_transition_events_update_managed_membership_and_visibility() {
     bool ok = true;
     auto state = manager.build_state_dump("1");
     ok &= expect(state.managed_clients == std::vector<std::string>({"0xaaa"}),
-                 "new tiled managed client should enter managed set");
-    ok &= expect(applier.is_hidden("0xaaa"), "new tiled managed client should be hidden by transition notifier");
-    ok &= expect(!recording.commands.empty(), "open managed transition should emit a hide command");
+                 "open event should manage a new eligible client on the managed workspace");
+    ok &= expect(recording.commands.size() == 1, "open-managed event should hide the new client until Emacs lays it out");
     if (!recording.commands.empty()) {
-        ok &= expect(recording.commands.back().find("dispatch movetoworkspacesilent special:hyprmacs-hidden,address:0xaaa")
-                         != std::string::npos,
-                     "open managed transition should hide the managed client");
+        ok &= expect(recording.commands[0] == "dispatch movetoworkspacesilent special:hyprmacs-hidden,address:0xaaa",
+                     "open-managed hide command should target the new client");
     }
 
     const size_t before_float = recording.commands.size();
     manager.process_event_for_tests("changefloatingmodev2>>0xaaa,true");
     state = manager.build_state_dump("1");
-    ok &= expect(state.managed_clients.empty(), "managed->floating transition should drop managed membership immediately");
-    ok &= expect(!applier.is_hidden("0xaaa"), "managed->floating transition should show the floating client");
-    ok &= expect(recording.commands.size() == before_float + 1, "managed->floating should emit one show command");
-    if (recording.commands.size() >= before_float + 1) {
-        ok &= expect(recording.commands[before_float].find("dispatch movetoworkspacesilent 1,address:0xaaa")
-                         != std::string::npos,
-                     "managed->floating should restore client to workspace");
-    }
+    ok &= expect(state.managed_clients == std::vector<std::string>({"0xaaa"}),
+                 "floating event should not drop explicit managed membership");
+    ok &= expect(recording.commands.size() == before_float, "floating event should not emit unmanage/show command");
 
     const size_t before_tiled = recording.commands.size();
     manager.process_event_for_tests("changefloatingmodev2>>0xaaa,false");
     state = manager.build_state_dump("1");
     ok &= expect(state.managed_clients == std::vector<std::string>({"0xaaa"}),
-                 "floating->tiled transition should re-enter managed membership");
-    ok &= expect(applier.is_hidden("0xaaa"), "floating->tiled transition should hide client for managed flow");
-    ok &= expect(recording.commands.size() == before_tiled + 1, "floating->tiled should emit one hide command");
-    if (recording.commands.size() >= before_tiled + 1) {
-        ok &= expect(recording.commands[before_tiled].find("dispatch movetoworkspacesilent special:hyprmacs-hidden,address:0xaaa")
-                         != std::string::npos,
-                     "floating->tiled should hide the managed client");
-    }
+                 "tiled event should keep explicit managed membership");
+    ok &= expect(recording.commands.size() == before_tiled, "tiled event should not emit implicit manage/hide command");
 
     return ok;
 }
@@ -1179,11 +1312,14 @@ int main() {
     ok &= test_route_manage_workspace_hides_existing_managed_clients();
     ok &= test_route_manage_workspace_focuses_managing_emacs_client();
     ok &= test_route_unmanage_workspace();
+    ok &= test_route_manage_and_unmanage_client();
     ok &= test_route_request_state();
-    ok &= test_route_request_state_refreshes_floating_membership_from_query();
+    ok &= test_route_request_state_refreshes_floating_state_without_unmanaging();
+    ok &= test_route_request_state_repairs_only_managing_emacs_frame_to_tiled();
     ok &= test_route_debug_hide_show();
     ok &= test_route_set_selected_client_keeps_selected_hidden_without_snapshot_geometry();
     ok &= test_route_set_selected_client_shows_selected_with_snapshot_geometry();
+    ok &= test_route_set_selected_client_preserves_split_snapshot_visibility();
     ok &= test_route_set_input_mode_updates_state_dump();
     ok &= test_route_set_input_mode_emacs_control_focuses_managing_frame();
     ok &= test_route_seed_client_adopts_existing_window();
@@ -1201,7 +1337,7 @@ int main() {
     ok &= test_route_set_layout_rejects_missing_rectangle_for_visible_client_before_commit();
     ok &= test_route_set_layout_logs_warning_when_recalc_request_fails();
     ok &= test_route_set_layout_emacs_control_focuses_and_lowers_managing_frame();
-    ok &= test_transition_events_update_managed_membership_and_visibility();
+    ok &= test_floating_transition_events_keep_explicit_managed_membership();
     ok &= test_route_set_layout_rejects_overlapping_rectangles();
     ok &= test_route_set_layout_ignores_non_managed_selected_client();
     ok &= test_route_set_layout_with_null_selected_client_does_not_pick_visible_client();

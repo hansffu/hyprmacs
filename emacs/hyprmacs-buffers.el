@@ -56,6 +56,10 @@ Functions receive: NEW-CLIENT-ID OLD-CLIENT-ID BUFFER.")
   "Hook run when hyprmacs input mode changes.
 Functions receive: NEW-MODE OLD-MODE.")
 
+(defvar hyprmacs-window-managed-clients-change-functions nil
+  "Hook run when managed client membership changes.
+Functions receive: NEW-MANAGED-CLIENTS OLD-MANAGED-CLIENTS.")
+
 (defvar hyprmacs-window-mode-map
   (let ((map (make-sparse-keymap)))
     (define-key map (kbd "C-c C-c") #'hyprmacs-set-input-mode)
@@ -272,7 +276,9 @@ ELIGIBLE-CLIENTS should be the decoded `eligible_clients' payload list."
   (let ((old-selected (plist-get old-state :selected-client))
         (new-selected (plist-get new-state :selected-client))
         (old-input (plist-get old-state :input-mode))
-        (new-input (plist-get new-state :input-mode)))
+        (new-input (plist-get new-state :input-mode))
+        (old-managed (plist-get old-state :managed-clients))
+        (new-managed (plist-get new-state :managed-clients)))
     (unless (equal old-selected new-selected)
       (run-hook-with-args
        'hyprmacs-window-selected-functions
@@ -281,6 +287,11 @@ ELIGIBLE-CLIENTS should be the decoded `eligible_clients' payload list."
        (and new-selected (hyprmacs-buffer-for-client new-selected))))
     (unless (equal old-input new-input)
       (run-hook-with-args 'hyprmacs-window-input-mode-change-functions new-input old-input))
+    (unless (equal old-managed new-managed)
+      (run-hook-with-args
+       'hyprmacs-window-managed-clients-change-functions
+       new-managed
+       old-managed))
     (when (or (not (equal old-selected new-selected))
               (not (equal old-input new-input)))
       (hyprmacs-window-mode-refresh))))

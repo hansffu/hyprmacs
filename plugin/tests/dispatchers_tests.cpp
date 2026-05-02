@@ -3,6 +3,7 @@
 #include <iostream>
 #include <optional>
 #include <string>
+#include <vector>
 
 #include "hyprmacs/workspace_manager.hpp"
 
@@ -91,6 +92,46 @@ bool test_dispatcher_fails_without_target_workspace() {
     return ok;
 }
 
+bool test_manage_active_window_dispatcher_manages_active_client() {
+    hyprmacs::WorkspaceManager manager;
+    manager.manage_workspace("1");
+    manager.process_event_for_tests("openwindowv2>>0xaaa,1,foot,foot-a");
+    manager.process_event_for_tests("activewindowv2>>0xaaa");
+
+    const auto outcome =
+        hyprmacs::dispatch_manage_active_window("", manager, []() -> std::optional<std::string> {
+            return "1";
+        });
+
+    bool ok = true;
+    ok &= expect(outcome.success, "manage-active-window should succeed for eligible active client");
+    ok &= expect(outcome.workspace_id.has_value() && *outcome.workspace_id == "1",
+                 "manage-active-window should report workspace 1");
+    ok &= expect(outcome.focus_client_id.has_value() && *outcome.focus_client_id == "0xaaa",
+                 "manage-active-window should report managed client id");
+    const auto state = manager.build_state_dump("1");
+    ok &= expect(state.managed_clients == std::vector<std::string>({"0xaaa"}),
+                 "manage-active-window should add active client to managed set");
+    return ok;
+}
+
+bool test_manage_active_window_dispatcher_fails_without_eligible_active_client() {
+    hyprmacs::WorkspaceManager manager;
+    manager.manage_workspace("1");
+    manager.process_event_for_tests("activewindowv2>>0xmissing");
+
+    const auto outcome =
+        hyprmacs::dispatch_manage_active_window("", manager, []() -> std::optional<std::string> {
+            return "1";
+        });
+
+    bool ok = true;
+    ok &= expect(!outcome.success, "manage-active-window should fail without eligible active client");
+    ok &= expect(outcome.error == "no eligible active client in target workspace",
+                 "manage-active-window should report missing active client");
+    return ok;
+}
+
 }  // namespace
 
 int main() {
@@ -99,5 +140,7 @@ int main() {
     ok &= test_dispatcher_fails_for_unmanaged_workspace_argument();
     ok &= test_dispatcher_falls_back_to_managed_workspace();
     ok &= test_dispatcher_fails_without_target_workspace();
+    ok &= test_manage_active_window_dispatcher_manages_active_client();
+    ok &= test_manage_active_window_dispatcher_fails_without_eligible_active_client();
     return ok ? 0 : 1;
 }

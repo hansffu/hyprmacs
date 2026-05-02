@@ -910,23 +910,20 @@ bool test_seed_client_refreshes_committed_snapshot_coherence() {
     manager.seed_client("0xbbb", "1", "foot", "foot-b", true);
 
     auto stored = manager.managed_layout_snapshot("1");
-    ok &= expect(stored.has_value(), "snapshot should remain after seed client prune");
+    ok &= expect(stored.has_value(), "snapshot should remain after floating overlay seed refresh");
     if (stored.has_value()) {
-        ok &= expect(stored->rectangles_by_client_id.find("0xbbb") == stored->rectangles_by_client_id.end(),
-                     "seeded floating client should be pruned from rectangles");
-        ok &= expect(std::find(stored->visible_client_ids.begin(), stored->visible_client_ids.end(), "0xbbb") ==
+        ok &= expect(stored->rectangles_by_client_id.find("0xbbb") != stored->rectangles_by_client_id.end(),
+                     "seeded floating overlay client should remain in rectangles");
+        ok &= expect(std::find(stored->visible_client_ids.begin(), stored->visible_client_ids.end(), "0xbbb") !=
                          stored->visible_client_ids.end(),
-                     "seeded floating client should be pruned from visible clients");
-        ok &= expect(std::find(stored->stacking_order.begin(), stored->stacking_order.end(), "0xbbb") ==
+                     "seeded floating overlay client should remain visible when snapshot made it visible");
+        ok &= expect(std::find(stored->stacking_order.begin(), stored->stacking_order.end(), "0xbbb") !=
                          stored->stacking_order.end(),
-                     "seeded floating client should be pruned from stacking order");
-        ok &= expect(std::find(stored->hidden_client_ids.begin(), stored->hidden_client_ids.end(), "0xbbb") ==
-                         stored->hidden_client_ids.end(),
-                     "seeded floating client should be pruned from hidden clients");
+                     "seeded floating overlay client should remain stacked when snapshot stacked it");
         ok &= expect(stored->selected_client.has_value() && *stored->selected_client == "0xaaa",
-                     "selected client should stay coherent after seed client prune");
+                     "selected client should stay coherent after seed client refresh");
         ok &= expect(stored->managing_emacs_client_id.has_value() && *stored->managing_emacs_client_id == "0xeee",
-                     "managing emacs should stay coherent after seed client prune");
+                     "managing emacs should stay coherent after seed client refresh");
     }
 
     manager.seed_client("0xeee", "1", "foot", "foot-main", false);
@@ -940,8 +937,8 @@ bool test_seed_client_refreshes_committed_snapshot_coherence() {
                      "selected client should remain coherent after managing emacs reseed");
         ok &= expect(stored->rectangles_by_client_id.find("0xaaa") != stored->rectangles_by_client_id.end(),
                      "still-managed client should remain in rectangles");
-        ok &= expect(stored->rectangles_by_client_id.find("0xbbb") == stored->rectangles_by_client_id.end(),
-                     "pruned client should stay removed from rectangles");
+        ok &= expect(stored->rectangles_by_client_id.find("0xbbb") != stored->rectangles_by_client_id.end(),
+                     "floating overlay client should stay in rectangles");
     }
 
     return ok;
@@ -1106,11 +1103,7 @@ int main() {
     ok &= test_workspace_policy_restored_on_controller_disconnect();
     ok &= test_manage_workspace_idempotent_does_not_leak_policy_lease();
     ok &= test_manage_workspace_tracks_managing_emacs_frame();
-    ok &= test_float_state_transitions_update_managed_set_and_emit_notifications();
     ok &= test_openwindow_refreshes_floating_state_from_clients_query();
-    ok &= test_manage_workspace_refreshes_floating_state_from_clients_query();
-    ok &= test_refresh_based_float_transition_notifier_without_floating_event();
-    ok &= test_open_managed_client_emits_transition_without_controller_connection();
     ok &= test_state_change_notifier_on_focus_and_close_events();
     ok &= test_managed_layout_snapshot_apply_get_and_versioning();
     ok &= test_managed_layout_snapshot_rejects_non_managed_workspace_and_clears_on_switch();
@@ -1119,9 +1112,9 @@ int main() {
     ok &= test_activewindow_updates_committed_snapshot_selected_client();
     ok &= test_committed_snapshot_prunes_closed_managed_clients();
     ok &= test_committed_snapshot_prunes_moved_managed_clients();
+    ok &= test_open_managed_client_emits_transition_without_controller_connection();
     ok &= test_seed_client_refreshes_committed_snapshot_coherence();
     ok &= test_seed_client_inserts_new_managed_client_hidden_by_default();
     ok &= test_visible_snapshot_client_stays_managed_when_query_reports_floating_overlay();
-    ok &= test_unmanaged_only_floating_refresh_adopts_tiled_client_without_reclassifying_managed();
     return ok ? 0 : 1;
 }

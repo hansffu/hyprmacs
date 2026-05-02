@@ -76,9 +76,28 @@ void ClientRegistry::set_floating(const std::string& client_id, bool floating) {
     it->second.eligible = is_client_eligible(it->second);
 }
 
+bool ClientRegistry::set_managed(const std::string& client_id, bool managed) {
+    const auto it = clients_.find(normalize_client_id(client_id));
+    if (it == clients_.end()) {
+        return false;
+    }
+    if (managed && !it->second.eligible) {
+        return false;
+    }
+
+    it->second.managed = managed;
+    if (!managed && selected_client_.has_value() && *selected_client_ == it->first) {
+        selected_client_ = std::nullopt;
+        it->second.selected = false;
+    }
+    return true;
+}
+
 void ClientRegistry::reconcile_management(const std::optional<std::string>& managed_workspace_id) {
     for (auto& [_, client] : clients_) {
-        client.managed = managed_workspace_id.has_value() && client.workspace_id == *managed_workspace_id && client.eligible;
+        if (!managed_workspace_id.has_value() || client.workspace_id != *managed_workspace_id || !client.eligible) {
+            client.managed = false;
+        }
     }
 
     if (selected_client_.has_value()) {

@@ -73,9 +73,6 @@ bool is_emacs_auxiliary_client(std::string_view app_id, std::string_view title) 
 }
 
 bool is_client_eligible(const ClientRecord& client) {
-    if (client.floating) {
-        return false;
-    }
     if (is_emacs_client(client.app_id, client.title)) {
         return false;
     }

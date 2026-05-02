@@ -61,7 +61,7 @@ trap cleanup EXIT INT TERM
 
 run_ert_suite() {
   local file="$1"
-  emacs -Q --batch -L emacs -L tests/emacs -l "$file" -f ert-run-tests-batch-and-exit
+  emacs -Q --batch -L emacs -L tests/emacs -L tests/e2e -l "$file" -f ert-run-tests-batch-and-exit
 }
 
 echo "[e2e] running static/unit suites" | tee -a "$summary_log"
@@ -75,6 +75,7 @@ echo "[e2e] running static/unit suites" | tee -a "$summary_log"
   run_ert_suite protocol-tests.el
   run_ert_suite layout-tests.el
   run_ert_suite reconnect-tests.el
+  run_ert_suite tests/e2e/manifest-tests.el
 } 2>&1 | tee "$unit_log"
 
 echo "[e2e] launching nested hyprland" | tee -a "$summary_log"
@@ -125,7 +126,7 @@ find emacs -type f -name '*.elc' -delete
 cat >"$run_dir/e2e-driver.el" <<ELISP
 (setq load-prefer-newer t)
 (add-to-list 'load-path "$repo_root/emacs")
-(require 'hyprmacs)
+(load-file "$repo_root/tests/e2e/full-flow.el")
 (setq hyprmacs-layout-debug-log-file "$layout_payload_log")
 (hyprmacs-run-full-e2e-test "$session_log")
 ELISP

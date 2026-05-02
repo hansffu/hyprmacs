@@ -28,8 +28,10 @@ class LayoutApplier {
     bool show_client(const std::string& client_id);
     bool is_hidden(const std::string& client_id) const;
     bool ensure_client_floating(const std::string& client_id);
+    bool ensure_client_tiled(const std::string& client_id);
     bool apply_floating_geometry(const LayoutRectangle& rectangle);
     bool lower_client_zorder(const std::string& client_id);
+    bool raise_client_zorder(const std::string& client_id);
     bool restore_workspace_to_native(const WorkspaceId& workspace_id, const std::vector<ClientId>& managed_clients);
     bool apply_snapshot(const WorkspaceId& workspace_id, const std::vector<LayoutRectangle>& visible_rectangles,
                         const std::vector<ClientId>& hidden_clients, const std::vector<ClientId>& stacking_order,

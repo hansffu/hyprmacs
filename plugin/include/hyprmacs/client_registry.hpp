@@ -45,6 +45,7 @@ class ClientRegistry {
     void update_title(const std::string& client_id, const std::string& title);
     void set_focus(const std::string& client_id);
     void set_floating(const std::string& client_id, bool floating);
+    bool set_managed(const std::string& client_id, bool managed);
     void reconcile_management(const std::optional<std::string>& managed_workspace_id);
 
     const ClientRecord* find(const std::string& client_id) const;

@@ -22,6 +22,7 @@ test: build
 	$(EMACS) -Q --batch -L emacs -L tests/emacs -l protocol-tests.el -f ert-run-tests-batch-and-exit
 	$(EMACS) -Q --batch -L emacs -L tests/emacs -l layout-tests.el -f ert-run-tests-batch-and-exit
 	$(EMACS) -Q --batch -L emacs -L tests/emacs -l reconnect-tests.el -f ert-run-tests-batch-and-exit
+	$(EMACS) -Q --batch -L emacs -L tests/emacs -L tests/e2e -l tests/e2e/manifest-tests.el -f ert-run-tests-batch-and-exit
 
 load: build
 	@test -n "$$HYPRLAND_INSTANCE_SIGNATURE" || (echo "HYPRLAND_INSTANCE_SIGNATURE is not set. Run this inside Hyprland." && exit 1)

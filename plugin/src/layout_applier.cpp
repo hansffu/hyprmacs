@@ -111,6 +111,16 @@ bool LayoutApplier::ensure_client_floating(const std::string& client_id) {
     return rc == 0;
 }
 
+bool LayoutApplier::ensure_client_tiled(const std::string& client_id) {
+    const std::string normalized_client_id = normalize_client_id(client_id);
+    const std::string command = "dispatch settiled address:" + normalized_client_id;
+    const int rc = executor_(command);
+    append_layout_debug_log(
+        "settiled command rc=" + std::to_string(rc) + " client=" + normalized_client_id + " command=" + command
+    );
+    return rc == 0;
+}
+
 bool LayoutApplier::apply_floating_geometry(const LayoutRectangle& rectangle) {
     if (rectangle.width <= 0 || rectangle.height <= 0) {
         append_layout_debug_log(
@@ -159,6 +169,16 @@ bool LayoutApplier::lower_client_zorder(const std::string& client_id) {
     const int rc = executor_(command);
     append_layout_debug_log(
         "alterzorder-bottom command rc=" + std::to_string(rc) + " client=" + normalized_client_id + " command=" + command
+    );
+    return rc == 0;
+}
+
+bool LayoutApplier::raise_client_zorder(const std::string& client_id) {
+    const std::string normalized_client_id = normalize_client_id(client_id);
+    const std::string command = "dispatch alterzorder top,address:" + normalized_client_id;
+    const int rc = executor_(command);
+    append_layout_debug_log(
+        "alterzorder-top command rc=" + std::to_string(rc) + " client=" + normalized_client_id + " command=" + command
     );
     return rc == 0;
 }

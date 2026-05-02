@@ -14,5 +14,4 @@
   (should (commandp #'hyprmacs-set-input-mode))
   (should (commandp #'hyprmacs-set-emacs-control-mode))
   (should (commandp #'hyprmacs-run-smoke-test))
-  (should (commandp #'hyprmacs-run-gui-smoke-test))
-  (should (commandp #'hyprmacs-run-full-e2e-test)))
+  (should (commandp #'hyprmacs-run-gui-smoke-test)))

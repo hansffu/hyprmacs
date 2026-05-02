@@ -550,28 +550,59 @@ void apply_managed_overlay_commands(LayoutApplier& layout_applier,
         }
     }
 
-    for (auto it = stacking_order.rbegin(); it != stacking_order.rend(); ++it) {
-        if (rectangles_by_client_id.find(*it) == rectangles_by_client_id.end()) {
+    for (const auto& client_id : stacking_order) {
+        if (rectangles_by_client_id.find(client_id) == rectangles_by_client_id.end()) {
             continue;
         }
-        if (!layout_applier.lower_client_zorder(*it)) {
-            std::cerr << "[hyprmacs] set-layout managed z-order lower failed workspace=" << workspace_id
-                      << " client=" << *it << '\n';
+        if (!layout_applier.raise_client_zorder(client_id)) {
+            std::cerr << "[hyprmacs] set-layout managed z-order raise failed workspace=" << workspace_id
+                      << " client=" << client_id << '\n';
         }
     }
+}
+
+void ensure_managed_clients_floating(LayoutApplier& layout_applier, WorkspaceManager& workspace_manager, const WorkspaceId& workspace_id) {
+    const auto state = workspace_manager.build_state_dump(workspace_id);
+    for (const auto& client_id : state.managed_clients) {
+        workspace_manager.note_overlay_float_request(workspace_id, client_id);
+        if (!layout_applier.ensure_client_floating(client_id)) {
+            std::cerr << "[hyprmacs] managed floating repair failed workspace=" << workspace_id
+                      << " client=" << client_id << '\n';
+        }
+    }
+}
+
+void ensure_managing_emacs_tiled(
+    LayoutApplier& layout_applier, WorkspaceManager& workspace_manager, const WorkspaceId& workspace_id, bool force = false
+) {
+    const auto emacs_client = workspace_manager.emacs_client(workspace_id);
+    if (!emacs_client.has_value()) {
+        return;
+    }
+    if (!force && !workspace_manager.client_floating(workspace_id, *emacs_client)) {
+        return;
+    }
+
+    if (!layout_applier.ensure_client_tiled(*emacs_client)) {
+        std::cerr << "[hyprmacs] managing emacs tiled repair failed workspace=" << workspace_id
+                  << " client=" << *emacs_client << '\n';
+        return;
+    }
+
+    (void)workspace_manager.note_client_tiled(workspace_id, *emacs_client);
 }
 
 void apply_managed_overlay_zorder_only(LayoutApplier& layout_applier,
                                        const WorkspaceId& workspace_id,
                                        const std::vector<std::string>& stacking_order,
                                        const std::unordered_set<std::string>& visible_client_ids) {
-    for (auto it = stacking_order.rbegin(); it != stacking_order.rend(); ++it) {
-        if (visible_client_ids.find(*it) == visible_client_ids.end()) {
+    for (const auto& client_id : stacking_order) {
+        if (visible_client_ids.find(client_id) == visible_client_ids.end()) {
             continue;
         }
-        if (!layout_applier.lower_client_zorder(*it)) {
-            std::cerr << "[hyprmacs] state-change managed z-order lower failed workspace=" << workspace_id
-                      << " client=" << *it << '\n';
+        if (!layout_applier.raise_client_zorder(client_id)) {
+            std::cerr << "[hyprmacs] state-change managed z-order raise failed workspace=" << workspace_id
+                      << " client=" << client_id << '\n';
         }
     }
 }
@@ -633,6 +664,7 @@ std::vector<ProtocolMessage> route_command_for_tests(
 
     if (incoming.type == "manage-workspace") {
         workspace_manager.manage_workspace(incoming.workspace_id);
+        ensure_managing_emacs_tiled(layout_applier, workspace_manager, incoming.workspace_id, true);
         const auto state = workspace_manager.build_state_dump(incoming.workspace_id);
         for (const auto& managed_client : state.managed_clients) {
             (void)layout_applier.hide_client(managed_client, incoming.workspace_id);
@@ -657,8 +689,37 @@ std::vector<ProtocolMessage> route_command_for_tests(
         return out;
     }
 
+    if (incoming.type == "manage-client") {
+        const auto client_id = parse_client_id_from_payload(incoming.payload_json);
+        if (client_id.has_value()) {
+            const bool ok = workspace_manager.manage_client(incoming.workspace_id, *client_id);
+            out.push_back(make_message("client-managed", incoming.workspace_id, payload_for_layout_applied(*client_id, ok)));
+            out.push_back(make_message(
+                "state-dump", incoming.workspace_id, serialize_state_dump_payload(workspace_manager.build_state_dump(incoming.workspace_id))
+            ));
+        }
+        return out;
+    }
+
+    if (incoming.type == "unmanage-client") {
+        const auto client_id = parse_client_id_from_payload(incoming.payload_json);
+        if (client_id.has_value()) {
+            const bool ok = workspace_manager.unmanage_client(incoming.workspace_id, *client_id);
+            if (ok) {
+                (void)layout_applier.show_client(*client_id);
+            }
+            out.push_back(make_message("client-unmanaged", incoming.workspace_id, payload_for_layout_applied(*client_id, ok)));
+            out.push_back(make_message(
+                "state-dump", incoming.workspace_id, serialize_state_dump_payload(workspace_manager.build_state_dump(incoming.workspace_id))
+            ));
+        }
+        return out;
+    }
+
     if (incoming.type == "request-state") {
         workspace_manager.refresh_workspace_floating_state_from_query(incoming.workspace_id);
+        ensure_managing_emacs_tiled(layout_applier, workspace_manager, incoming.workspace_id);
+        ensure_managed_clients_floating(layout_applier, workspace_manager, incoming.workspace_id);
         out.push_back(make_message(
             "state-dump", incoming.workspace_id, serialize_state_dump_payload(workspace_manager.build_state_dump(incoming.workspace_id))
         ));
@@ -699,28 +760,47 @@ std::vector<ProtocolMessage> route_command_for_tests(
             const bool ok = workspace_manager.set_selected_client(incoming.workspace_id, *client_id);
             if (ok) {
                 const auto state = workspace_manager.build_state_dump(incoming.workspace_id);
-                bool selected_can_be_shown = false;
+                std::unordered_set<std::string> snapshot_visible_clients;
+                std::vector<LayoutRectangle> snapshot_visible_rectangles;
                 if (state.selected_client.has_value()) {
                     const auto snapshot = workspace_manager.managed_layout_snapshot(incoming.workspace_id);
                     if (snapshot.has_value()) {
-                        const auto visible_it = std::find(
-                            snapshot->visible_client_ids.begin(),
-                            snapshot->visible_client_ids.end(),
-                            *state.selected_client
-                        );
-                        if (visible_it != snapshot->visible_client_ids.end()) {
-                            selected_can_be_shown =
-                                snapshot->rectangles_by_client_id.find(*state.selected_client) !=
-                                snapshot->rectangles_by_client_id.end();
+                        snapshot_visible_clients.reserve(snapshot->visible_client_ids.size());
+                        snapshot_visible_rectangles.reserve(snapshot->visible_client_ids.size());
+                        for (const auto& visible_client_id : snapshot->visible_client_ids) {
+                            const auto rectangle_it = snapshot->rectangles_by_client_id.find(visible_client_id);
+                            if (rectangle_it == snapshot->rectangles_by_client_id.end()) {
+                                continue;
+                            }
+                            snapshot_visible_clients.insert(visible_client_id);
+                            snapshot_visible_rectangles.push_back(LayoutRectangle {
+                                .client_id = visible_client_id,
+                                .x = rectangle_it->second.x,
+                                .y = rectangle_it->second.y,
+                                .width = rectangle_it->second.width,
+                                .height = rectangle_it->second.height,
+                            });
                         }
                     }
                 }
                 if (state.selected_client.has_value()) {
                     for (const auto& managed_client : state.managed_clients) {
-                        if (managed_client == *state.selected_client && selected_can_be_shown) {
+                        if (snapshot_visible_clients.find(managed_client) != snapshot_visible_clients.end()) {
                             (void)layout_applier.show_client(managed_client);
                         } else {
                             (void)layout_applier.hide_client(managed_client, incoming.workspace_id);
+                        }
+                    }
+                    if (!snapshot_visible_rectangles.empty()) {
+                        const auto snapshot = workspace_manager.managed_layout_snapshot(incoming.workspace_id);
+                        if (snapshot.has_value()) {
+                            apply_managed_overlay_commands(
+                                layout_applier,
+                                &workspace_manager,
+                                incoming.workspace_id,
+                                snapshot->stacking_order,
+                                snapshot_visible_rectangles
+                            );
                         }
                     }
                 }
@@ -766,6 +846,7 @@ std::vector<ProtocolMessage> route_command_for_tests(
                 }
             }
             if (ok && *mode == InputMode::kEmacsControl) {
+                ensure_managing_emacs_tiled(layout_applier, workspace_manager, incoming.workspace_id, true);
                 const auto snapshot = workspace_manager.managed_layout_snapshot(incoming.workspace_id);
                 if (snapshot.has_value()) {
                     std::vector<LayoutRectangle> visible_rectangles;
@@ -937,6 +1018,7 @@ std::vector<ProtocolMessage> route_command_for_tests(
                         }
                     }
 
+                    ensure_managing_emacs_tiled(layout_applier, workspace_manager, incoming.workspace_id);
                     apply_managed_overlay_commands(
                         layout_applier,
                         &workspace_manager,
@@ -1445,7 +1527,32 @@ void IpcServer::on_workspace_state_changed(const WorkspaceId& workspace_id) {
         (void)workspace_manager_->refresh_workspace_floating_state_from_query(workspace_id, false);
     }
     if (workspace_manager_ != nullptr && layout_applier_ != nullptr) {
+        ensure_managing_emacs_tiled(*layout_applier_, *workspace_manager_, workspace_id);
+        ensure_managed_clients_floating(*layout_applier_, *workspace_manager_, workspace_id);
         const auto snapshot = workspace_manager_->managed_layout_snapshot(workspace_id);
+        if (snapshot.has_value()) {
+            std::vector<LayoutRectangle> visible_rectangles;
+            visible_rectangles.reserve(snapshot->visible_client_ids.size());
+            for (const auto& client_id : snapshot->visible_client_ids) {
+                const auto rectangle_it = snapshot->rectangles_by_client_id.find(client_id);
+                if (rectangle_it != snapshot->rectangles_by_client_id.end()) {
+                    visible_rectangles.push_back(LayoutRectangle {
+                        .client_id = client_id,
+                        .x = rectangle_it->second.x,
+                        .y = rectangle_it->second.y,
+                        .width = rectangle_it->second.width,
+                        .height = rectangle_it->second.height,
+                    });
+                }
+            }
+            apply_managed_overlay_commands(
+                *layout_applier_,
+                workspace_manager_,
+                workspace_id,
+                snapshot->stacking_order,
+                visible_rectangles
+            );
+        }
         if (snapshot.has_value() && snapshot->input_mode.has_value() &&
             *snapshot->input_mode == InputMode::kEmacsControl) {
             for (const auto& hidden_client_id : snapshot->hidden_client_ids) {

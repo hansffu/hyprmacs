@@ -194,22 +194,28 @@ bool test_overlay_floating_commands_are_emitted_with_normalized_ids() {
 
     bool ok = true;
     ok &= expect(applier.ensure_client_floating("aaa"), "ensure_client_floating should succeed");
+    ok &= expect(applier.ensure_client_tiled("aaa"), "ensure_client_tiled should succeed");
     ok &= expect(applier.apply_floating_geometry({.client_id = "aaa", .x = 10, .y = 20, .width = 300, .height = 400}),
                  "apply_floating_geometry should succeed");
     ok &= expect(applier.lower_client_zorder("aaa"), "lower_client_zorder should succeed");
+    ok &= expect(applier.raise_client_zorder("aaa"), "raise_client_zorder should succeed");
 
-    ok &= expect(commands.size() == 5, "overlay helpers should emit five commands");
-    if (commands.size() == 5) {
+    ok &= expect(commands.size() == 7, "overlay helpers should emit seven commands");
+    if (commands.size() == 7) {
         ok &= expect(commands[0] == "dispatch setfloating address:0xaaa",
                      "ensure_client_floating should normalize client id");
-        ok &= expect(commands[1] == "dispatch movewindowpixel exact 10 20,address:0xaaa",
+        ok &= expect(commands[1] == "dispatch settiled address:0xaaa",
+                     "ensure_client_tiled should normalize client id");
+        ok &= expect(commands[2] == "dispatch movewindowpixel exact 10 20,address:0xaaa",
                      "apply_floating_geometry should emit movewindowpixel exact command");
-        ok &= expect(commands[2] == "dispatch resizewindowpixel exact 300 400,address:0xaaa",
+        ok &= expect(commands[3] == "dispatch resizewindowpixel exact 300 400,address:0xaaa",
                      "apply_floating_geometry should emit resizewindowpixel exact command");
-        ok &= expect(commands[3] == "dispatch movewindowpixel exact 10 20,address:0xaaa",
+        ok &= expect(commands[4] == "dispatch movewindowpixel exact 10 20,address:0xaaa",
                      "apply_floating_geometry should re-anchor after resize");
-        ok &= expect(commands[4] == "dispatch alterzorder bottom,address:0xaaa",
+        ok &= expect(commands[5] == "dispatch alterzorder bottom,address:0xaaa",
                      "lower_client_zorder should emit alterzorder bottom command");
+        ok &= expect(commands[6] == "dispatch alterzorder top,address:0xaaa",
+                     "raise_client_zorder should emit alterzorder top command");
     }
 
     return ok;

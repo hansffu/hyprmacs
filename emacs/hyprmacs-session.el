@@ -148,6 +148,19 @@ If the buffer exists but is not visible, leave window selection unchanged."
         (when (window-live-p target-window)
           (select-window target-window))))))
 
+(defun hyprmacs-session--display-new-managed-client-buffer (old-state)
+  "Display a newly managed client buffer after OLD-STATE.
+This only runs after a workspace was already managed, so initial
+manage-workspace adoption does not cycle through all existing clients."
+  (when (plist-get old-state :managed)
+    (let* ((old-managed (or (plist-get old-state :managed-clients) '()))
+           (new-managed (or (plist-get hyprmacs-session-state :managed-clients) '()))
+           (new-client (car (last (cl-set-difference new-managed old-managed :test #'equal))))
+           (buffer (and new-client (hyprmacs-buffer-for-client new-client))))
+      (when (buffer-live-p buffer)
+        (switch-to-buffer buffer)
+        t))))
+
 (defun hyprmacs-session-handle-frame (frame)
   "Handle one inbound protocol FRAME and update session state."  
   (let* ((old-state (copy-tree hyprmacs-session-state))
@@ -211,7 +224,8 @@ If the buffer exists but is not visible, leave window selection unchanged."
              (plist-put hyprmacs-session-state :input-mode
                         (hyprmacs-ipc-mode-from-wire
                          (alist-get 'input_mode payload nil nil #'equal))))
-       (hyprmacs-session--activate-selected-client-buffer)))
+       (unless (hyprmacs-session--display-new-managed-client-buffer old-state)
+         (hyprmacs-session--activate-selected-client-buffer))))
     (hyprmacs-buffer-notify-session-state-changed old-state hyprmacs-session-state))
   hyprmacs-session-state)
 
@@ -265,6 +279,20 @@ When ADOPT-EXISTING is nil, defaults to true."
    (if reason
        `((reason . ,reason))
      '())))
+
+(defun hyprmacs-session-manage-client (workspace-id client-id)
+  "Send manage-client for WORKSPACE-ID and CLIENT-ID."
+  (hyprmacs-session-send
+   "manage-client"
+   workspace-id
+   `((client_id . ,client-id))))
+
+(defun hyprmacs-session-unmanage-client (workspace-id client-id)
+  "Send unmanage-client for WORKSPACE-ID and CLIENT-ID."
+  (hyprmacs-session-send
+   "unmanage-client"
+   workspace-id
+   `((client_id . ,client-id))))
 
 (defun hyprmacs-session-set-selected-client (workspace-id client-id)
   "Send set-selected-client for WORKSPACE-ID and CLIENT-ID."

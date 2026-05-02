@@ -43,7 +43,7 @@ bool test_classifier_rules() {
         .app_id = "foot",
         .floating = true,
     };
-    ok &= expect(!hyprmacs::is_client_eligible(floating), "floating client should be excluded");
+    ok &= expect(hyprmacs::is_client_eligible(floating), "floating regular client should remain eligible for explicit management");
 
     hyprmacs::ClientRecord regular {
         .client_id = "0x4",
@@ -149,19 +149,24 @@ bool test_registry_management_reconcile() {
     const auto* c1 = registry.find("0x100");
     const auto* c2 = registry.find("0x200");
     const auto* c3 = registry.find("0x300");
-    ok &= expect(c1 != nullptr && c1->managed, "eligible client in managed workspace should be managed");
+    ok &= expect(c1 != nullptr && !c1->managed, "eligible client in managed workspace should not be auto-managed");
     ok &= expect(c2 != nullptr && !c2->managed, "eligible client outside managed workspace should not be managed");
     ok &= expect(c3 != nullptr && !c3->managed, "ineligible client should not be managed");
+
+    ok &= expect(registry.set_managed("0x100", true), "explicit manage should succeed for eligible client");
+    c1 = registry.find("0x100");
+    ok &= expect(c1 != nullptr && c1->managed, "explicitly managed client should enter managed set");
 
     registry.update_workspace("0x200", "1");
     registry.reconcile_management(std::make_optional<std::string>("1"));
     c2 = registry.find("0x200");
-    ok &= expect(c2 != nullptr && c2->managed, "eligible moved into managed workspace should be managed");
+    ok &= expect(c2 != nullptr && !c2->managed, "eligible moved into managed workspace should not be auto-managed");
 
+    ok &= expect(registry.set_managed("0x200", true), "explicit manage should succeed after workspace move");
     registry.set_floating("0x200", true);
     registry.reconcile_management(std::make_optional<std::string>("1"));
     c2 = registry.find("0x200");
-    ok &= expect(c2 != nullptr && !c2->managed, "floating client should leave managed set");
+    ok &= expect(c2 != nullptr && c2->managed, "floating state should not remove explicitly managed client");
 
     registry.reconcile_management(std::nullopt);
     c1 = registry.find("0x100");
@@ -179,16 +184,18 @@ bool test_registry_clears_selected_when_client_leaves_managed_set() {
     registry.upsert_open("0x111", "1", "foot", "one");
     registry.upsert_open("0x222", "1", "foot", "two");
     registry.reconcile_management(std::make_optional<std::string>("1"));
+    registry.set_managed("0x111", true);
+    registry.set_managed("0x222", true);
     registry.set_focus("0x111");
 
-    registry.set_floating("0x111", true);
+    registry.update_title("0x111", "About");
     registry.reconcile_management(std::make_optional<std::string>("1"));
 
     const auto snapshot = registry.snapshot();
     ok &= expect(!snapshot.selected_client.has_value(),
-                 "selected client should clear when it becomes floating and leaves managed set");
+                 "selected client should clear when it becomes structurally ineligible and leaves managed set");
     const auto* c1 = registry.find("0x111");
-    ok &= expect(c1 != nullptr && !c1->managed, "floating selected client should no longer be managed");
+    ok &= expect(c1 != nullptr && !c1->managed, "ineligible selected client should no longer be managed");
 
     return ok;
 }

@@ -1,7 +1,9 @@
+#include "hyprmacs/layout_applier.hpp"
 #include "hyprmacs/workspace_manager.hpp"
 
 #include <hyprland/src/helpers/math/Math.hpp>
 
+#include <cstdint>
 #include <iostream>
 #include <functional>
 #include <optional>
@@ -26,6 +28,8 @@ std::optional<std::string> build_workspace_recalc_dispatch_command(std::string_v
 bool request_workspace_recalc_marshaled(const WorkspaceId& workspace_id, const std::function<int(const std::string&)>& dispatcher);
 std::optional<std::string> build_client_zorder_dispatch_command(std::string_view client_id, bool top);
 bool request_client_zorder_marshaled(std::string_view client_id, bool top, const std::function<int(const std::string&)>& dispatcher);
+std::vector<LayoutRectangle> visible_rectangles_from_snapshot(const ManagedWorkspaceLayoutSnapshot& snapshot);
+bool emacs_control_repair_generation_is_current(uint64_t current_generation, uint64_t repair_generation);
 ManagedTargetVisibilityAction compute_managed_target_visibility_action_for_recalc(
     const ManagedWorkspaceLayoutSnapshot& snapshot,
     std::string_view target_workspace_id,
@@ -292,6 +296,50 @@ bool test_request_client_zorder_marshaled_dispatches_via_injected_executor() {
     return ok;
 }
 
+bool test_visible_rectangles_from_snapshot_preserves_visible_order_and_skips_missing_rectangles() {
+    hyprmacs::ManagedWorkspaceLayoutSnapshot snapshot {
+        .workspace_id = "1",
+        .layout_version = 7,
+        .rectangles_by_client_id = {
+            {"0xaaa", hyprmacs::ClientRect {.x = 10, .y = 20, .width = 300, .height = 400}},
+            {"0xccc", hyprmacs::ClientRect {.x = 50, .y = 60, .width = 700, .height = 800}},
+        },
+        .visible_client_ids = {"0xccc", "0xbbb", "0xaaa"},
+        .hidden_client_ids = {},
+        .stacking_order = {"0xaaa", "0xbbb", "0xccc"},
+        .selected_client = std::nullopt,
+        .input_mode = std::nullopt,
+        .managing_emacs_client_id = std::nullopt,
+    };
+
+    const auto rectangles = hyprmacs::visible_rectangles_from_snapshot(snapshot);
+
+    bool ok = true;
+    ok &= expect(rectangles.size() == 2, "visible rectangle extraction should skip visible clients without rectangles");
+    if (rectangles.size() == 2) {
+        ok &= expect(rectangles[0].client_id == "0xccc", "visible rectangle extraction should preserve visible order");
+        ok &= expect(rectangles[0].x == 50 && rectangles[0].y == 60 && rectangles[0].width == 700 && rectangles[0].height == 800,
+                     "visible rectangle extraction should copy first rectangle geometry");
+        ok &= expect(rectangles[1].client_id == "0xaaa", "visible rectangle extraction should include later visible rectangle");
+        ok &= expect(rectangles[1].x == 10 && rectangles[1].y == 20 && rectangles[1].width == 300 && rectangles[1].height == 400,
+                     "visible rectangle extraction should copy second rectangle geometry");
+    }
+    return ok;
+}
+
+bool test_emacs_control_repair_generation_rejects_zero_and_stale_repairs() {
+    bool ok = true;
+
+    ok &= expect(!hyprmacs::emacs_control_repair_generation_is_current(0, 0),
+                 "zero repair generation should never be current");
+    ok &= expect(hyprmacs::emacs_control_repair_generation_is_current(2, 2),
+                 "matching non-zero repair generation should be current");
+    ok &= expect(!hyprmacs::emacs_control_repair_generation_is_current(3, 2),
+                 "stale repair generation should not be current");
+
+    return ok;
+}
+
 }  // namespace
 
 int main() {
@@ -307,6 +355,8 @@ int main() {
     ok &= test_request_workspace_recalc_marshaled_dispatches_via_injected_executor();
     ok &= test_build_client_zorder_dispatch_command_normalizes_input();
     ok &= test_request_client_zorder_marshaled_dispatches_via_injected_executor();
+    ok &= test_visible_rectangles_from_snapshot_preserves_visible_order_and_skips_missing_rectangles();
+    ok &= test_emacs_control_repair_generation_rejects_zero_and_stale_repairs();
 
     return ok ? 0 : 1;
 }

@@ -31,6 +31,13 @@ This repository uses the implementation plan in `docs/superpowers/plans/2026-04-
 5. Make a git commit when completing each top-level task, unless the user explicitly says not to.
 6. Before ending a session, leave the org plan in a state where the next agent can resume work without reconstructing context from chat history.
 
+## Testing Expectations
+
+1. All user-visible functionality and behavior changes must be covered by the nested E2E harness (`just e2e`).
+2. Unit tests are supporting checks only; do not treat unit-test coverage as sufficient for Hyprland behavior because those tests encode assumptions about compositor behavior.
+3. For behavior regressions, add or restore a failing E2E assertion first, capture the red artifact path in the org plan, then fix the behavior and capture the green artifact path.
+4. Do not weaken or remove E2E assertions to make a run pass unless the org plan records an explicit user-approved contract change and replacement E2E coverage for the new contract.
+
 ## Current Starting Point
 
 Resume from the first incomplete task in `docs/superpowers/plans/2026-04-15-hyprmacs-iterative-implementation.org`. At the time this file was added, the intended next step is `Task 0: Lock the prototype contract`.

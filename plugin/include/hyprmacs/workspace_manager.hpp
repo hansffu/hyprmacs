@@ -59,6 +59,9 @@ class WorkspaceManager {
 
     bool manage_workspace(const WorkspaceId& workspace_id);
     bool unmanage_workspace(const WorkspaceId& workspace_id);
+    bool manage_client(const WorkspaceId& workspace_id, const ClientId& client_id);
+    bool unmanage_client(const WorkspaceId& workspace_id, const ClientId& client_id);
+    std::optional<ClientId> active_client(const WorkspaceId& workspace_id) const;
     bool set_selected_client(const WorkspaceId& workspace_id, const ClientId& client_id);
     bool set_input_mode(const WorkspaceId& workspace_id, InputMode mode);
     void seed_client(const ClientId& client_id, const WorkspaceId& workspace_id, const std::string& app_id,
@@ -73,6 +76,8 @@ class WorkspaceManager {
     std::optional<ManagedWorkspaceLayoutSnapshot> managed_layout_snapshot(const WorkspaceId& workspace_id) const;
     void clear_managed_layout_snapshot(const WorkspaceId& workspace_id);
     void note_overlay_float_request(const WorkspaceId& workspace_id, const ClientId& client_id);
+    bool note_client_tiled(const WorkspaceId& workspace_id, const ClientId& client_id);
+    bool client_floating(const WorkspaceId& workspace_id, const ClientId& client_id) const;
     bool refresh_workspace_floating_state_from_query(const WorkspaceId& workspace_id, bool include_managed_clients = true);
     StateDumpPayload build_state_dump(const WorkspaceId& workspace_id) const;
     std::optional<int> plugin_option_int(std::string_view option_name) const;

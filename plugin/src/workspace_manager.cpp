@@ -373,6 +373,12 @@ bool WorkspaceManager::manage_workspace(const WorkspaceId& workspace_id) {
     input_mode_ = InputMode::kEmacsControl;
     (void)refresh_workspace_floating_state_locked(workspace_id, true);
     client_registry_.reconcile_management(managed_workspace_id_);
+    const auto clients_to_adopt = client_registry_.snapshot();
+    for (const auto& client : clients_to_adopt.clients) {
+        if (client.workspace_id == workspace_id && client.eligible) {
+            (void)client_registry_.set_managed(client.client_id, true);
+        }
+    }
     refresh_managing_emacs_client_locked();
     sync_committed_layout_snapshot_locked();
     if (changed) {
@@ -408,6 +414,59 @@ bool WorkspaceManager::unmanage_workspace(const WorkspaceId& workspace_id) {
     return true;
 }
 
+bool WorkspaceManager::manage_client(const WorkspaceId& workspace_id, const ClientId& client_id) {
+    std::scoped_lock lock(mutex_);
+    if (!managed_workspace_id_.has_value() || *managed_workspace_id_ != workspace_id) {
+        return false;
+    }
+
+    const ClientRecord* record = client_registry_.find(client_id);
+    if (record == nullptr || record->workspace_id != workspace_id || !record->eligible) {
+        return false;
+    }
+
+    const bool ok = client_registry_.set_managed(client_id, true);
+    if (!ok) {
+        return false;
+    }
+    managed_client_seen_.insert(normalize_client_id_for_query(client_id));
+    refresh_managing_emacs_client_locked();
+    sync_committed_layout_snapshot_locked();
+    return true;
+}
+
+bool WorkspaceManager::unmanage_client(const WorkspaceId& workspace_id, const ClientId& client_id) {
+    std::scoped_lock lock(mutex_);
+    if (!managed_workspace_id_.has_value() || *managed_workspace_id_ != workspace_id) {
+        return false;
+    }
+
+    const ClientRecord* record = client_registry_.find(client_id);
+    if (record == nullptr || record->workspace_id != workspace_id || !record->managed) {
+        return false;
+    }
+
+    const bool ok = client_registry_.set_managed(client_id, false);
+    if (!ok) {
+        return false;
+    }
+    managed_client_seen_.erase(normalize_client_id_for_query(client_id));
+    sync_committed_layout_snapshot_locked();
+    return true;
+}
+
+std::optional<ClientId> WorkspaceManager::active_client(const WorkspaceId& workspace_id) const {
+    std::scoped_lock lock(mutex_);
+    if (!last_active_client_id_.has_value()) {
+        return std::nullopt;
+    }
+    const ClientRecord* record = client_registry_.find(*last_active_client_id_);
+    if (record == nullptr || record->workspace_id != workspace_id || !record->eligible) {
+        return std::nullopt;
+    }
+    return record->client_id;
+}
+
 bool WorkspaceManager::set_selected_client(const WorkspaceId& workspace_id, const ClientId& client_id) {
     std::scoped_lock lock(mutex_);
     const ClientRecord* record = client_registry_.find(client_id);
@@ -440,6 +499,10 @@ void WorkspaceManager::seed_client(
     client_registry_.upsert_open(client_id, workspace_id, app_id, title);
     client_registry_.set_floating(client_id, floating);
     client_registry_.reconcile_management(managed_workspace_id_);
+    const ClientRecord* record = client_registry_.find(client_id);
+    if (managed_workspace_id_.has_value() && *managed_workspace_id_ == workspace_id && record != nullptr && record->eligible) {
+        (void)client_registry_.set_managed(client_id, true);
+    }
     refresh_managing_emacs_client_locked();
     sync_committed_layout_snapshot_locked();
 }
@@ -546,6 +609,25 @@ void WorkspaceManager::note_overlay_float_request(const WorkspaceId& workspace_i
         return;
     }
     overlay_float_pending_clients_.insert(normalize_client_id_for_query(client_id));
+}
+
+bool WorkspaceManager::note_client_tiled(const WorkspaceId& workspace_id, const ClientId& client_id) {
+    std::scoped_lock lock(mutex_);
+    const ClientRecord* record = client_registry_.find(client_id);
+    if (record == nullptr || record->workspace_id != workspace_id) {
+        return false;
+    }
+
+    client_registry_.set_floating(client_id, false);
+    refresh_managing_emacs_client_locked();
+    sync_committed_layout_snapshot_locked();
+    return true;
+}
+
+bool WorkspaceManager::client_floating(const WorkspaceId& workspace_id, const ClientId& client_id) const {
+    std::scoped_lock lock(mutex_);
+    const ClientRecord* record = client_registry_.find(client_id);
+    return record != nullptr && record->workspace_id == workspace_id && record->floating;
 }
 
 bool WorkspaceManager::refresh_workspace_floating_state_from_query(
@@ -803,16 +885,7 @@ bool WorkspaceManager::refresh_workspace_floating_state_locked(
         }
 
         client_registry_.set_floating(client.client_id, *queried_floating);
-        client_registry_.reconcile_management(managed_workspace_id_);
         state_mutated = true;
-
-        const auto* after = client_registry_.find(client.client_id);
-        if (after == nullptr || !managed_workspace_id_.has_value() || after->workspace_id != *managed_workspace_id_ ||
-            !after->managed) {
-            managed_client_seen_.erase(normalize_client_id_for_query(client.client_id));
-        } else {
-            managed_client_seen_.insert(after->client_id);
-        }
     }
 
     return state_mutated;
@@ -1093,6 +1166,19 @@ void WorkspaceManager::handle_line(const std::string& line) {
             }
             sync_managed_seen_for_client(raw_client_id);
         };
+        auto adopt_open_client_if_managed = [&](std::string_view raw_client_id) {
+            if (!managed_workspace_id_.has_value()) {
+                return;
+            }
+            const auto record = client_registry_.find(std::string(raw_client_id));
+            if (record == nullptr || record->workspace_id != *managed_workspace_id_ || !record->eligible ||
+                record->managed) {
+                return;
+            }
+            if (client_registry_.set_managed(record->client_id, true)) {
+                state_mutated = true;
+            }
+        };
 
         if (frame->name == "openwindow" || frame->name == "openwindowv2") {
             const auto parts = split_csv_limited(frame->payload, 4);
@@ -1100,6 +1186,7 @@ void WorkspaceManager::handle_line(const std::string& line) {
                 client_registry_.upsert_open(parts[0], parts[1], parts[2], parts[3]);
                 client_registry_.reconcile_management(managed_workspace_id_);
                 refresh_floating_from_query(parts[0]);
+                adopt_open_client_if_managed(parts[0]);
                 sync_managed_seen_for_client(parts[0]);
                 state_mutated = true;
             }

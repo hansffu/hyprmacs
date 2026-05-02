@@ -23,4 +23,10 @@ DispatcherOutcome dispatch_set_emacs_control_mode(
     ActiveWorkspaceResolver active_workspace_resolver = {}
 );
 
+DispatcherOutcome dispatch_manage_active_window(
+    const std::string& arg,
+    WorkspaceManager& workspace_manager,
+    ActiveWorkspaceResolver active_workspace_resolver = {}
+);
+
 }  // namespace hyprmacs

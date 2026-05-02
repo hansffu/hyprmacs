@@ -24,6 +24,12 @@ Hyprland remains the compositor and input authority. The plugin owns workspace p
 - Record decisions, scope changes, deviations, and newly discovered constraints in this file during the session in which they are discovered.
 - Keep related stable reference docs under =docs/architecture/=, =docs/protocol/=, and =docs/adr/= consistent with the decisions recorded here.
 
+* Testing Policy
+- All user-visible functionality and behavior changes must be covered by the nested E2E harness (=just e2e=).
+- Unit tests are supporting checks only; they are not sufficient proof for Hyprland behavior because they encode assumptions about compositor event ordering, visibility, focus, and z-order.
+- For behavior regressions, add or restore a failing E2E assertion first, record the red artifact, then fix the behavior and record the green artifact.
+- Do not weaken or remove E2E assertions to make a run pass unless the org plan records an explicit user-approved contract change and replacement E2E coverage for the new contract.
+
 * Default V1 Decisions
 - One Emacs controller process and one managed workspace per active session.
 - Plugin implementation in C++.
@@ -1601,6 +1607,11 @@ Steps:
   - targeted plugin tests passed: =hyprmacs_workspace_manager_tests= and =hyprmacs_ipc_server_tests=
   - full suite passed: =just e2e= with artifact =artifacts/e2e/20260423-174725=.
 
+*** DONE Session note: Hyprland 0.54 layoutMsg API compatibility fix (2026-05-02)
+- User reported plugin build failure against Hyprland headers where =Layout::IModeAlgorithm::layoutMsg= now returns =Config::ErrorResult= (instead of older =std::expected<void, std::string>=).
+- Updated =CHyprmacsAlgorithm::layoutMsg= in =plugin/src/plugin_main.cpp= to use a deduced return alias from the Hyprland base interface, preserving compatibility across both API shapes.
+- Validation in this session: =nix build .#hyprmacs-plugin= completed successfully after the change.
+
 Validation:
 - =just test=
 - =just e2e=
@@ -1619,6 +1630,167 @@ Validation:
 - Next step requires design choice:
   - keep managed clients tiled and relax focus/visibility expectation, or
   - change managed presentation strategy (for example managed-overlay/floating treatment while preserving unmanaged native floating behavior).
+
+** DONE Task 17: Make managed-client membership explicit
+Purpose:
+- Stop deriving managed-client membership from Hyprland floating/tiled event state.
+- Make manage/unmanage of individual clients command-driven so transient dialogs and overlay floating state do not silently remove browser/application windows from hyprmacs.
+
+Files:
+- Modify =plugin/include/hyprmacs/client_registry.hpp=
+- Modify =plugin/src/client_registry.cpp=
+- Modify =plugin/include/hyprmacs/workspace_manager.hpp=
+- Modify =plugin/src/workspace_manager.cpp=
+- Modify =plugin/include/hyprmacs/dispatchers.hpp=
+- Modify =plugin/src/dispatchers.cpp=
+- Modify =plugin/src/ipc_server.cpp=
+- Modify =plugin/src/plugin_main.cpp=
+- Modify =emacs/hyprmacs-session.el=
+- Modify =emacs/hyprmacs.el=
+- Modify related plugin and Emacs tests, including =tests/emacs/session-tests.el=.
+
+Steps:
+*** DONE Decouple managed membership from floating classification
+- Keep registry/event updates for workspace, title, focus, close, and floating facts.
+- Do not automatically add or remove managed clients when Hyprland reports floating/tiled state changes.
+- Keep explicit cleanup on client close and workspace unmanage.
+*** DONE Add explicit client manage/unmanage command paths
+- Add IPC commands for =manage-client= and =unmanage-client=.
+- Add Emacs commands:
+  - =hyprmacs-unmanage-active-window=
+  - =hyprmacs-unmanage-window=
+- Add Hyprland dispatcher =hyprmacs:manage-active-window= using the plugin's last active client and publish state so Emacs creates the corresponding buffer.
+*** DONE Keep managed clients floating from Hyprland's perspective
+- Continue applying floating overlay geometry for managed visible clients.
+- If a managed client is toggled back to tiled/unfloating, re-apply floating instead of unmanaging it.
+*** DONE Validate with browser/dialog scenario
+- Direct Zen UI reproduction is not automated in the nested E2E harness, but the underlying regression is covered:
+  - managed-client membership is no longer changed by Hyprland floating/tiled events.
+  - E2E verifies an unfloat/togglefloating request does not unmanage a managed client.
+  - E2E verifies visible managed clients are re-floated after togglefloating so overlay rendering remains correct.
+
+*** DONE Session note: explicit membership decision (2026-05-02)
+- User reported that Zen Browser could be unmanaged after accidentally triggering its close dialog with =Ctrl+Q= and returning to Emacs-control mode.
+- New contract: Hyprland events are no longer authoritative for managed-client membership because hyprmacs-managed windows are intentionally floating overlays from Hyprland's perspective.
+- Managed-client membership should change only through explicit commands from Emacs/plugin control surfaces, while floating/unfloating events are used only to keep managed clients in the required floating overlay presentation.
+
+*** DONE Session note: explicit membership implementation and validation (2026-05-02)
+- Added explicit =manage-client= and =unmanage-client= IPC routes, Emacs commands =hyprmacs-unmanage-active-window= and =hyprmacs-unmanage-window=, and Hyprland dispatcher =hyprmacs:manage-active-window=.
+- =manage-workspace= still explicitly adopts current eligible clients, but later floating/tiled Hyprland events only update facts and no longer add/remove managed membership.
+- Managed-client floating repair now re-applies =setfloating= on state changes and =request-state= so unfloat/togglefloating requests do not leave visible managed overlays tiled.
+- Red/green E2E history:
+  - Red after the contract change exposed stale pre-manage floating expectations: =artifacts/e2e/20260502-190334=.
+  - Red after updating adoption expectations exposed missing floating repair: =artifacts/e2e/20260502-190509=.
+  - Red after adding repair exposed an over-specific hidden-client assertion: =artifacts/e2e/20260502-190644=.
+  - Green full run after direct route/dispatcher/session unit coverage was added: =just e2e= with artifact =artifacts/e2e/20260502-191242=.
+
+*** DONE Session note: managing Emacs frame tiled repair (2026-05-02)
+- User clarified that =togglefloating= must not leave the Emacs frame managing the workspace floating, but this rule must not apply to all Emacs frames.
+- Event inspection from red E2E artifact =artifacts/e2e/20260502-192313= showed:
+  - the E2E can make a secondary Emacs frame floating and tiled again with =hyprctl dispatch togglefloating address:...=.
+  - the same direct toggle on the managing Emacs frame made the compositor report it as floating.
+  - no usable =changefloatingmode*= plugin event appeared in the artifact for these Emacs-frame toggles, so repair cannot rely on that event alone.
+- Implemented a targeted =settiled= repair for =WorkspaceManager::emacs_client(workspace_id)= only:
+  - forced on =hyprmacs:set-emacs-control-mode= dispatcher, =manage-workspace=, and Emacs-control/layout control paths.
+  - query/state-change paths repair only when the registry has observed the managing frame as floating.
+  - secondary/non-managing Emacs frames remain native and may float.
+- Red/green validation:
+  - Red: =just e2e= failed at "managing emacs frame stays tiled after togglefloating" with artifact =artifacts/e2e/20260502-192313=.
+  - Green: =just e2e= passed with artifact =artifacts/e2e/20260502-193122=.
+
+*** DONE Session note: post-manage new-window adoption regression (2026-05-02)
+- User reported that newly opened windows were no longer managed after the explicit-membership change.
+- Root cause: the contract change correctly stopped floating/tiled events from changing membership, but the implementation also stopped =openwindow/openwindowv2= lifecycle events from explicitly adopting new eligible clients on an already managed workspace.
+- Required behavior:
+  - =manage-workspace= adopts current eligible clients.
+  - =openwindow/openwindowv2= adopts a newly opened eligible client when its workspace is currently managed.
+  - floating/tiled events do not add or remove managed membership; they only update compositor facts and trigger presentation repair for already managed overlays.
+- E2E coverage must include a window spawned after =manage-workspace= and assert that it appears in =managed-clients= with a live Emacs buffer.
+- Implementation restored explicit adoption on =openwindow/openwindowv2= after registry/query refresh, while leaving floating/tiled transitions non-authoritative.
+- Validation:
+  - Red: =just e2e= failed at "post-manage opened client is adopted into managed set" with artifact =artifacts/e2e/20260502-200706=.
+  - Focused green: =hyprmacs_workspace_manager_tests= and =hyprmacs_ipc_server_tests= passed after adding direct coverage for post-manage open adoption.
+  - Green: =just e2e= passed with stable app-id based probe and artifact =artifacts/e2e/20260502-200957=.
+
+*** DONE Session note: explicit-membership follow-up regressions (2026-05-02)
+- User reported two runtime regressions after the explicit-membership follow-up:
+  - newly opened managed windows were adopted but not displayed.
+  - in split view, entering client-control left the unfocused visible managed client rendered behind the Emacs frame.
+- Required behavior:
+  - a client newly opened after =manage-workspace= must be adopted, get a buffer, and become visible through an Emacs-published layout.
+  - client-control in split view must keep every visible managed client above the managing Emacs frame, not just the focused/selected client.
+- The E2E checks must assert these behaviors directly, rather than only checking managed membership or selected-client focus.
+- Red validation:
+  - =just e2e= failed at "post-manage opened client is displayed after adoption" with artifact =artifacts/e2e/20260502-202046=.
+  - After fixing the post-manage display path, =just e2e= failed at "split-view unfocused client remains visible in client-control" with artifact =artifacts/e2e/20260502-202403=.
+
+*** DONE Session note: follow-up E2E policy and remaining layering blocker (2026-05-02)
+- Added repository-level testing rule to =AGENTS.md= and this plan: all user-visible behavior must be covered by nested E2E; unit tests are support only and must not replace compositor validation.
+- Fixed post-manage display race:
+  - Emacs now runs membership-change layout sync immediately for newly managed clients instead of waiting for debounce.
+  - =state-dump= handling no longer reselects the previous selected-client buffer when a newly managed client buffer was just displayed.
+  - Focused green: =session-tests.el= passes, including =hyprmacs-session-new-managed-client-triggers-immediate-layout-sync=.
+- Fixed split-view client-control visibility:
+  - =set-selected-client= now preserves every client visible in the committed layout snapshot instead of hiding all non-selected clients.
+  - Focused green: =hyprmacs_ipc_server_tests= covers unfocused split-client visibility preservation.
+- Rejected failed pinning experiment:
+  - Attempted using Hyprland =pin= for visible managed overlays to influence hit testing.
+  - Red result =artifacts/e2e/20260502-204441= showed pinning did not fix managed-click layering and broke hide/restore by leaving a pinned client visible across workspaces.
+  - Pinning changes were removed.
+- Current validation:
+  - Focused green: =nix develop -c sh -lc 'cmake --build build/plugin -j4 && ctest --test-dir build/plugin --output-on-failure -R "hyprmacs_(ipc_server|layout_applier|plugin_main)_tests"'=.
+  - Red: =just e2e= artifact =artifacts/e2e/20260502-204805= still fails only the managed-click layer-ordering assertions:
+    - "managed client is on top and receives click immediately while emacs focused"
+    - "managed client receives click while emacs focused (layer ordering)"
+- Remaining blocker:
+  - Post-manage display and split-view client-control regressions are fixed in the nested run.
+  - The unresolved behavior is compositor hit-testing/z-order while Emacs remains focused; this must be fixed with a real E2E green artifact before the task can be treated as complete.
+
+*** DONE Session note: E2E assertion manifest hardening (2026-05-02)
+- User asked whether the existing E2E assertions were explicit and whether they could be accidentally deleted or weakened.
+- Hardening changes:
+  - moved the full nested E2E flow out of runtime package code into =tests/e2e/full-flow.el=.
+  - added stable assertion IDs derived from assertion format strings and logged as =ok [assertion-id]: ...= / =fail [assertion-id]: ...=.
+  - added required assertion manifest =tests/e2e/required-assertions.txt=.
+  - added =tests/e2e/manifest-tests.el= so fast tests fail if the manifest and source assertions drift.
+  - updated =just test=, =make test=, and =just e2e= preflight to run the manifest tests.
+  - changed the pre-manage floating scenario from optional to required by asserting that a non-Emacs client was selected for the floating adoption check.
+- Validation:
+  - Green: =just test= passed, including the new manifest tests.
+  - Red by existing runtime blocker: =just e2e= artifact =artifacts/e2e/20260502-212947= reached nested Hyprland and failed the same known layer-ordering assertions, now with stable IDs:
+    - =managed-client-is-on-top-and-receives-click-immediately-while-emacs-focused=
+    - =managed-client-receives-click-while-emacs-focused-layer-ordering=
+
+*** DONE Session note: E2E use-case catalog (2026-05-02)
+- User requested a Markdown document listing the behavior covered by current E2E tests in Given/When/Then form with index-based IDs.
+- Added =docs/testing/e2e-use-cases.md= with =UC-001= through =UC-028=, each mapped back to the stable E2E assertion IDs in =tests/e2e/required-assertions.txt=.
+- The initial catalog recorded the then-red layer-ordering use case explicitly instead of hiding it.
+
+*** DONE Session note: UC-019 layer-ordering fix and E2E green (2026-05-02)
+- Root cause for the remaining E2E failure: after returning to Emacs-control mode, reissuing =setfloating= and =alterzorder top= for visible managed overlays was not enough to refresh Hyprland's pointer hit-test order in the single-window case. The overlay had the correct geometry and floating state, but pointer resolution still selected the focused tiled Emacs frame.
+- Fix:
+  - added a snapshot helper to reconstruct visible overlay rectangles from the committed layout snapshot.
+  - changed the =hyprmacs:set-emacs-control-mode= dispatcher path to rebuild visible overlays with a real =settiled= -> =setfloating= transition, reapply geometry, focus/lower the managing Emacs frame, then raise overlays.
+  - this preserves Emacs focus while refreshing Hyprland's floating hit-test order for visible managed app windows.
+- Validation:
+  - Focused green: =nix develop -c sh -lc 'cmake --build build/plugin -j4 && ctest --test-dir build/plugin --output-on-failure -R "hyprmacs_(plugin_main|ipc_server|layout_applier)_tests"'=.
+  - Green full nested E2E: =just e2e= passed with artifact =artifacts/e2e/20260502-215301=.
+- Updated =docs/testing/e2e-use-cases.md= to remove the stale red status from =UC-019=.
+
+*** DONE Session note: Emacs-control repair coalescing after togglefloating timeout (2026-05-02)
+- User reported a follow-up red nested E2E failure:
+  - Red: =just e2e= artifact =artifacts/e2e/20260502-220058= failed at =second-togglefloating-request-for-managed-client-succeeded-for-value=.
+  - The failed =hyprctl dispatch togglefloating= returned =Hyprland IPC didn't respond in time=, not a semantic togglefloating failure.
+- Root cause:
+  - the =hyprmacs:set-emacs-control-mode= repair path issued a burst of compositor socket dispatches from a detached thread.
+  - repeated/unbounded repair attempts could still be active when the E2E immediately sent the second native =togglefloating= request.
+- Fix:
+  - coalesced Emacs-control repair threads with an atomic generation so stale repairs exit.
+  - bounded each repair to one tiled->floating overlay rebuild plus focus/lower/raise sequence.
+  - removed the self-dispatched recalc request from this repair thread to avoid competing with external =hyprctl= calls on Hyprland's command socket.
+- Validation:
+  - Focused green: =nix develop -c sh -lc 'cmake --build build/plugin -j4 && ctest --test-dir build/plugin --output-on-failure -R "hyprmacs_(plugin_main|ipc_server|layout_applier)_tests"'=.
+  - Green full nested E2E: =just e2e= passed with artifact =artifacts/e2e/20260502-220501=.
 
 * Execution Order
 - Start with task 0 and task 1 only.
